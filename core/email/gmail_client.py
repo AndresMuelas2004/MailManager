@@ -1,8 +1,13 @@
 from __future__ import annotations
-
+import os
 from typing import List
-
+from google_auth_oauthlib.flow import InstalledAppFlow
+from google.oauth2.credentials import Credentials
+from google.auth.transport.requests import Request
+from googleapiclient.discovery import build
 from .email_client import EmailClient, EmailMessage
+
+GMAIL_SCOPES = ["https://www.googleapis.com/auth/gmail.modify"]
 
 
 class GmailClient(EmailClient):
@@ -11,30 +16,34 @@ class GmailClient(EmailClient):
     This class will be responsible for talking to the official Gmail API.
     """
 
-    def __init__(
-        self,
-        account_label: str,
-        credentials_path: str,
-        token_path: str,
-    ) -> None:
-        """
-        :param account_label: Human-readable label for this Gmail account.
-        :param credentials_path: Path to the OAuth2 client credentials file.
-        :param token_path: Path where the user access token will be stored.
-        """
-        self._account_label = account_label
-        self._credentials_path = credentials_path
-        self._token_path = token_path
-        self._service = None  # Will hold the Gmail API service client
+    def __init__(self, account_label: str = "gmail") -> None:
+        self.account_label = account_label
+        self.service = None
 
     def authenticate(self) -> None:
         """
         Initialize or refresh the Gmail API client using OAuth2.
         This method will be implemented using the Google client libraries.
         """
-        # TODO: Implement OAuth2 flow and create the Gmail service instance.
-        #       For now, we keep this as a placeholder.
-        raise NotImplementedError("GmailClient.authenticate() not implemented yet.")
+        creds = None
+
+        credentials_path = os.getenv("MIA_GMAIL_CREDENTIALS_PATH")
+        token_path = os.getenv("MIA_GMAIL_TOKEN_PATH")
+
+        if os.path.exists(token_path):
+            creds = Credentials.from_authorized_user_file(token_path, GMAIL_SCOPES)
+
+        if not creds or not creds.valid:
+            if creds and creds.expired and creds.refresh_token:
+                creds.refresh(Request())
+            else:
+                flow = InstalledAppFlow.from_client_secrets_file(credentials_path, GMAIL_SCOPES)
+                creds = flow.run_local_server(port=0)
+
+            with open(token_path, "w", encoding="utf-8") as token_file:
+                token_file.write(creds.to_json())
+
+        self.service = build("gmail", "v1", credentials=creds)
 
     def fetch_unread_emails(self) -> List[EmailMessage]:
         """
