@@ -1,11 +1,15 @@
 from __future__ import annotations
 import os
-from typing import List
 from google_auth_oauthlib.flow import InstalledAppFlow
 from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
 from .email_client import EmailClient, EmailMessage
+from google.auth.exceptions import RefreshError
+from typing import List
+from googleapiclient.errors import HttpError
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 
 GMAIL_SCOPES = ["https://www.googleapis.com/auth/gmail.modify"]
 
@@ -35,8 +39,13 @@ class GmailClient(EmailClient):
 
         if not creds or not creds.valid:
             if creds and creds.expired and creds.refresh_token:
-                creds.refresh(Request())
-            else:
+                try:
+                    creds.refresh(Request())
+                except RefreshError:
+                    os.remove(token_path)
+                    creds = None
+
+            if not creds:
                 flow = InstalledAppFlow.from_client_secrets_file(credentials_path, GMAIL_SCOPES)
                 creds = flow.run_local_server(port=0)
 
@@ -50,10 +59,62 @@ class GmailClient(EmailClient):
         Fetch unread Gmail messages, normalize them into EmailMessage objects
         and return them as a list.
         """
-        # TODO: Call the Gmail API to list unread messages,
-        #       then transform them into EmailMessage instances.
-        raise NotImplementedError("GmailClient.fetch_unread_emails() not implemented yet.")
+        if self.service is None:
+            raise RuntimeError("GmailClient is not authenticated. Call authenticate() first.")
 
+        unread_emails: List[EmailMessage] = []
+
+        try:
+            # Fetch a limited number of unread message IDs from Gmail inbox
+            response = self.service.users().messages().list(
+                userId="me",
+                q="in:inbox is:unread category:primary",
+                maxResults=10,
+            ).execute()
+
+            messages = response.get("messages", [])
+
+            for message_meta in messages:
+                message_id = message_meta["id"]
+
+                message = self.service.users().messages().get(
+                    userId="me",
+                    id=message_id,
+                    format="metadata",
+                    metadataHeaders=["From", "To", "Subject", "Date"],
+                ).execute()
+
+                headers = {
+                    header["name"]: header["value"]
+                    for header in message.get("payload", {}).get("headers", [])
+                }
+
+                subject = headers.get("Subject", "")
+                sender = headers.get("From", "")
+                recipients = [headers["To"]] if "To" in headers else []
+                body_preview = message.get("snippet", "")
+
+                date_value = headers.get("Date")
+                sent_at = parsedate_to_datetime(date_value) if date_value else datetime.now(timezone.utc)
+
+                unread_emails.append(
+                    EmailMessage(
+                        message_id=message_id,
+                        subject=subject,
+                        sender=sender,
+                        recipients=recipients,
+                        body=body_preview,
+                        sent_at=sent_at,
+                        is_unread=True,
+                        provider="gmail",
+                        raw_payload=message,
+                    )
+                )
+
+        except HttpError as error:
+            print(f"Failed to fetch unread emails from Gmail: {error}")
+
+        return unread_emails
     def send_email(
         self,
         subject: str,
