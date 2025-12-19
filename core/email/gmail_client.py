@@ -7,7 +7,6 @@ from googleapiclient.discovery import build
 from .email_client import EmailClient, EmailMessage
 from google.auth.exceptions import RefreshError
 from typing import List
-from googleapiclient.errors import HttpError
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 
@@ -21,18 +20,25 @@ class GmailClient(EmailClient):
     """
 
     def __init__(self, account_label: str = "gmail") -> None:
-        self.account_label = account_label
+        self._account_label = account_label
         self.service = None
 
     def authenticate(self) -> None:
         """
-        Initialize or refresh the Gmail API client using OAuth2.
-        This method will be implemented using the Google client libraries.
+        Authenticate the Gmail client using OAuth2.
         """
         creds = None
 
         credentials_path = os.getenv("MIA_GMAIL_CREDENTIALS_PATH")
-        token_path = os.getenv("MIA_GMAIL_TOKEN_PATH")
+        token_dir = os.getenv("MIA_GMAIL_TOKEN_PATH")
+
+        if not credentials_path:
+            raise ValueError("MIA_GMAIL_CREDENTIALS_PATH is not set.")
+
+        if not token_dir:
+            raise ValueError("MIA_GMAIL_TOKEN_PATH is not set (must be a directory).")
+
+        token_path = os.path.join(token_dir, f"gmail_token_{self._account_label}.json")
 
         if os.path.exists(token_path):
             creds = Credentials.from_authorized_user_file(token_path, GMAIL_SCOPES)
@@ -42,17 +48,23 @@ class GmailClient(EmailClient):
                 try:
                     creds.refresh(Request())
                 except RefreshError:
-                    os.remove(token_path)
+                    if os.path.exists(token_path):
+                        os.remove(token_path)
                     creds = None
 
             if not creds:
-                flow = InstalledAppFlow.from_client_secrets_file(credentials_path, GMAIL_SCOPES)
+                flow = InstalledAppFlow.from_client_secrets_file(
+                    credentials_path,
+                    GMAIL_SCOPES,
+                )
                 creds = flow.run_local_server(port=0)
 
+            os.makedirs(token_dir, exist_ok=True)
             with open(token_path, "w", encoding="utf-8") as token_file:
                 token_file.write(creds.to_json())
 
         self.service = build("gmail", "v1", credentials=creds)
+
 
     def fetch_unread_emails(self) -> List[EmailMessage]:
         """
