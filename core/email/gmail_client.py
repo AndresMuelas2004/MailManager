@@ -64,57 +64,53 @@ class GmailClient(EmailClient):
 
         unread_emails: List[EmailMessage] = []
 
-        try:
-            # Fetch a limited number of unread message IDs from Gmail inbox
-            response = self.service.users().messages().list(
+        # Fetch a limited number of unread message IDs from Gmail inbox
+        response = self.service.users().messages().list(
+            userId="me",
+            q="in:inbox is:unread category:primary",
+        ).execute()
+
+        messages = response.get("messages", [])
+
+        for message_meta in messages:
+            message_id = message_meta["id"]
+
+            message = self.service.users().messages().get(
                 userId="me",
-                q="in:inbox is:unread category:primary",
-                maxResults=10,
+                id=message_id,
+                format="metadata",
+                metadataHeaders=["From", "To", "Subject", "Date"],
             ).execute()
 
-            messages = response.get("messages", [])
+            headers = {
+                header["name"]: header["value"]
+                for header in message.get("payload", {}).get("headers", [])
+            }
 
-            for message_meta in messages:
-                message_id = message_meta["id"]
+            subject = headers.get("Subject", "")
+            sender = headers.get("From", "")
+            recipients = [headers["To"]] if "To" in headers else []
+            body_preview = message.get("snippet", "")
 
-                message = self.service.users().messages().get(
-                    userId="me",
-                    id=message_id,
-                    format="metadata",
-                    metadataHeaders=["From", "To", "Subject", "Date"],
-                ).execute()
+            date_value = headers.get("Date")
+            sent_at = parsedate_to_datetime(date_value) if date_value else datetime.now(timezone.utc)
 
-                headers = {
-                    header["name"]: header["value"]
-                    for header in message.get("payload", {}).get("headers", [])
-                }
-
-                subject = headers.get("Subject", "")
-                sender = headers.get("From", "")
-                recipients = [headers["To"]] if "To" in headers else []
-                body_preview = message.get("snippet", "")
-
-                date_value = headers.get("Date")
-                sent_at = parsedate_to_datetime(date_value) if date_value else datetime.now(timezone.utc)
-
-                unread_emails.append(
-                    EmailMessage(
-                        message_id=message_id,
-                        subject=subject,
-                        sender=sender,
-                        recipients=recipients,
-                        body=body_preview,
-                        sent_at=sent_at,
-                        is_unread=True,
-                        provider="gmail",
-                        raw_payload=message,
-                    )
+            unread_emails.append(
+                EmailMessage(
+                    message_id=message_id,
+                    subject=subject,
+                    sender=sender,
+                    recipients=recipients,
+                    body=body_preview,
+                    sent_at=sent_at,
+                    is_unread=True,
+                    provider="gmail",
+                    raw_payload=message,
                 )
-
-        except HttpError as error:
-            print(f"Failed to fetch unread emails from Gmail: {error}")
+            )
 
         return unread_emails
+
     def send_email(
         self,
         subject: str,
@@ -124,8 +120,24 @@ class GmailClient(EmailClient):
         """
         Send a plain text email using the Gmail API.
         """
-        # TODO: Build a MIME message and send it via the Gmail API.
-        raise NotImplementedError("GmailClient.send_email() not implemented yet.")
+        if self.service is None:
+            raise RuntimeError("GmailClient is not authenticated. Call authenticate() first.")
+
+        if not recipients:
+            raise ValueError("At least one recipient is required.")
+
+        # Local imports to keep module-level imports unchanged.
+        import base64
+        from email.mime.text import MIMEText
+
+        message = MIMEText(body)
+        message["to"] = ", ".join(recipients)
+        message["subject"] = subject
+
+        raw_message = base64.urlsafe_b64encode(message.as_bytes()).decode("utf-8")
+        payload = {"raw": raw_message}
+
+        self.service.users().messages().send(userId="me", body=payload).execute()
 
     def get_account_label(self) -> str:
         """
