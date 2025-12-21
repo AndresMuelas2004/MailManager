@@ -1,1 +1,15 @@
-core/email/__pycache__/
+# IDE
+.idea/
+
+# Virtual environment
+.venv/
+
+# Python cache / compiled files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# OS files
+.DS_Store
+Thumbs.db
