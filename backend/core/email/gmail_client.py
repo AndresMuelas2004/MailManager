@@ -1,4 +1,5 @@
 from __future__ import annotations
+import base64
 import os
 from google_auth_oauthlib.flow import InstalledAppFlow
 from google.oauth2.credentials import Credentials
@@ -65,8 +66,7 @@ class GmailClient(EmailClient):
 
         self.service = build("gmail", "v1", credentials=creds)
 
-
-    def fetch_unread_emails(self) -> List[EmailMessage]:
+    def fetch_unread_emails(self, max_total: int = 200, page_size: int = 50) -> List[EmailMessage]:
         """
         Fetch unread Gmail messages, normalize them into EmailMessage objects
         and return them as a list.
@@ -77,12 +77,61 @@ class GmailClient(EmailClient):
         unread_emails: List[EmailMessage] = []
 
         # Fetch a limited number of unread message IDs from Gmail inbox
-        response = self.service.users().messages().list(
-            userId="me",
-            q="in:inbox is:unread category:primary",
-        ).execute()
+        messages = []
+        page_token = None
+        while True:
+            list_kwargs = {
+                "userId": "me",
+                "q": "in:inbox is:unread category:primary",
+                "maxResults": page_size,
+            }
+            if page_token:
+                list_kwargs["pageToken"] = page_token
 
-        messages = response.get("messages", [])
+            response = self.service.users().messages().list(**list_kwargs).execute()
+            messages.extend(response.get("messages", []))
+
+            if len(messages) >= max_total:
+                messages = messages[:max_total]
+                break
+
+            page_token = response.get("nextPageToken")
+            if not page_token:
+                break
+
+        def parse_headers_from_raw(raw_b64url: str) -> dict:
+            if not raw_b64url:
+                return {}
+            try:
+                raw_bytes = base64.urlsafe_b64decode(raw_b64url.encode("utf-8"))
+            except Exception:
+                return {}
+
+            raw_text = raw_bytes.decode("utf-8", errors="replace")
+            header_lines = []
+            for line in raw_text.splitlines():
+                if line == "":
+                    break
+                header_lines.append(line)
+
+            unfolded = []
+            current = ""
+            for line in header_lines:
+                if line.startswith((" ", "\t")) and current:
+                    current = f"{current} {line.strip()}"
+                else:
+                    if current:
+                        unfolded.append(current)
+                    current = line.strip()
+            if current:
+                unfolded.append(current)
+
+            headers = {}
+            for line in unfolded:
+                if ":" in line:
+                    name, value = line.split(":", 1)
+                    headers[name.strip()] = value.strip()
+            return headers
 
         for message_meta in messages:
             message_id = message_meta["id"]
@@ -90,34 +139,43 @@ class GmailClient(EmailClient):
             message = self.service.users().messages().get(
                 userId="me",
                 id=message_id,
-                format="metadata",
-                metadataHeaders=["From", "To", "Subject", "Date"],
+                format="raw",
             ).execute()
 
-            headers = {
-                header["name"]: header["value"]
-                for header in message.get("payload", {}).get("headers", [])
-            }
+            raw_rfc822_b64url = message.get("raw", "")
+            raw_headers = parse_headers_from_raw(raw_rfc822_b64url)
 
-            subject = headers.get("Subject", "")
-            sender = headers.get("From", "")
-            recipients = [headers["To"]] if "To" in headers else []
-            body_preview = message.get("snippet", "")
+            def get_header(name: str) -> str:
+                return raw_headers.get(name, "")
 
-            date_value = headers.get("Date")
-            sent_at = parsedate_to_datetime(date_value) if date_value else datetime.now(timezone.utc)
+            subject = get_header("Subject")
+            sender = get_header("From")
+            to_header = get_header("To")
+            recipients = [to_header] if to_header else []
+            body = message.get("snippet", "")
+
+            date_value = get_header("Date")
+            if date_value:
+                sent_at = parsedate_to_datetime(date_value)
+            else:
+                internal_date = message.get("internalDate")
+                if internal_date:
+                    sent_at = datetime.fromtimestamp(int(internal_date) / 1000, tz=timezone.utc)
+                else:
+                    sent_at = datetime.now(timezone.utc)
 
             unread_emails.append(
                 EmailMessage(
                     message_id=message_id,
+                    thread_id=message.get("threadId"),
                     subject=subject,
                     sender=sender,
                     recipients=recipients,
-                    body=body_preview,
+                    body=body,
                     sent_at=sent_at,
                     is_unread=True,
                     provider="gmail",
-                    raw_payload=message,
+                    raw_rfc822_b64url=raw_rfc822_b64url or None,
                 )
             )
 

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+
+
 import os
 from typing import List
 
@@ -7,6 +9,8 @@ from core.email.email_client import EmailClient, EmailMessage
 from core.email.email_manager import EmailManager
 from core.email.gmail_client import GmailClient
 
+"This script demonstrates how EmailManager captures and reports errors by adding a failing client (and optionally a real Gmail client) "
+"and printing the authentication and fetch error states."
 
 class FailingClient(EmailClient):
     def __init__(self, account_label: str, reason: str) -> None:

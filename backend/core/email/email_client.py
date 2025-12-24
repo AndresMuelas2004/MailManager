@@ -3,7 +3,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, List
+from typing import List
 
 
 @dataclass
@@ -20,7 +20,8 @@ class EmailMessage:
     sent_at: datetime
     is_unread: bool
     provider: str
-    raw_payload: Any | None = None  # Optional raw data from the provider
+    thread_id: str | None = None
+    raw_rfc822_b64url: str | None = None
 
 
 class EmailClient(ABC):
