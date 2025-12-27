@@ -1,8 +1,9 @@
 ﻿from core.email.gmail_client import GmailClient
 
 
-MAX_TOTAL = 200
-PAGE_SIZE = 50
+PAGE_SIZE = 25
+MAX_TOTAL = PAGE_SIZE * 3
+MIN_TOTAL = PAGE_SIZE + 1
 
 
 def main() -> None:
@@ -11,6 +12,13 @@ def main() -> None:
 
     emails = client.fetch_unread_emails(max_total=MAX_TOTAL, page_size=PAGE_SIZE)
     total = len(emails)
+
+    if total < MIN_TOTAL:
+        print(
+            "Not enough unread emails to verify pagination. "
+            f"Need at least {MIN_TOTAL}, got {total}."
+        )
+        return
 
     pages = (total + PAGE_SIZE - 1) // PAGE_SIZE if total > 0 else 0
 

@@ -2,13 +2,11 @@ from __future__ import annotations
 
 import uvicorn
 
-from api.api import app
-import sys
+from api.app import app
 
 
 
 def main() -> None:
-    print(sys.path)
     uvicorn.run(app, host="0.0.0.0", port=8000)
 
 

@@ -31,6 +31,9 @@ class EmailManager:
     def authenticate_all(self) -> None:
         """
         Authenticate all registered clients, tracking failures per account.
+
+        Convenience method intended for scripts, batch jobs, or non-UI flows.
+        Avoid calling this from API/web request handlers.
         """
         self._last_errors = {}
         for client in self._clients:
@@ -38,6 +41,22 @@ class EmailManager:
                 client.authenticate()
             except Exception as exc:
                 self._last_errors[client.get_account_label()] = exc
+
+    def connect_account(self, account_label: str) -> None:
+        """
+        Authenticate a single account by its label.
+        """
+        self._last_errors = {}
+        for client in self._clients:
+            if client.get_account_label() != account_label:
+                continue
+            try:
+                client.authenticate()
+            except Exception as exc:
+                self._last_errors[account_label] = exc
+                raise
+            return
+        raise ValueError(f"Account '{account_label}' not found.")
 
     def fetch_all_unread_emails(self) -> List[EmailMessage]:
         """
