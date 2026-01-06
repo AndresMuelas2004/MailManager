@@ -13,3 +13,7 @@ __pycache__/
 # OS files
 .DS_Store
 Thumbs.db
+
+# Runtime persisted data (local only)
+backend/data/users.json
+backend/data/accounts.json

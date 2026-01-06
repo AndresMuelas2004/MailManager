@@ -15,8 +15,8 @@ from api.schemas.account import (
     AccountOut,
     AccountUpdate,
 )
-from api.services.account_factory import build_client_label
-from api.services.manager_registry import get_manager, invalidate
+from api.services.account_factory import build_client_label, create_client
+from api.services.manager_registry import invalidate
 from api.storage.json_store import account_store, now_iso, user_store
 
 
@@ -136,11 +136,12 @@ def connect_account(user_id: str, account_id: str) -> AccountConnectResponse:
     if record is None:
         raise AccountNotFound(f"Account '{account_id}' not found.")
 
+    client = create_client(record)
+    print()
     account_label = build_client_label(user_id, account_id)
 
     try:
-        manager = get_manager(user_id)
-        manager.connect_account(account_label)
+        client.authenticate()
     except Exception as exc:
         raise ProviderAuthError(
             "Failed to authenticate provider client.",
@@ -150,6 +151,8 @@ def connect_account(user_id: str, account_id: str) -> AccountConnectResponse:
                 "account_label": account_label,
             },
         ) from exc
+
+    invalidate(user_id)
 
     return AccountConnectResponse(
         connected=True,
