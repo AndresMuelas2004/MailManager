@@ -1,9 +1,9 @@
-export type UserCreate = {
+export type MailboxCreate = {
   display_name?: string | null;
 };
 
-export type UserOut = {
-  user_id: string;
+export type MailboxOut = {
+  mailbox_id: string;
   display_name?: string | null;
   created_at?: string | null;
 };
@@ -21,7 +21,7 @@ export type AccountUpdate = {
 
 export type AccountOut = {
   account_id: string;
-  user_id: string;
+  mailbox_id: string;
   provider: string;
   display_label?: string | null;
   config?: Record<string, unknown> | null;

@@ -11,13 +11,13 @@ from abc import ABC, abstractmethod
 from typing import Any
 
 
-class UserStore(ABC):
+class MailboxStore(ABC):
     """
-    Contract for user persistence.
+    Contract for mailbox persistence.
     """
 
     @abstractmethod
-    def create(self, user: dict[str, Any]) -> dict[str, Any]:
+    def create(self, mailbox: dict[str, Any]) -> dict[str, Any]:
         raise NotImplementedError
 
     @abstractmethod
@@ -25,11 +25,11 @@ class UserStore(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def get(self, user_id: str) -> dict[str, Any] | None:
+    def get(self, mailbox_id: str) -> dict[str, Any] | None:
         raise NotImplementedError
 
     @abstractmethod
-    def delete(self, user_id: str) -> None:
+    def delete(self, mailbox_id: str) -> None:
         raise NotImplementedError
 
 
@@ -39,11 +39,11 @@ class AccountStore(ABC):
     """
 
     @abstractmethod
-    def list_by_user(self, user_id: str) -> list[dict[str, Any]]:
+    def list_by_mailbox(self, mailbox_id: str) -> list[dict[str, Any]]:
         raise NotImplementedError
 
     @abstractmethod
-    def get(self, user_id: str, account_id: str) -> dict[str, Any] | None:
+    def get(self, mailbox_id: str, account_id: str) -> dict[str, Any] | None:
         raise NotImplementedError
 
     @abstractmethod
@@ -51,5 +51,5 @@ class AccountStore(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def delete(self, user_id: str, account_id: str) -> None:
+    def delete(self, mailbox_id: str, account_id: str) -> None:
         raise NotImplementedError

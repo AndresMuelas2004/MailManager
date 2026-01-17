@@ -1,4 +1,4 @@
-"""
+﻿"""
 Custom API exceptions used across routers and services.
 
 Raising these exceptions keeps error handling consistent and avoids
@@ -23,8 +23,8 @@ class ApiError(Exception):
         self.detail = detail or {}
 
 
-class UserNotFound(ApiError):
-    code = "user_not_found"
+class MailboxNotFound(ApiError):
+    code = "mailbox_not_found"
 
 
 class AccountNotFound(ApiError):
@@ -57,3 +57,7 @@ class EmailSendError(ApiError):
 
 class AccountMisconfigured(ApiError):
     code = "account_misconfigured"
+
+
+class EnvVarError(ApiError):
+    code = "env_var_error"

@@ -2,14 +2,14 @@ import { createBrowserRouter, RouterProvider } from "react-router-dom";
 
 import AppShell from "../layout/AppShell";
 import InboxPage from "../../pages/InboxPage";
-import UsersPage from "../../pages/UsersPage";
+import MailboxesPage from "../../pages/MailboxesPage";
 
 const router = createBrowserRouter([
   {
     path: "/",
     element: <AppShell />,
     children: [
-      { index: true, element: <UsersPage /> },
+      { index: true, element: <MailboxesPage /> },
       { path: "m/:mailboxId/inbox", element: <InboxPage /> },
     ],
   },

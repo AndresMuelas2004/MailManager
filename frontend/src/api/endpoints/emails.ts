@@ -4,7 +4,7 @@ import type { EmailOut, EmailSendRequest } from "../types/dto";
 import { parseUnreadEmailsResponse } from "../types/zod";
 
 export function listUnreadEmails(mailboxId: string): Promise<EmailOut[]> {
-  return request<EmailOut[]>(`/users/${mailboxId}/emails/unread`).then((data) => {
+  return request<EmailOut[]>(`/mailboxes/${mailboxId}/emails/unread`).then((data) => {
     try {
       return parseUnreadEmailsResponse(data) as EmailOut[];
     } catch (error) {
@@ -14,7 +14,7 @@ export function listUnreadEmails(mailboxId: string): Promise<EmailOut[]> {
 }
 
 export function sendEmail(mailboxId: string, payload: EmailSendRequest): Promise<{ status: string }> {
-  return request<{ status: string }>(`/users/${mailboxId}/emails/send`, {
+  return request<{ status: string }>(`/mailboxes/${mailboxId}/emails/send`, {
     method: "POST",
     body: payload,
   });

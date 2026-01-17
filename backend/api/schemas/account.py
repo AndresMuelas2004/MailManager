@@ -11,15 +11,14 @@ from pydantic import BaseModel, Field
 
 class AccountCreate(BaseModel):
     """
-    Request model for creating an account under a user.
+    Request model for creating an account under a mailbox.
     """
 
     provider: str = Field(..., min_length=1)
-    display_label: str | None = Field(
-        default=None,
+    display_label: str = Field(
+        ...,
         min_length=1,
         max_length=120,
-        validation_alias="label",
     )
     config: dict[str, Any] = Field(default_factory=dict)
 
@@ -33,7 +32,6 @@ class AccountUpdate(BaseModel):
         default=None,
         min_length=1,
         max_length=120,
-        validation_alias="label",
     )
     config: dict[str, Any] | None = None
 
@@ -44,7 +42,7 @@ class AccountOut(BaseModel):
     """
 
     account_id: str
-    user_id: str
+    mailbox_id: str
     provider: str
     display_label: str
     config: dict[str, Any]

@@ -1,4 +1,4 @@
-"""
+﻿"""
 Error package exports for the API layer.
 """
 
@@ -12,7 +12,7 @@ from api.errors.exceptions import (
     ProviderAuthError,
     ProviderNotSupported,
     StorageError,
-    UserNotFound,
+    MailboxNotFound,
 )
 
 __all__ = [
@@ -25,5 +25,6 @@ __all__ = [
     "ProviderAuthError",
     "ProviderNotSupported",
     "StorageError",
-    "UserNotFound",
+    "MailboxNotFound",
 ]
+

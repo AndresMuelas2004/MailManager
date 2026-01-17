@@ -66,6 +66,44 @@ class GmailClient(EmailClient):
 
         self.service = build("gmail", "v1", credentials=creds)
 
+    def authenticate_silent(self) -> None:
+        """
+        Authenticate the Gmail client without starting an interactive OAuth flow.
+        """
+        creds = None
+
+        token_dir = os.getenv("MIA_GMAIL_TOKEN_PATH")
+        if not token_dir:
+            # Missing token directory means silent auth cannot proceed.
+            raise ValueError("MIA_GMAIL_TOKEN_PATH is not set (must be a directory).")
+
+        token_path = os.path.join(token_dir, f"gmail_token_{self._account_label}.json")
+        if not os.path.exists(token_path):
+            # No saved token means the account has not been connected yet.
+            raise ValueError("missing_token")
+
+        creds = Credentials.from_authorized_user_file(token_path, GMAIL_SCOPES)
+
+        if not creds or not creds.valid:
+            if creds and creds.expired and creds.refresh_token:
+                try:
+                    # Refresh tokens allow non-interactive renewal.
+                    creds.refresh(Request())
+                except RefreshError as exc:
+                    if os.path.exists(token_path):
+                        os.remove(token_path)
+                    raise ValueError("refresh_failed") from exc
+            else:
+                # Without a refresh token, silent recovery is impossible.
+                raise ValueError("missing_refresh_token")
+
+            os.makedirs(token_dir, exist_ok=True)
+            # Persist refreshed credentials for future calls.
+            with open(token_path, "w", encoding="utf-8") as token_file:
+                token_file.write(creds.to_json())
+
+        self.service = build("gmail", "v1", credentials=creds)
+
     def fetch_unread_emails(self, max_total: int = 200, page_size: int = 50) -> List[EmailMessage]:
         """
         Fetch unread Gmail messages, normalize them into EmailMessage objects
@@ -76,9 +114,10 @@ class GmailClient(EmailClient):
 
         unread_emails: List[EmailMessage] = []
 
-        # Fetch a limited number of unread message IDs from Gmail inbox
         messages = []
         page_token = None
+
+        # Fetch unread email message IDs from Gmail using pagination and enforce a global max limit.
         while True:
             list_kwargs = {
                 "userId": "me",
@@ -98,7 +137,8 @@ class GmailClient(EmailClient):
             page_token = response.get("nextPageToken")
             if not page_token:
                 break
-
+        
+        # Decode the raw RFC822 message and extract normalized email headers from it.
         def parse_headers_from_raw(raw_b64url: str) -> dict:
             if not raw_b64url:
                 return {}
@@ -132,7 +172,7 @@ class GmailClient(EmailClient):
                     name, value = line.split(":", 1)
                     headers[name.strip()] = value.strip()
             return headers
-
+        # Retrieve each full email from Gmail in raw format using the previously collected IDs
         for message_meta in messages:
             message_id = message_meta["id"]
 
@@ -144,7 +184,7 @@ class GmailClient(EmailClient):
 
             raw_rfc822_b64url = message.get("raw", "")
             raw_headers = parse_headers_from_raw(raw_rfc822_b64url)
-
+            # Derive normalized email fields (subject, sender, recipients, body, sent date) with fallbacks.
             def get_header(name: str) -> str:
                 return raw_headers.get(name, "")
 
@@ -163,7 +203,7 @@ class GmailClient(EmailClient):
                     sent_at = datetime.fromtimestamp(int(internal_date) / 1000, tz=timezone.utc)
                 else:
                     sent_at = datetime.now(timezone.utc)
-
+            # Build a provider-agnostic EmailMessage object and return the final list of unread emails.
             unread_emails.append(
                 EmailMessage(
                     message_id=message_id,

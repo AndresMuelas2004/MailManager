@@ -1,5 +1,5 @@
 """
-JSON-backed storage implementation for users and accounts.
+JSON-backed storage implementation for mailboxes and accounts.
 
 This module persists simple serializable records to disk while keeping the
 storage interface stable for a future database migration.
@@ -14,15 +14,15 @@ from pathlib import Path
 from typing import Any
 
 from api.errors.exceptions import StorageError
-from api.storage.base import AccountStore, UserStore
+from api.storage.base import AccountStore, MailboxStore
 
 
 _BASE_DIR = Path(__file__).resolve().parents[2]
 _DATA_DIR = _BASE_DIR / "data"
-_USERS_PATH = _DATA_DIR / "users.json"
+_MAILBOXES_PATH = _DATA_DIR / "mailboxes.json"
 _ACCOUNTS_PATH = _DATA_DIR / "accounts.json"
 
-_users_lock = threading.Lock()
+_mailboxes_lock = threading.Lock()
 _accounts_lock = threading.Lock()
 
 
@@ -42,7 +42,7 @@ def _load_list(path: Path) -> list[dict[str, Any]]:
     """
     _ensure_file(path)
     try:
-        raw = path.read_text(encoding="utf-8").strip()
+        raw = path.read_text(encoding="utf-8-sig").strip()
         if not raw:
             return []
         data = json.loads(raw)
@@ -71,35 +71,37 @@ def _write_list(path: Path, data: list[dict[str, Any]]) -> None:
         raise StorageError("Failed to write storage file.", {"path": str(path)}) from exc
 
 
-class JsonUserStore(UserStore):
+class JsonMailboxStore(MailboxStore):
     """
-    JSON persistence for users.
+    JSON persistence for mailboxes.
     """
 
-    def create(self, user: dict[str, Any]) -> dict[str, Any]:
-        with _users_lock:
-            users = _load_list(_USERS_PATH)
-            users.append(user)
-            _write_list(_USERS_PATH, users)
-        return user
+    def create(self, mailbox: dict[str, Any]) -> dict[str, Any]:
+        with _mailboxes_lock:
+            mailboxes = _load_list(_MAILBOXES_PATH)
+            mailboxes.append(mailbox)
+            _write_list(_MAILBOXES_PATH, mailboxes)
+        return mailbox
 
     def list(self) -> list[dict[str, Any]]:
-        with _users_lock:
-            return _load_list(_USERS_PATH)
+        with _mailboxes_lock:
+            return _load_list(_MAILBOXES_PATH)
 
-    def get(self, user_id: str) -> dict[str, Any] | None:
-        with _users_lock:
-            users = _load_list(_USERS_PATH)
-        for user in users:
-            if user.get("user_id") == user_id:
-                return user
+    def get(self, mailbox_id: str) -> dict[str, Any] | None:
+        with _mailboxes_lock:
+            mailboxes = _load_list(_MAILBOXES_PATH)
+        for mailbox in mailboxes:
+            if mailbox.get("mailbox_id") == mailbox_id:
+                return mailbox
         return None
 
-    def delete(self, user_id: str) -> None:
-        with _users_lock:
-            users = _load_list(_USERS_PATH)
-            next_users = [user for user in users if user.get("user_id") != user_id]
-            _write_list(_USERS_PATH, next_users)
+    def delete(self, mailbox_id: str) -> None:
+        with _mailboxes_lock:
+            mailboxes = _load_list(_MAILBOXES_PATH)
+            next_mailboxes = [
+                mailbox for mailbox in mailboxes if mailbox.get("mailbox_id") != mailbox_id
+            ]
+            _write_list(_MAILBOXES_PATH, next_mailboxes)
 
 
 class JsonAccountStore(AccountStore):
@@ -107,16 +109,19 @@ class JsonAccountStore(AccountStore):
     JSON persistence for accounts.
     """
 
-    def list_by_user(self, user_id: str) -> list[dict[str, Any]]:
+    def list_by_mailbox(self, mailbox_id: str) -> list[dict[str, Any]]:
         with _accounts_lock:
             accounts = _load_list(_ACCOUNTS_PATH)
-        return [account for account in accounts if account.get("user_id") == user_id]
+        return [account for account in accounts if account.get("mailbox_id") == mailbox_id]
 
-    def get(self, user_id: str, account_id: str) -> dict[str, Any] | None:
+    def get(self, mailbox_id: str, account_id: str) -> dict[str, Any] | None:
         with _accounts_lock:
             accounts = _load_list(_ACCOUNTS_PATH)
         for account in accounts:
-            if account.get("user_id") == user_id and account.get("account_id") == account_id:
+            if (
+                account.get("mailbox_id") == mailbox_id
+                and account.get("account_id") == account_id
+            ):
                 return account
         return None
 
@@ -126,7 +131,7 @@ class JsonAccountStore(AccountStore):
             replaced = False
             for index, existing in enumerate(accounts):
                 if (
-                    existing.get("user_id") == account.get("user_id")
+                    existing.get("mailbox_id") == account.get("mailbox_id")
                     and existing.get("account_id") == account.get("account_id")
                 ):
                     accounts[index] = account
@@ -137,26 +142,26 @@ class JsonAccountStore(AccountStore):
             _write_list(_ACCOUNTS_PATH, accounts)
         return account
 
-    def delete(self, user_id: str, account_id: str) -> None:
+    def delete(self, mailbox_id: str, account_id: str) -> None:
         with _accounts_lock:
             accounts = _load_list(_ACCOUNTS_PATH)
             next_accounts = [
                 account
                 for account in accounts
                 if not (
-                    account.get("user_id") == user_id
+                    account.get("mailbox_id") == mailbox_id
                     and account.get("account_id") == account_id
                 )
             ]
             _write_list(_ACCOUNTS_PATH, next_accounts)
 
 
-user_store = JsonUserStore()
+mailbox_store = JsonMailboxStore()
 account_store = JsonAccountStore()
 
 
 def now_iso() -> str:
     """
-    Provide a stable timestamp for record creation.
+    Provide a stable timestamp for record creation used at "create_at" in mailbox_ID and accounts record.
     """
     return datetime.now(timezone.utc).isoformat()

@@ -1,9 +1,9 @@
 import { type FormEvent, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
-import { createUser } from "../api/endpoints/users";
+import { createMailbox } from "../api/endpoints/mailboxes";
 
-export default function UsersPage() {
+export default function MailboxesPage() {
   const navigate = useNavigate();
   const [name, setName] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -22,13 +22,13 @@ export default function UsersPage() {
     setErrorMsg("");
     try {
       setIsSubmitting(true);
-      const user = await createUser({ display_name: trimmedName });
-      const mailboxId = user.user_id;
+      const mailbox = await createMailbox({ display_name: trimmedName });
+      const mailboxId = mailbox.mailbox_id;
 
       localStorage.setItem("lastMailboxId", String(mailboxId));
       navigate(`/m/${mailboxId}/inbox`);
     } catch (error) {
-      console.error("Failed to create mailbox user.", error);
+      console.error("Failed to create mailbox.", error);
       setErrorMsg("No pudimos crear la bandeja. Intenta nuevamente.");
       setName("");
     } finally {

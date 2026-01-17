@@ -39,6 +39,14 @@ class EmailClient(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    def authenticate_silent(self) -> None:
+        """
+        Perform authentication without starting interactive flows.
+        """
+        # Providers should refresh tokens or raise when non-interactive auth fails.
+        raise NotImplementedError
+
+    @abstractmethod
     def fetch_unread_emails(self) -> List[EmailMessage]:
         """
         Retrieve unread emails from the provider and return them as a list

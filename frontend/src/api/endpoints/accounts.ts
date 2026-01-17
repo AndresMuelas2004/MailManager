@@ -9,7 +9,7 @@ import type {
 import { parseListAccountsResponse } from "../types/zod";
 
 export function listAccounts(mailboxId: string): Promise<AccountOut[]> {
-  return request<AccountOut[]>(`/users/${mailboxId}/accounts`).then((data) => {
+  return request<AccountOut[]>(`/mailboxes/${mailboxId}/accounts`).then((data) => {
     try {
       return parseListAccountsResponse(data) as AccountOut[];
     } catch (error) {
@@ -19,7 +19,7 @@ export function listAccounts(mailboxId: string): Promise<AccountOut[]> {
 }
 
 export function createAccount(mailboxId: string, payload: AccountCreate): Promise<AccountOut> {
-  return request<AccountOut>(`/users/${mailboxId}/accounts`, { method: "POST", body: payload });
+  return request<AccountOut>(`/mailboxes/${mailboxId}/accounts`, { method: "POST", body: payload });
 }
 
 export function updateAccount(
@@ -27,14 +27,14 @@ export function updateAccount(
   accountId: string,
   payload: AccountUpdate
 ): Promise<AccountOut> {
-  return request<AccountOut>(`/users/${mailboxId}/accounts/${accountId}`, {
+  return request<AccountOut>(`/mailboxes/${mailboxId}/accounts/${accountId}`, {
     method: "PATCH",
     body: payload,
   });
 }
 
 export function deleteAccount(mailboxId: string, accountId: string): Promise<{ status: string }> {
-  return request<{ status: string }>(`/users/${mailboxId}/accounts/${accountId}`, {
+  return request<{ status: string }>(`/mailboxes/${mailboxId}/accounts/${accountId}`, {
     method: "DELETE",
   });
 }
@@ -43,9 +43,12 @@ export function connectAccount(
   mailboxId: string,
   accountId: string
 ): Promise<AccountConnectResponse> {
-  return request<AccountConnectResponse>(`/users/${mailboxId}/accounts/${accountId}/connect`, {
+  return request<AccountConnectResponse>(
+    `/mailboxes/${mailboxId}/accounts/${accountId}/connect`,
+    {
     method: "POST",
-  });
+    }
+  );
 }
 
 export type AddAccountAndConnectResult = {

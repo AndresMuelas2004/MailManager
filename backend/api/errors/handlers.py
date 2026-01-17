@@ -1,4 +1,4 @@
-"""
+﻿"""
 FastAPI exception handlers for API errors.
 
 Handlers translate domain-specific exceptions into consistent HTTP responses.
@@ -16,16 +16,17 @@ from api.errors.exceptions import (
     ApiError,
     EmailFetchError,
     EmailSendError,
+    EnvVarError,
     ProviderAuthError,
     ProviderNotSupported,
     StorageError,
-    UserNotFound,
+    MailboxNotFound,
 )
 from api.schemas.error import ErrorResponse
 
 
 _STATUS_MAP: dict[type[ApiError], int] = {
-    UserNotFound: status.HTTP_404_NOT_FOUND,
+    MailboxNotFound: status.HTTP_404_NOT_FOUND,
     AccountNotFound: status.HTTP_404_NOT_FOUND,
     ProviderNotSupported: status.HTTP_400_BAD_REQUEST,
     AccountMisconfigured: status.HTTP_400_BAD_REQUEST,
@@ -33,6 +34,7 @@ _STATUS_MAP: dict[type[ApiError], int] = {
     AccountNotConnected: status.HTTP_409_CONFLICT,
     EmailFetchError: status.HTTP_502_BAD_GATEWAY,
     EmailSendError: status.HTTP_502_BAD_GATEWAY,
+    EnvVarError: status.HTTP_500_INTERNAL_SERVER_ERROR,
     StorageError: status.HTTP_503_SERVICE_UNAVAILABLE,
 }
 
@@ -64,3 +66,4 @@ def register_error_handlers(app: FastAPI) -> None:
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             content=_error_payload(fallback),
         )
+

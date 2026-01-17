@@ -37,6 +37,13 @@ class OutlookClient(EmailClient):
         # TODO: Implement OAuth2 authentication for Microsoft Graph API.
         raise NotImplementedError("OutlookClient.authenticate() not implemented yet.")
 
+    def authenticate_silent(self) -> None:
+        """
+        Perform non-interactive authentication for Outlook.
+        """
+        # TODO: Implement token refresh without interactive flow.
+        raise NotImplementedError("OutlookClient.authenticate_silent() not implemented yet.")
+
     def fetch_unread_emails(self) -> List[EmailMessage]:
         """
         Fetch unread Outlook messages, normalize them into EmailMessage objects

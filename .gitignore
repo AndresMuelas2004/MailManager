@@ -14,6 +14,8 @@ __pycache__/
 .DS_Store
 Thumbs.db
 
+# Local scripts / experimental code
+backend/Scripts/
+
 # Runtime persisted data (local only)
-backend/data/users.json
-backend/data/accounts.json
+backend/data/
