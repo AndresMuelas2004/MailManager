@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-BACKEND_PATH = Path(__file__).resolve().parents[4]
+BACKEND_PATH = Path(__file__).resolve().parents[3]
 if str(BACKEND_PATH) not in sys.path:
     sys.path.insert(0, str(BACKEND_PATH))
 
