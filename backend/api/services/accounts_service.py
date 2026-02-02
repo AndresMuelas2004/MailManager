@@ -18,8 +18,13 @@ from api.schemas.account import (
     AccountOut,
     AccountUpdate,
 )
-from api.services.services_helpers import build_manager_for_accounts, ensure_mailbox_exists
-from api.storage.token_store import delete_account_tokens_for_records
+from api.services.services_helpers import (
+    build_manager_for_accounts,
+    ensure_mailbox_exists,
+    load_wrapped_app_credentials,
+    unwrap_secret,
+)
+from api.storage.token_store import delete_account_tokens_for_records, save_account_tokens
 from api.storage.json_store import account_store, now_iso
 
 
@@ -101,9 +106,10 @@ def connect_account(mailbox_id: str, account_id: str) -> AccountConnectResponse:
 
     account_label = f"{mailbox_id}__{account_id}"
     manager = build_manager_for_accounts([record])
+    app_credentials = load_wrapped_app_credentials()
 
     try:
-        manager.connect_account(account_label)
+        wrapped_tokens = manager.connect_account(account_label, app_credentials)
     except ValueError as exc:
         message = str(exc).strip()
         if message in {
@@ -121,6 +127,11 @@ def connect_account(mailbox_id: str, account_id: str) -> AccountConnectResponse:
                 "account_label": account_label,
             },
         ) from exc
+
+    token_payload = dict(wrapped_tokens or {})
+    token_payload["access_token"] = unwrap_secret(token_payload.get("access_token"))
+    token_payload["refresh_token"] = unwrap_secret(token_payload.get("refresh_token"))
+    save_account_tokens(mailbox_id, account_id, token_payload)
 
     return AccountConnectResponse(
         connected=True,

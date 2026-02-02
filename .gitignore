@@ -20,3 +20,7 @@ backend/Scripts/
 
 # Runtime persisted data (local only)
 backend/data/
+
+#generalTestUsedWhileCoding
+backend/tests/generalTest
+backend/tests/generalTest.py

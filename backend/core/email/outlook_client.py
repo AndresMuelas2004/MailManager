@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import List
+from typing import Any, List
 
 from .email_client import EmailClient, EmailMessage
 
@@ -30,14 +30,21 @@ class OutlookClient(EmailClient):
         self._tenant_id = tenant_id
         self._graph_client = None  # Will hold the Graph API client instance
 
-    def authenticate(self) -> None:
+    def authenticate(
+        self,
+        app_credentials: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
         """
         Initialize or refresh the Microsoft Graph client using OAuth2.
         """
         # TODO: Implement OAuth2 authentication for Microsoft Graph API.
         raise NotImplementedError("OutlookClient.authenticate() not implemented yet.")
 
-    def authenticate_silent(self) -> None:
+    def authenticate_silent(
+        self,
+        app_credentials: dict[str, Any] | None = None,
+        user_tokens: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
         """
         Perform non-interactive authentication for Outlook.
         """

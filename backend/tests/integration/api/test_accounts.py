@@ -1,3 +1,5 @@
+import os
+
 import pytest
 
 from api.services import accounts_service
@@ -87,6 +89,34 @@ def test_connect_account_success(test_client):
     assert payload["connected"] is True
     assert payload["account_id"] == account["account_id"]
     assert payload["account_label"] == f"{mailbox['mailbox_id']}__{account['account_id']}"
+
+
+@pytest.mark.integration
+def test_create_account_and_connect_existing_mailbox_real_flow(
+    test_client_base, temp_base_dir, monkeypatch
+):
+    if not os.getenv("MIA_GMAIL_CREDENTIALS_PATH"):
+        pytest.skip("Set MIA_GMAIL_CREDENTIALS_PATH to run the OAuth connect flow.")
+
+    if not os.getenv("MIA_GMAIL_TOKEN_PATH"):
+        token_dir = temp_base_dir / "gmail_tokens"
+        token_dir.mkdir(parents=True, exist_ok=True)
+        monkeypatch.setenv("MIA_GMAIL_TOKEN_PATH", str(token_dir))
+
+    mailbox = _create_mailbox(test_client_base)
+    mailbox_id = mailbox["mailbox_id"]
+    account = _create_account(test_client_base, mailbox_id)
+
+    assert account["mailbox_id"] == mailbox_id
+
+    response = test_client_base.post(
+        f"/mailboxes/{mailbox_id}/accounts/{account['account_id']}/connect"
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["connected"] is True
+    assert payload["account_id"] == account["account_id"]
+    assert payload["account_label"] == f"{mailbox_id}__{account['account_id']}"
 
 
 @pytest.mark.integration

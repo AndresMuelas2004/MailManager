@@ -3,7 +3,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import datetime
-from typing import List
+from typing import Any, List
 
 
 @dataclass
@@ -31,7 +31,10 @@ class EmailClient(ABC):
     """
 
     @abstractmethod
-    def authenticate(self) -> None:
+    def authenticate(
+        self,
+        app_credentials: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
         """
         Perform any authentication or token refresh needed for this client.
         This method should be called before making API calls.
@@ -39,9 +42,14 @@ class EmailClient(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def authenticate_silent(self) -> None:
+    def authenticate_silent(
+        self,
+        app_credentials: dict[str, Any] | None = None,
+        user_tokens: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
         """
         Perform authentication without starting interactive flows.
+        Returns updated token payload when a refresh occurs.
         """
         # Providers should refresh tokens or raise when non-interactive auth fails.
         raise NotImplementedError

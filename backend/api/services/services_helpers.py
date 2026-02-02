@@ -6,6 +6,8 @@ from __future__ import annotations
 
 from typing import Any, Iterable
 
+from pydantic import SecretStr
+
 from core.email.email_manager import EmailManager
 
 from api.errors.exceptions import (
@@ -16,6 +18,7 @@ from api.errors.exceptions import (
     MailboxNotFound,
 )
 from api.storage.json_store import mailbox_store
+from api.storage.token_store import load_account_tokens, load_app_credentials
 
 
 def ensure_mailbox_exists(mailbox_id: str) -> None:
@@ -98,3 +101,41 @@ def is_auth_error(exc: Exception) -> bool:
     """
     message = str(exc).strip().lower()
     return message in _AUTH_ERROR_MESSAGES
+
+
+def _wrap_secret(value: Any) -> Any:
+    if value is None:
+        return None
+    return SecretStr(str(value))
+
+
+def unwrap_secret(value: Any) -> Any:
+    if value is None:
+        return None
+    if isinstance(value, SecretStr):
+        return value.get_secret_value()
+    return value
+
+
+def load_wrapped_app_credentials() -> dict[str, Any]:
+    """
+    Load app credentials and wrap the client_secret as SecretStr.
+    """
+    credentials = load_app_credentials()
+    payload = dict(credentials) if isinstance(credentials, dict) else {}
+    if "client_secret" in payload:
+        payload["client_secret"] = _wrap_secret(payload.get("client_secret"))
+    return payload
+
+
+def load_wrapped_account_tokens(mailbox_id: str, account_id: str) -> dict[str, Any]:
+    """
+    Load account tokens and wrap access/refresh tokens as SecretStr.
+    """
+    token_data = load_account_tokens(mailbox_id, account_id)
+    payload = dict(token_data) if isinstance(token_data, dict) else {}
+    if "access_token" in payload:
+        payload["access_token"] = _wrap_secret(payload.get("access_token"))
+    if "refresh_token" in payload:
+        payload["refresh_token"] = _wrap_secret(payload.get("refresh_token"))
+    return payload

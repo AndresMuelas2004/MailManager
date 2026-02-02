@@ -1,15 +1,17 @@
 from __future__ import annotations
 import base64
-import os
-from google_auth_oauthlib.flow import InstalledAppFlow
-from google.oauth2.credentials import Credentials
-from google.auth.transport.requests import Request
-from googleapiclient.discovery import build
-from .email_client import EmailClient, EmailMessage
-from google.auth.exceptions import RefreshError
-from typing import List
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
+from typing import Any, List
+
+from google.auth.exceptions import RefreshError
+from google.auth.transport.requests import Request
+from google.oauth2.credentials import Credentials
+from google_auth_oauthlib.flow import InstalledAppFlow
+from googleapiclient.discovery import build
+from pydantic import SecretStr
+
+from .email_client import EmailClient, EmailMessage
 
 GMAIL_SCOPES = ["https://www.googleapis.com/auth/gmail.modify"]
 
@@ -24,85 +26,143 @@ class GmailClient(EmailClient):
         self._account_label = account_label
         self.service = None
 
-    def authenticate(self) -> None:
+    def authenticate(
+        self,
+        app_credentials: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         """
         Authenticate the Gmail client using OAuth2.
         """
-        creds = None
+        credentials_payload = self._unwrap_app_credentials(app_credentials)
+        if not credentials_payload:
+            raise ValueError("Missing app credentials.")
 
-        credentials_path = os.getenv("MIA_GMAIL_CREDENTIALS_PATH")
-        token_dir = os.getenv("MIA_GMAIL_TOKEN_PATH")
-
-        if not credentials_path:
-            raise ValueError("MIA_GMAIL_CREDENTIALS_PATH is not set.")
-
-        if not token_dir:
-            raise ValueError("MIA_GMAIL_TOKEN_PATH is not set (must be a directory).")
-
-        token_path = os.path.join(token_dir, f"gmail_token_{self._account_label}.json")
-
-        if os.path.exists(token_path):
-            creds = Credentials.from_authorized_user_file(token_path, GMAIL_SCOPES)
-
-        if not creds or not creds.valid:
-            if creds and creds.expired and creds.refresh_token:
-                try:
-                    creds.refresh(Request())
-                except RefreshError:
-                    if os.path.exists(token_path):
-                        os.remove(token_path)
-                    creds = None
-
-            if not creds:
-                flow = InstalledAppFlow.from_client_secrets_file(
-                    credentials_path,
-                    GMAIL_SCOPES,
-                )
-                creds = flow.run_local_server(port=0)
-
-            os.makedirs(token_dir, exist_ok=True)
-            with open(token_path, "w", encoding="utf-8") as token_file:
-                token_file.write(creds.to_json())
+        client_config = self._build_client_config(credentials_payload)
+        flow = InstalledAppFlow.from_client_config(client_config, GMAIL_SCOPES)
+        creds = flow.run_local_server(port=0)
 
         self.service = build("gmail", "v1", credentials=creds)
+        token_record = {
+            "access_token": creds.token,
+            "refresh_token": creds.refresh_token,
+            "expiry": creds.expiry.isoformat() if creds.expiry else None,
+            "scopes": creds.scopes,
+        }
+        return self._wrap_account_tokens(token_record)
 
-    def authenticate_silent(self) -> None:
+    def authenticate_silent(
+        self,
+        app_credentials: dict[str, Any] | None = None,
+        user_tokens: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
         """
         Authenticate the Gmail client without starting an interactive OAuth flow.
         """
-        creds = None
+        credentials_payload = self._unwrap_app_credentials(app_credentials)
+        if not credentials_payload:
+            raise ValueError("Missing app credentials.")
 
-        token_dir = os.getenv("MIA_GMAIL_TOKEN_PATH")
-        if not token_dir:
-            # Missing token directory means silent auth cannot proceed.
-            raise ValueError("MIA_GMAIL_TOKEN_PATH is not set (must be a directory).")
-
-        token_path = os.path.join(token_dir, f"gmail_token_{self._account_label}.json")
-        if not os.path.exists(token_path):
-            # No saved token means the account has not been connected yet.
+        token_payload = self._unwrap_user_tokens(user_tokens)
+        access_token = token_payload.get("access_token")
+        if not access_token:
             raise ValueError("missing_token")
 
-        creds = Credentials.from_authorized_user_file(token_path, GMAIL_SCOPES)
+        refresh_token = token_payload.get("refresh_token")
+        expiry = self._parse_expiry(token_payload.get("expiry"))
 
-        if not creds or not creds.valid:
-            if creds and creds.expired and creds.refresh_token:
-                try:
-                    # Refresh tokens allow non-interactive renewal.
-                    creds.refresh(Request())
-                except RefreshError as exc:
-                    if os.path.exists(token_path):
-                        os.remove(token_path)
-                    raise ValueError("refresh_failed") from exc
-            else:
-                # Without a refresh token, silent recovery is impossible.
-                raise ValueError("missing_refresh_token")
+        token_uri = credentials_payload.get("token_uri")
+        client_id = credentials_payload.get("client_id")
+        client_secret = credentials_payload.get("client_secret")
+        if not token_uri or not client_id or not client_secret:
+            raise ValueError("Missing required app credentials.")
 
-            os.makedirs(token_dir, exist_ok=True)
-            # Persist refreshed credentials for future calls.
-            with open(token_path, "w", encoding="utf-8") as token_file:
-                token_file.write(creds.to_json())
+        creds = Credentials(
+            token=access_token,
+            refresh_token=refresh_token,
+            token_uri=token_uri,
+            client_id=client_id,
+            client_secret=client_secret,
+            scopes=token_payload.get("scopes") or GMAIL_SCOPES,
+            expiry=expiry,
+        )
+        refreshed = False
+        if creds.expired and creds.refresh_token:
+            try:
+                creds.refresh(Request())
+                refreshed = True
+            except RefreshError as exc:
+                raise ValueError("refresh_failed") from exc
+        elif creds.expired and not creds.refresh_token:
+            raise ValueError("missing_refresh_token")
 
         self.service = build("gmail", "v1", credentials=creds)
+        if refreshed:
+            token_record = {
+                "access_token": creds.token,
+                "refresh_token": creds.refresh_token,
+                "expiry": creds.expiry.isoformat() if creds.expiry else None,
+                "scopes": creds.scopes,
+            }
+            return self._wrap_account_tokens(token_record)
+        return None
+
+    def _unwrap_app_credentials(
+        self, app_credentials: dict[str, Any] | None
+    ) -> dict[str, Any]:
+        payload = dict(app_credentials or {})
+        secret = payload.get("client_secret")
+        if isinstance(secret, SecretStr):
+            payload["client_secret"] = secret.get_secret_value()
+        return payload
+
+    def _unwrap_user_tokens(
+        self, user_tokens: dict[str, Any] | None
+    ) -> dict[str, Any]:
+        payload = dict(user_tokens or {})
+        access_token = payload.get("access_token")
+        refresh_token = payload.get("refresh_token")
+        if isinstance(access_token, SecretStr):
+            payload["access_token"] = access_token.get_secret_value()
+        if isinstance(refresh_token, SecretStr):
+            payload["refresh_token"] = refresh_token.get_secret_value()
+        return payload
+
+    def _build_client_config(self, payload: dict[str, Any]) -> dict[str, Any]:
+        if "installed" in payload or "web" in payload:
+            return payload
+        return {"installed": payload}
+
+    def _wrap_account_tokens(self, token_data: dict[str, Any]) -> dict[str, Any]:
+        payload = dict(token_data or {})
+        if "access_token" in payload:
+            payload["access_token"] = SecretStr(str(payload.get("access_token")))
+        if "refresh_token" in payload:
+            payload["refresh_token"] = SecretStr(str(payload.get("refresh_token")))
+        return payload
+
+    def _parse_expiry(self, value: Any) -> datetime | None:
+        if value is None:
+            return None
+        if isinstance(value, datetime):
+            if value.tzinfo is None:
+                return value
+            return value.astimezone(timezone.utc).replace(tzinfo=None)
+        if isinstance(value, (int, float)):
+            return datetime.fromtimestamp(value, tz=timezone.utc).replace(tzinfo=None)
+        if isinstance(value, str):
+            raw = value.strip()
+            if not raw:
+                return None
+            if raw.endswith("Z"):
+                raw = raw[:-1] + "+00:00"
+            try:
+                parsed = datetime.fromisoformat(raw)
+            except ValueError:
+                return None
+            if parsed.tzinfo is None:
+                return parsed
+            return parsed.astimezone(timezone.utc).replace(tzinfo=None)
+        return None
 
     def fetch_unread_emails(self, max_total: int = 200, page_size: int = 50) -> List[EmailMessage]:
         """
