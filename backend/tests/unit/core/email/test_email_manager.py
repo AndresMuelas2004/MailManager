@@ -3,23 +3,31 @@
 import pytest
 
 from core.email.email_manager import EmailManager
+from core.email.errors import (
+    EmailAccountNotFoundError,
+    EmailAccountRecordError,
+    EmailClientUnsupportedError,
+    EmailDuplicateAccountLabelError,
+    EmailProviderConfigError,
+    EmailProviderNotSupportedError,
+)
 
 
 def test_add_account_record_requires_mailbox_id(manager: EmailManager):
     record = {"account_id": "acc", "provider": "gmail", "config": {}}
-    with pytest.raises(ValueError, match="mailbox_id"):
+    with pytest.raises(EmailAccountRecordError, match="mailbox_id"):
         manager.add_account_record(record)
 
 
 def test_add_account_record_requires_account_id(manager: EmailManager):
     record = {"mailbox_id": "mb", "provider": "gmail", "config": {}}
-    with pytest.raises(ValueError, match="account_id"):
+    with pytest.raises(EmailAccountRecordError, match="account_id"):
         manager.add_account_record(record)
 
 
 def test_add_account_record_requires_provider(manager: EmailManager):
     record = {"mailbox_id": "mb", "account_id": "acc", "config": {}}
-    with pytest.raises(ValueError, match="provider"):
+    with pytest.raises(EmailAccountRecordError, match="provider"):
         manager.add_account_record(record)
 
 
@@ -33,9 +41,9 @@ def test_add_account_record_builds_label_mailbox__account_and_registers_client(
     assert manager._clients[0].get_account_label() == "mb__acc"
 
 
-def test_build_client_unsupported_provider_raises_valueerror(manager: EmailManager):
+def test_build_client_unsupported_provider_raises_error(manager: EmailManager):
     """Rejects unknown providers."""
-    with pytest.raises(ValueError, match="not supported"):
+    with pytest.raises(EmailProviderNotSupportedError, match="not supported"):
         manager._build_client("yahoo", "label", {})
 
 
@@ -43,7 +51,7 @@ def test_build_client_outlook_requires_client_id_client_secret_tenant_id(
     manager: EmailManager,
 ):
     """Requires Outlook config fields even if client is unimplemented."""
-    with pytest.raises(ValueError, match="requires client_id"):
+    with pytest.raises(EmailProviderConfigError, match="requires client_id"):
         manager._build_client("outlook", "label", {})
 
 
@@ -62,7 +70,7 @@ def test_add_client_rejects_duplicate_account_label(
     """Rejects a second client with the same account label."""
     manager.add_client(fake_client_ok)
     dup = fake_client_factory(fake_client_ok.get_account_label())
-    with pytest.raises(ValueError, match="already exists"):
+    with pytest.raises(EmailDuplicateAccountLabelError, match="already exists"):
         manager.add_client(dup)
 
 
@@ -133,7 +141,7 @@ def test_authenticate_all_silent_client_without_method_is_recorded_as_error(
     manager.authenticate_all_silent()
     errors = manager.get_last_errors()
     assert set(errors.keys()) == {"acct_min"}
-    assert isinstance(errors["acct_min"], ValueError)
+    assert isinstance(errors["acct_min"], EmailClientUnsupportedError)
 
 
 def test_connect_account_authenticates_only_requested_label(
@@ -147,8 +155,8 @@ def test_connect_account_authenticates_only_requested_label(
     assert fake_client_ok_2.authenticate_calls == 0
 
 
-def test_connect_account_not_found_raises_valueerror(manager: EmailManager):
-    with pytest.raises(ValueError, match="not found"):
+def test_connect_account_not_found_raises_error(manager: EmailManager):
+    with pytest.raises(EmailAccountNotFoundError, match="not found"):
         manager.connect_account("missing")
     assert manager.get_last_errors() == {}
 
@@ -209,8 +217,8 @@ def test_send_email_from_account_routes_to_correct_client(
     assert fake_client_ok_2.sent_emails == []
 
 
-def test_send_email_from_account_not_found_raises_valueerror(manager: EmailManager):
-    with pytest.raises(ValueError, match="not found"):
+def test_send_email_from_account_not_found_raises_error(manager: EmailManager):
+    with pytest.raises(EmailAccountNotFoundError, match="not found"):
         manager.send_email_from_account("missing", "s", "b", ["a@example.com"])
 
 

@@ -2,6 +2,14 @@ from __future__ import annotations
 
 from typing import Any, List
 from .email_client import EmailClient, EmailMessage
+from .errors import (
+    EmailAccountNotFoundError,
+    EmailAccountRecordError,
+    EmailClientUnsupportedError,
+    EmailDuplicateAccountLabelError,
+    EmailProviderConfigError,
+    EmailProviderNotSupportedError,
+)
 from .gmail_client import GmailClient
 from .outlook_client import OutlookClient
 
@@ -27,11 +35,11 @@ class EmailManager:
         account_id = str(record.get("account_id") or "")
         provider = str(record.get("provider") or "").lower()
         if not mailbox_id:
-            raise ValueError("Account record is missing mailbox_id.")
+            raise EmailAccountRecordError("Account record is missing mailbox_id.")
         if not account_id:
-            raise ValueError("Account record is missing account_id.")
+            raise EmailAccountRecordError("Account record is missing account_id.")
         if not provider:
-            raise ValueError("Account record is missing provider.")
+            raise EmailAccountRecordError("Account record is missing provider.")
 
         account_label = f"{mailbox_id}__{account_id}"
         config = record.get("config") or {}
@@ -48,7 +56,7 @@ class EmailManager:
             client_secret = str(config.get("client_secret") or "")
             tenant_id = str(config.get("tenant_id") or "")
             if not client_id or not client_secret or not tenant_id:
-                raise ValueError(
+                raise EmailProviderConfigError(
                     "Outlook account config requires client_id, client_secret, tenant_id."
                 )
             return OutlookClient(
@@ -57,7 +65,7 @@ class EmailManager:
                 client_secret=client_secret,
                 tenant_id=tenant_id,
             )
-        raise ValueError(f"Provider '{provider}' is not supported.")
+        raise EmailProviderNotSupportedError(f"Provider '{provider}' is not supported.")
 
     def add_client(self, client: EmailClient) -> None:
         """
@@ -66,7 +74,7 @@ class EmailManager:
         new_label = client.get_account_label()
         for existing in self._clients:
             if existing.get_account_label() == new_label:
-                raise ValueError(f"Account label '{new_label}' already exists.")
+                raise EmailDuplicateAccountLabelError(f"Account label '{new_label}' already exists.")
         self._clients.append(client)
 
     def authenticate_all(
@@ -115,7 +123,7 @@ class EmailManager:
                     if isinstance(updated, dict) and updated:
                         refreshed_tokens[client.get_account_label()] = updated
                 else:
-                    raise ValueError("Client does not support silent authentication.")
+                    raise EmailClientUnsupportedError("Client does not support silent authentication.")
             except Exception as exc:
                 self._last_errors[client.get_account_label()] = exc
         return refreshed_tokens
@@ -138,7 +146,10 @@ class EmailManager:
             except Exception as exc:
                 self._last_errors[account_label] = exc
                 raise
-        raise ValueError(f"Account '{account_label}' not found.")
+        raise EmailAccountNotFoundError(
+            f"Account '{account_label}' not found.",
+            {"account_label": account_label},
+        )
 
     def fetch_all_unread_emails(self) -> List[EmailMessage]:
         """
@@ -170,7 +181,10 @@ class EmailManager:
                 client.send_email(subject, body, recipients)
                 return
 
-        raise ValueError(f"Account '{account_label}' not found.")
+        raise EmailAccountNotFoundError(
+            f"Account '{account_label}' not found.",
+            {"account_label": account_label},
+        )
 
     def get_last_errors(self) -> dict[str, Exception]:
         """

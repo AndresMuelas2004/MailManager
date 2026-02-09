@@ -1,0 +1,108 @@
+from __future__ import annotations
+
+from typing import Any
+
+
+class CoreError(Exception):
+    code = "core_error"
+    default_message = "Core error."
+
+    def __init__(self, message: str | None = None, detail: dict[str, Any] | None = None) -> None:
+        if message is None:
+            message = self.default_message
+        super().__init__(message)
+        self.message = message
+        self.detail = detail or {}
+
+    def __str__(self) -> str:
+        return self.message
+
+
+class CoreUnexpectedError(CoreError):
+    code = "core_unexpected_error"
+    default_message = "Unexpected core error."
+
+    def __init__(
+        self,
+        message: str | None = None,
+        detail: dict[str, Any] | None = None,
+        *,
+        original: Exception | None = None,
+    ) -> None:
+        super().__init__(message, detail)
+        self.original = original
+
+
+class EmailError(CoreError):
+    code = "email_error"
+    default_message = "Email error."
+
+
+class EmailAuthError(EmailError):
+    code = "email_auth_error"
+    default_message = "Email authentication error."
+
+
+class EmailConfigError(EmailError):
+    code = "email_config_error"
+    default_message = "Email configuration error."
+
+
+class EmailAccountRecordError(EmailConfigError):
+    code = "email_account_record_error"
+    default_message = "Account record is invalid."
+
+
+class EmailProviderConfigError(EmailConfigError):
+    code = "email_provider_config_error"
+    default_message = "Provider configuration is invalid."
+
+
+class EmailMissingAppCredentialsError(EmailConfigError):
+    code = "email_missing_app_credentials"
+    default_message = "Missing app credentials."
+
+
+class EmailProviderNotSupportedError(EmailError):
+    code = "email_provider_not_supported"
+    default_message = "Provider is not supported."
+
+
+class EmailDuplicateAccountLabelError(EmailConfigError):
+    code = "email_duplicate_account_label"
+    default_message = "Account label already exists."
+
+
+class EmailClientUnsupportedError(EmailConfigError):
+    code = "email_client_unsupported"
+    default_message = "Client does not support this operation."
+
+
+class EmailAccountNotFoundError(EmailError):
+    code = "email_account_not_found"
+    default_message = "Account not found."
+
+
+class EmailMissingTokenError(EmailAuthError):
+    code = "email_missing_token"
+    default_message = "missing_token"
+
+
+class EmailMissingRefreshTokenError(EmailAuthError):
+    code = "email_missing_refresh_token"
+    default_message = "missing_refresh_token"
+
+
+class EmailRefreshFailedError(EmailAuthError):
+    code = "email_refresh_failed"
+    default_message = "refresh_failed"
+
+
+class EmailNotAuthenticatedError(EmailAuthError):
+    code = "email_not_authenticated"
+    default_message = "Client is not authenticated."
+
+
+class EmailRecipientsMissingError(EmailError):
+    code = "email_recipients_missing"
+    default_message = "At least one recipient is required."

@@ -7,12 +7,12 @@ from __future__ import annotations
 from typing import Any
 
 from api.errors.exceptions import (
-    AccountMisconfigured,
     AccountNotConnected,
     AccountNotFound,
     EmailFetchError,
     EmailSendError,
 )
+from core.email.errors import CoreError
 from api.schemas.email import EmailOut, EmailSendRequest
 from api.services.services_helpers import (
     build_manager_for_accounts,
@@ -21,6 +21,7 @@ from api.services.services_helpers import (
     load_wrapped_account_tokens,
     load_wrapped_app_credentials,
     raise_on_silent_auth_errors,
+    translate_core_error,
     unwrap_secret,
 )
 from api.storage.json_store import account_store
@@ -66,11 +67,9 @@ def get_unread(mailbox_id: str) -> list[EmailOut]:
 
     try:
         unread = manager.fetch_all_unread_emails()
+    except CoreError as exc:
+        raise translate_core_error(exc, fallback=EmailFetchError) from exc
     except Exception as exc:
-        if is_auth_error(exc):
-            raise AccountNotConnected(
-                "One or more accounts are not connected. Call /connect first."
-            ) from exc
         raise EmailFetchError("Failed to fetch unread emails.") from exc
 
     errors = manager.get_last_errors()
@@ -113,12 +112,13 @@ def send_email(mailbox_id: str, payload: EmailSendRequest) -> dict[str, str]:
             body=payload.body,
             recipients=payload.recipients,
         )
+    except CoreError as exc:
+        raise translate_core_error(
+            exc,
+            fallback=EmailSendError,
+            context={"account_id": payload.account_id, "account_label": account_label},
+        ) from exc
     except Exception as exc:
-        if is_auth_error(exc):
-            raise AccountNotConnected(
-                "Account is not connected. Call /connect first.",
-                {"account_id": payload.account_id, "account_label": account_label},
-            ) from exc
         raise EmailSendError("Failed to send email.") from exc
 
     return {"status": "sent"}

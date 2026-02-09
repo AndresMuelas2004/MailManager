@@ -9,16 +9,86 @@ from typing import Any, Iterable
 from pydantic import SecretStr
 
 from core.email.email_manager import EmailManager
+from core.email.errors import (
+    CoreError,
+    CoreUnexpectedError,
+    EmailAccountNotFoundError,
+    EmailAuthError,
+    EmailConfigError,
+    EmailMissingAppCredentialsError,
+    EmailMissingRefreshTokenError,
+    EmailMissingTokenError,
+    EmailNotAuthenticatedError,
+    EmailProviderNotSupportedError,
+    EmailRecipientsMissingError,
+    EmailRefreshFailedError,
+    EmailAccountRecordError,
+    EmailProviderConfigError,
+    EmailDuplicateAccountLabelError,
+    EmailClientUnsupportedError,
+)
 
 from api.errors.exceptions import (
     AccountMisconfigured,
     AccountNotConnected,
+    AccountNotFound,
     ApiError,
+    EmailSendError,
     EnvVarError,
     MailboxNotFound,
+    ProviderNotSupported,
 )
 from api.storage.json_store import mailbox_store
 from api.storage.token_store import load_account_tokens, load_app_credentials
+
+
+# ---------------------------------------------------------------------------
+# Core → API error mapping (most specific first; evaluated with isinstance)
+# ---------------------------------------------------------------------------
+
+_CORE_TO_API_MAP: list[tuple[type[CoreError], type[ApiError]]] = [
+    (EmailAccountNotFoundError, AccountNotFound),
+    (EmailMissingTokenError, AccountNotConnected),
+    (EmailMissingRefreshTokenError, AccountNotConnected),
+    (EmailRefreshFailedError, AccountNotConnected),
+    (EmailNotAuthenticatedError, AccountNotConnected),
+    (EmailAuthError, AccountNotConnected),
+    (EmailProviderNotSupportedError, ProviderNotSupported),
+    (EmailAccountRecordError, AccountMisconfigured),
+    (EmailProviderConfigError, AccountMisconfigured),
+    (EmailMissingAppCredentialsError, AccountMisconfigured),
+    (EmailDuplicateAccountLabelError, AccountMisconfigured),
+    (EmailClientUnsupportedError, AccountMisconfigured),
+    (EmailConfigError, AccountMisconfigured),
+    (EmailRecipientsMissingError, EmailSendError),
+    (CoreUnexpectedError, ApiError),
+    (CoreError, ApiError),
+]
+
+
+def translate_core_error(
+    exc: Exception,
+    *,
+    fallback: type[ApiError] = ApiError,
+    context: dict[str, Any] | None = None,
+) -> ApiError:
+    """
+    Translate a CoreError into the corresponding ApiError using the mapping.
+
+    If *exc* is a CoreError subclass the first matching entry in
+    ``_CORE_TO_API_MAP`` is used.  Otherwise *fallback* is instantiated.
+    """
+    if isinstance(exc, CoreError):
+        for core_type, api_type in _CORE_TO_API_MAP:
+            if isinstance(exc, core_type):
+                detail = exc.detail if hasattr(exc, "detail") else {}
+                if context:
+                    detail = {**detail, **(context or {})}
+                detail["core_code"] = exc.code
+                return api_type(exc.message, detail)
+        # Unreachable when CoreError is in the map, but safe fallback.
+        return fallback(str(exc), {**(context or {}), "core_code": exc.code})
+    return fallback(str(exc) or "Unexpected error.", context or {})
 
 
 def ensure_mailbox_exists(mailbox_id: str) -> None:
@@ -37,29 +107,24 @@ def build_manager_for_accounts(accounts: Iterable[dict[str, Any]]) -> EmailManag
     manager = EmailManager()
     for account in accounts:
         try:
-            # Each account record becomes a registered provider client.
             manager.add_account_record(account)
-        except AttributeError as exc:
-            raise AccountMisconfigured(
-                "EmailManager is missing add_account_record(account_record)."
-            ) from exc
-        except ValueError as exc:
-            raise AccountMisconfigured(str(exc)) from exc
+        except CoreError as exc:
+            raise translate_core_error(exc, fallback=AccountMisconfigured) from exc
     return manager
 
 
 def raise_on_silent_auth_errors(errors: dict[str, Exception]) -> None:
     """
     Inspect the per-account errors collected during EmailManager.authenticate_all_silent().
-    This stores at most one error per account label, so we iterate the dict and:
-    - Raise immediately for non-auth errors (system/config issues) with the original message.
-    - Accumulate all auth-related errors (missing token/refresh failures) and report them
-      together as a single AccountNotConnected with the labels and reasons.
+
+    - Non-auth CoreErrors are translated via the centralized mapping and raised immediately.
+    - Auth-related errors are accumulated and raised as a single AccountNotConnected.
+    - Non-CoreError exceptions are raised through the fallback path.
     """
     if not errors:
         return
 
-    auth_labels = []
+    auth_labels: list[str] = []
     reasons: dict[str, str] = {}
     for label, error in errors.items():
         if is_auth_error(error):
@@ -68,17 +133,10 @@ def raise_on_silent_auth_errors(errors: dict[str, Exception]) -> None:
             if reason:
                 reasons[label] = reason
         else:
-            message = str(error).strip()
-            if message in {
-                "MIA_GMAIL_CREDENTIALS_PATH is not set.",
-                "MIA_GMAIL_TOKEN_PATH is not set (must be a directory).",
-            }:
-                raise EnvVarError(message) from error
-            # Any non-auth error is treated as an unexpected server failure.
-            raise ApiError(message or "Unexpected server error.") from error
+            raise translate_core_error(error) from error
 
     if auth_labels:
-        detail = {"account_labels": auth_labels}
+        detail: dict[str, Any] = {"account_labels": auth_labels}
         if reasons:
             detail["reasons"] = reasons
         raise AccountNotConnected(
@@ -87,20 +145,11 @@ def raise_on_silent_auth_errors(errors: dict[str, Exception]) -> None:
         )
 
 
-_AUTH_ERROR_MESSAGES = {
-    "missing_token",
-    "missing_refresh_token",
-    "refresh_failed",
-    "gmailclient is not authenticated. call authenticate() first.",
-}
-
-
 def is_auth_error(exc: Exception) -> bool:
     """
-    Return True when the exception matches a known auth/connectivity reason.
+    Return True when the exception is a typed core authentication error.
     """
-    message = str(exc).strip().lower()
-    return message in _AUTH_ERROR_MESSAGES
+    return isinstance(exc, EmailAuthError)
 
 
 def _wrap_secret(value: Any) -> Any:

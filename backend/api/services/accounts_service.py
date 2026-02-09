@@ -7,11 +7,10 @@ from __future__ import annotations
 from uuid import uuid4
 
 from api.errors.exceptions import (
-    EnvVarError,
-    AccountMisconfigured,
     AccountNotFound,
     ProviderAuthError,
 )
+from core.email.errors import CoreError
 from api.schemas.account import (
     AccountConnectResponse,
     AccountCreate,
@@ -22,6 +21,7 @@ from api.services.services_helpers import (
     build_manager_for_accounts,
     ensure_mailbox_exists,
     load_wrapped_app_credentials,
+    translate_core_error,
     unwrap_secret,
 )
 from api.storage.token_store import delete_account_tokens_for_records, save_account_tokens
@@ -108,24 +108,21 @@ def connect_account(mailbox_id: str, account_id: str) -> AccountConnectResponse:
     manager = build_manager_for_accounts([record])
     app_credentials = load_wrapped_app_credentials()
 
+    connect_context = {
+        "account_id": account_id,
+        "provider": record.get("provider"),
+        "account_label": account_label,
+    }
     try:
         wrapped_tokens = manager.connect_account(account_label, app_credentials)
-    except ValueError as exc:
-        message = str(exc).strip()
-        if message in {
-            "MIA_GMAIL_CREDENTIALS_PATH is not set.",
-            "MIA_GMAIL_TOKEN_PATH is not set (must be a directory).",
-        }:
-            raise EnvVarError(message) from exc
-        raise AccountMisconfigured("Account label not registered in EmailManager.") from exc
+    except CoreError as exc:
+        raise translate_core_error(
+            exc, fallback=ProviderAuthError, context=connect_context,
+        ) from exc
     except Exception as exc:
         raise ProviderAuthError(
             "Failed to authenticate provider client.",
-            {
-                "account_id": account_id,
-                "provider": record.get("provider"),
-                "account_label": account_label,
-            },
+            connect_context,
         ) from exc
 
     token_payload = dict(wrapped_tokens or {})

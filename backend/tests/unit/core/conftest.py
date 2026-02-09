@@ -65,12 +65,12 @@ class FakeEmailClient(EmailClient):
         self.fetch_calls = 0
         self.sent_emails: list[tuple[str, str, list[str]]] = []
 
-    def authenticate(self) -> None:
+    def authenticate(self, app_credentials=None) -> None:
         self.authenticate_calls += 1
         if self._auth_exc:
             raise self._auth_exc
 
-    def authenticate_silent(self) -> None:
+    def authenticate_silent(self, app_credentials=None, user_tokens=None) -> None:
         self.authenticate_silent_calls += 1
         if self._auth_silent_exc:
             raise self._auth_silent_exc

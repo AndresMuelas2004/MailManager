@@ -12,6 +12,14 @@ from googleapiclient.discovery import build
 from pydantic import SecretStr
 
 from .email_client import EmailClient, EmailMessage
+from .errors import (
+    EmailMissingAppCredentialsError,
+    EmailMissingRefreshTokenError,
+    EmailMissingTokenError,
+    EmailNotAuthenticatedError,
+    EmailRecipientsMissingError,
+    EmailRefreshFailedError,
+)
 
 GMAIL_SCOPES = ["https://www.googleapis.com/auth/gmail.modify"]
 
@@ -35,7 +43,7 @@ class GmailClient(EmailClient):
         """
         credentials_payload = self._unwrap_app_credentials(app_credentials)
         if not credentials_payload:
-            raise ValueError("Missing app credentials.")
+            raise EmailMissingAppCredentialsError()
 
         client_config = self._build_client_config(credentials_payload)
         flow = InstalledAppFlow.from_client_config(client_config, GMAIL_SCOPES)
@@ -60,12 +68,12 @@ class GmailClient(EmailClient):
         """
         credentials_payload = self._unwrap_app_credentials(app_credentials)
         if not credentials_payload:
-            raise ValueError("Missing app credentials.")
+            raise EmailMissingAppCredentialsError()
 
         token_payload = self._unwrap_user_tokens(user_tokens)
         access_token = token_payload.get("access_token")
         if not access_token:
-            raise ValueError("missing_token")
+            raise EmailMissingTokenError()
 
         refresh_token = token_payload.get("refresh_token")
         expiry = self._parse_expiry(token_payload.get("expiry"))
@@ -74,7 +82,7 @@ class GmailClient(EmailClient):
         client_id = credentials_payload.get("client_id")
         client_secret = credentials_payload.get("client_secret")
         if not token_uri or not client_id or not client_secret:
-            raise ValueError("Missing required app credentials.")
+            raise EmailMissingAppCredentialsError("Missing required app credentials.")
 
         creds = Credentials(
             token=access_token,
@@ -91,9 +99,9 @@ class GmailClient(EmailClient):
                 creds.refresh(Request())
                 refreshed = True
             except RefreshError as exc:
-                raise ValueError("refresh_failed") from exc
+                raise EmailRefreshFailedError() from exc
         elif creds.expired and not creds.refresh_token:
-            raise ValueError("missing_refresh_token")
+            raise EmailMissingRefreshTokenError()
 
         self.service = build("gmail", "v1", credentials=creds)
         if refreshed:
@@ -170,7 +178,7 @@ class GmailClient(EmailClient):
         and return them as a list.
         """
         if self.service is None:
-            raise RuntimeError("GmailClient is not authenticated. Call authenticate() first.")
+            raise EmailNotAuthenticatedError()
 
         unread_emails: List[EmailMessage] = []
 
@@ -291,10 +299,10 @@ class GmailClient(EmailClient):
         Send a plain text email using the Gmail API.
         """
         if self.service is None:
-            raise RuntimeError("GmailClient is not authenticated. Call authenticate() first.")
+            raise EmailNotAuthenticatedError()
 
         if not recipients:
-            raise ValueError("At least one recipient is required.")
+            raise EmailRecipientsMissingError()
 
         # Local imports to keep module-level imports unchanged.
         import base64
