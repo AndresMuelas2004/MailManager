@@ -17,6 +17,7 @@ from api.errors.exceptions import (
     EmailFetchError,
     EmailSendError,
     EnvVarError,
+    ExternalAPIError,
     ProviderAuthError,
     StorageError,
     MailboxNotFound,
@@ -32,6 +33,7 @@ _STATUS_MAP: dict[type[ApiError], int] = {
     AccountNotConnected: status.HTTP_409_CONFLICT,
     EmailFetchError: status.HTTP_502_BAD_GATEWAY,
     EmailSendError: status.HTTP_502_BAD_GATEWAY,
+    ExternalAPIError: status.HTTP_502_BAD_GATEWAY,
     EnvVarError: status.HTTP_500_INTERNAL_SERVER_ERROR,
     StorageError: status.HTTP_503_SERVICE_UNAVAILABLE,
 }

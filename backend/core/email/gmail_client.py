@@ -13,6 +13,7 @@ from pydantic import SecretStr
 
 from .email_client import EmailClient, EmailMessage
 from .errors import (
+    EmailExternalAPIError,
     EmailMissingAppCredentialsError,
     EmailMissingRefreshTokenError,
     EmailMissingTokenError,
@@ -47,7 +48,10 @@ class GmailClient(EmailClient):
 
         client_config = self._build_client_config(credentials_payload)
         flow = InstalledAppFlow.from_client_config(client_config, GMAIL_SCOPES)
-        creds = flow.run_local_server(port=0)
+        try:
+            creds = flow.run_local_server(port=0)
+        except Exception as exc:
+            raise EmailExternalAPIError(f"Gmail failed to execute OAuth flow: {exc}") from exc
 
         token_record = {
             "access_token": creds.token,
@@ -98,7 +102,7 @@ class GmailClient(EmailClient):
                 creds.refresh(Request())
                 refreshed = True
             except RefreshError as exc:
-                raise EmailRefreshFailedError() from exc
+                raise EmailRefreshFailedError(f"Gmail failed to refresh access token: {exc}") from exc
         elif creds.expired and not creds.refresh_token:
             raise EmailMissingRefreshTokenError()
 
@@ -194,7 +198,10 @@ class GmailClient(EmailClient):
             if page_token:
                 list_kwargs["pageToken"] = page_token
 
-            response = self.service.users().messages().list(**list_kwargs).execute()
+            try:
+                response = self.service.users().messages().list(**list_kwargs).execute()
+            except Exception as exc:
+                raise EmailExternalAPIError(f"Gmail failed to fetch message list: {exc}") from exc
             messages.extend(response.get("messages", []))
 
             if len(messages) >= max_total:
@@ -243,11 +250,14 @@ class GmailClient(EmailClient):
         for message_meta in messages:
             message_id = message_meta["id"]
 
-            message = self.service.users().messages().get(
-                userId="me",
-                id=message_id,
-                format="raw",
-            ).execute()
+            try:
+                message = self.service.users().messages().get(
+                    userId="me",
+                    id=message_id,
+                    format="raw",
+                ).execute()
+            except Exception as exc:
+                raise EmailExternalAPIError(f"Gmail failed to fetch message {message_id}: {exc}") from exc
 
             raw_rfc822_b64url = message.get("raw", "")
             raw_headers = parse_headers_from_raw(raw_rfc822_b64url)
@@ -314,7 +324,10 @@ class GmailClient(EmailClient):
         raw_message = base64.urlsafe_b64encode(message.as_bytes()).decode("utf-8")
         payload = {"raw": raw_message}
 
-        self.service.users().messages().send(userId="me", body=payload).execute()
+        try:
+            self.service.users().messages().send(userId="me", body=payload).execute()
+        except Exception as exc:
+            raise EmailExternalAPIError(f"Gmail failed to send email: {exc}") from exc
 
     def get_account_label(self) -> str:
         """

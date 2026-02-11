@@ -15,6 +15,7 @@ from core.email.errors import (
     EmailAccountNotFoundError,
     EmailAuthError,
     EmailConfigError,
+    EmailExternalAPIError,
     EmailMissingAppCredentialsError,
     EmailMissingRefreshTokenError,
     EmailMissingTokenError,
@@ -34,6 +35,7 @@ from api.errors.exceptions import (
     ApiError,
     EmailSendError,
     EnvVarError,
+    ExternalAPIError,
     MailboxNotFound,
 )
 from api.storage.json_store import mailbox_store
@@ -58,6 +60,7 @@ _CORE_TO_API_MAP: list[tuple[type[CoreError], type[ApiError]]] = [
     (EmailClientUnsupportedError, AccountMisconfigured),
     (EmailConfigError, AccountMisconfigured),
     (EmailRecipientsMissingError, EmailSendError),
+    (EmailExternalAPIError, ExternalAPIError),
     (CoreUnexpectedError, ApiError),
     (CoreError, ApiError),
 ]

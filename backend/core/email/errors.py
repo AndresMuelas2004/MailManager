@@ -101,3 +101,8 @@ class EmailNotAuthenticatedError(EmailAuthError):
 class EmailRecipientsMissingError(EmailError):
     code = "email_recipients_missing"
     default_message = "At least one recipient is required."
+
+
+class EmailExternalAPIError(EmailError):
+    code = "email_external_api_error"
+    default_message = "External API call failed."

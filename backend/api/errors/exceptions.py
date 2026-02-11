@@ -51,6 +51,10 @@ class EmailSendError(ApiError):
     code = "email_send_error"
 
 
+class ExternalAPIError(ApiError):
+    code = "external_api_error"
+
+
 class AccountMisconfigured(ApiError):
     code = "account_misconfigured"
 

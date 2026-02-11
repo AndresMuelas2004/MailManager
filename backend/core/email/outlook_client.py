@@ -11,6 +11,7 @@ from pydantic import SecretStr
 
 from .email_client import EmailClient, EmailMessage
 from .errors import (
+    EmailExternalAPIError,
     EmailMissingAppCredentialsError,
     EmailMissingRefreshTokenError,
     EmailMissingTokenError,
@@ -146,24 +147,27 @@ class OutlookClient(EmailClient):
         port = parsed_redirect.port or 80
         try:
             server = ThreadingHTTPServer((bind_host, port), _OAuthHandler)
-        except OSError as exc:
-            raise RuntimeError(
-                f"Failed to start local callback server on {bind_host}:{port}."
+        except Exception as exc:
+            raise EmailExternalAPIError(
+                f"Outlook failed to start local OAuth callback server on {bind_host}:{port}: {exc}"
             ) from exc
 
         server_thread = threading.Thread(target=server.serve_forever, daemon=True)
         server_thread.start()
         try:
-            opened = False
             try:
-                opened = bool(webbrowser.open(auth_url))
-            except Exception:
                 opened = False
-            if not opened:
-                print(f"Open this URL in your browser to authenticate Outlook:\n{auth_url}")
+                try:
+                    opened = bool(webbrowser.open(auth_url))
+                except Exception:
+                    opened = False
+                if not opened:
+                    print(f"Open this URL in your browser to authenticate Outlook:\n{auth_url}")
 
-            if not callback_event.wait(timeout=120):
-                raise TimeoutError("Timed out waiting for Outlook OAuth callback.")
+                if not callback_event.wait(timeout=300):
+                    raise EmailExternalAPIError("Outlook failed to complete OAuth flow: timeout waiting for callback.")
+            except Exception as exc:
+                raise EmailExternalAPIError(f"Outlook failed during OAuth callback: {exc}") from exc
         finally:
             server.shutdown()
             server.server_close()
@@ -172,29 +176,32 @@ class OutlookClient(EmailClient):
         if callback_result.get("error"):
             error = str(callback_result.get("error") or "").strip()
             description = str(callback_result.get("error_description") or "").strip()
-            raise RuntimeError(f"Outlook authorization error: {error}. {description}".strip())
+            raise EmailExternalAPIError(f"Outlook failed OAuth authorization: {error}. {description}".strip())
 
         if str(callback_result.get("state") or "") != state:
-            raise ValueError("Invalid OAuth state received from Outlook callback.")
+            raise EmailExternalAPIError("Outlook failed OAuth validation: invalid state received from callback.")
 
         auth_code = str(callback_result.get("code") or "").strip()
         if not auth_code:
-            raise RuntimeError("Outlook callback did not include an authorization code.")
+            raise EmailExternalAPIError("Outlook failed OAuth flow: callback did not include authorization code.")
 
         # Exchange the authorization code for tokens.
-        token_response = self._token_request(token_url, {
-            "grant_type": "authorization_code",
-            "client_id": client_id,
-            "client_secret": client_secret,
-            "code": auth_code,
-            "redirect_uri": redirect_uri,
-            "code_verifier": code_verifier,
-            "scope": " ".join(scopes),
-        })
+        try:
+            token_response = self._token_request(token_url, {
+                "grant_type": "authorization_code",
+                "client_id": client_id,
+                "client_secret": client_secret,
+                "code": auth_code,
+                "redirect_uri": redirect_uri,
+                "code_verifier": code_verifier,
+                "scope": " ".join(scopes),
+            })
+        except Exception as exc:
+            raise EmailExternalAPIError(f"Outlook failed to exchange authorization code for tokens: {exc}") from exc
 
         access_token = token_response.get("access_token")
         if not access_token:
-            raise RuntimeError("Outlook token response did not include access_token.")
+            raise EmailExternalAPIError("Outlook failed to obtain access token: token response missing access_token.")
 
         self._access_token = access_token
 
@@ -260,12 +267,12 @@ class OutlookClient(EmailClient):
                 "refresh_token": refresh_token,
                 "scope": " ".join(scopes),
             })
-        except RuntimeError as exc:
-            raise EmailRefreshFailedError() from exc
+        except Exception as exc:
+            raise EmailRefreshFailedError(f"Outlook failed to refresh access token: {exc}") from exc
 
         new_access_token = token_response.get("access_token")
         if not new_access_token:
-            raise EmailRefreshFailedError("Refresh response missing access_token.")
+            raise EmailRefreshFailedError("Outlook failed to refresh access token: response missing access_token.")
 
         # Microsoft may return a new refresh token (rotating tokens).
         new_refresh_token = token_response.get("refresh_token") or refresh_token
@@ -494,22 +501,28 @@ class OutlookClient(EmailClient):
                         detail = f"{err or 'error'}: {desc or 'unknown error'}"
             except Exception:
                 pass
-            raise RuntimeError(f"Outlook token endpoint error: {detail}") from exc
+            raise EmailExternalAPIError(f"Outlook failed to call token endpoint: {detail}") from exc
         except urllib.error.URLError as exc:
-            raise RuntimeError("Failed to reach Outlook token endpoint.") from exc
+            raise EmailExternalAPIError("Outlook failed to reach token endpoint.") from exc
+        except Exception as exc:
+            raise EmailExternalAPIError(f"Outlook failed during token request: {exc}") from exc
 
         try:
             token_response = json.loads(body) if body else {}
         except json.JSONDecodeError as exc:
-            raise RuntimeError("Outlook token endpoint returned invalid JSON.") from exc
-
+            raise EmailExternalAPIError("Outlook failed to parse token endpoint response: invalid JSON.") from exc
+        except Exception as exc:
+            raise EmailExternalAPIError(f"Outlook failed during token response parsing: {exc}") from exc
+        
         if not isinstance(token_response, dict):
-            raise RuntimeError("Outlook token endpoint returned an invalid response payload.")
+            raise EmailExternalAPIError("Outlook failed at token endpoint: invalid response payload.")
 
         if token_response.get("error"):
             err = token_response.get("error")
             desc = token_response.get("error_description")
-            raise RuntimeError(f"Outlook token endpoint error: {err}: {desc}")
+            raise EmailExternalAPIError(f"Outlook failed at token endpoint: {err}: {desc}")
+        
+
 
         return token_response
 
@@ -546,10 +559,10 @@ class OutlookClient(EmailClient):
                         detail = f"{err_code.get('code', 'error')}: {err_code.get('message', '')}"
             except Exception:
                 pass
-            raise RuntimeError(f"Microsoft Graph API error: {detail}") from exc
+            raise EmailExternalAPIError(f"Outlook failed Graph API call: {detail}") from exc
         except urllib.error.URLError as exc:
-            raise RuntimeError(f"Failed to reach Microsoft Graph API: {exc.reason}") from exc
+            raise EmailExternalAPIError(f"Outlook failed to reach Graph API: {exc.reason}") from exc
         except Exception as exc:
-            raise RuntimeError(
-                f"Microsoft Graph API request failed ({type(exc).__name__}): {exc}"
+            raise EmailExternalAPIError(
+                f"Outlook failed Graph API request ({type(exc).__name__}): {exc}"
             ) from exc
