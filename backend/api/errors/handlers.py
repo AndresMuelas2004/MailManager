@@ -18,7 +18,6 @@ from api.errors.exceptions import (
     EmailSendError,
     EnvVarError,
     ProviderAuthError,
-    ProviderNotSupported,
     StorageError,
     MailboxNotFound,
 )
@@ -28,7 +27,6 @@ from api.schemas.error import ErrorResponse
 _STATUS_MAP: dict[type[ApiError], int] = {
     MailboxNotFound: status.HTTP_404_NOT_FOUND,
     AccountNotFound: status.HTTP_404_NOT_FOUND,
-    ProviderNotSupported: status.HTTP_400_BAD_REQUEST,
     AccountMisconfigured: status.HTTP_400_BAD_REQUEST,
     ProviderAuthError: status.HTTP_401_UNAUTHORIZED,
     AccountNotConnected: status.HTTP_409_CONFLICT,

@@ -31,10 +31,6 @@ class AccountNotFound(ApiError):
     code = "account_not_found"
 
 
-class ProviderNotSupported(ApiError):
-    code = "provider_not_supported"
-
-
 class StorageError(ApiError):
     code = "storage_error"
 

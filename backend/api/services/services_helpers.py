@@ -19,7 +19,6 @@ from core.email.errors import (
     EmailMissingRefreshTokenError,
     EmailMissingTokenError,
     EmailNotAuthenticatedError,
-    EmailProviderNotSupportedError,
     EmailRecipientsMissingError,
     EmailRefreshFailedError,
     EmailAccountRecordError,
@@ -36,7 +35,6 @@ from api.errors.exceptions import (
     EmailSendError,
     EnvVarError,
     MailboxNotFound,
-    ProviderNotSupported,
 )
 from api.storage.json_store import mailbox_store
 from api.storage.token_store import load_account_tokens, load_app_credentials
@@ -53,7 +51,6 @@ _CORE_TO_API_MAP: list[tuple[type[CoreError], type[ApiError]]] = [
     (EmailRefreshFailedError, AccountNotConnected),
     (EmailNotAuthenticatedError, AccountNotConnected),
     (EmailAuthError, AccountNotConnected),
-    (EmailProviderNotSupportedError, ProviderNotSupported),
     (EmailAccountRecordError, AccountMisconfigured),
     (EmailProviderConfigError, AccountMisconfigured),
     (EmailMissingAppCredentialsError, AccountMisconfigured),
@@ -166,22 +163,24 @@ def unwrap_secret(value: Any) -> Any:
     return value
 
 
-def load_wrapped_app_credentials() -> dict[str, Any]:
+def load_wrapped_app_credentials(provider: str) -> dict[str, Any]:
     """
-    Load app credentials and wrap the client_secret as SecretStr.
+    Load app credentials for *provider* and wrap the client_secret as SecretStr.
     """
-    credentials = load_app_credentials()
+    credentials = load_app_credentials(provider)
     payload = dict(credentials) if isinstance(credentials, dict) else {}
     if "client_secret" in payload:
         payload["client_secret"] = _wrap_secret(payload.get("client_secret"))
     return payload
 
 
-def load_wrapped_account_tokens(mailbox_id: str, account_id: str) -> dict[str, Any]:
+def load_wrapped_account_tokens(
+    mailbox_id: str, account_id: str, provider: str,
+) -> dict[str, Any]:
     """
-    Load account tokens and wrap access/refresh tokens as SecretStr.
+    Load account tokens for *provider* and wrap access/refresh tokens as SecretStr.
     """
-    token_data = load_account_tokens(mailbox_id, account_id)
+    token_data = load_account_tokens(mailbox_id, account_id, provider)
     payload = dict(token_data) if isinstance(token_data, dict) else {}
     if "access_token" in payload:
         payload["access_token"] = _wrap_secret(payload.get("access_token"))

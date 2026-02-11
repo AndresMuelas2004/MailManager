@@ -9,8 +9,8 @@ from api.errors.exceptions import (
     ApiError,
     EmailFetchError,
     EmailSendError,
+    EnvVarError,
     ProviderAuthError,
-    ProviderNotSupported,
     StorageError,
     MailboxNotFound,
 )
@@ -22,8 +22,8 @@ __all__ = [
     "ApiError",
     "EmailFetchError",
     "EmailSendError",
+    "EnvVarError",
     "ProviderAuthError",
-    "ProviderNotSupported",
     "StorageError",
     "MailboxNotFound",
 ]

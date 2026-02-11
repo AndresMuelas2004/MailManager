@@ -104,9 +104,10 @@ def connect_account(mailbox_id: str, account_id: str) -> AccountConnectResponse:
     if record is None:
         raise AccountNotFound(f"Account '{account_id}' not found.")
 
+    provider = str(record.get("provider") or "").lower()
     account_label = f"{mailbox_id}__{account_id}"
     manager = build_manager_for_accounts([record])
-    app_credentials = load_wrapped_app_credentials()
+    app_credentials = load_wrapped_app_credentials(provider)
 
     connect_context = {
         "account_id": account_id,
@@ -128,7 +129,7 @@ def connect_account(mailbox_id: str, account_id: str) -> AccountConnectResponse:
     token_payload = dict(wrapped_tokens or {})
     token_payload["access_token"] = unwrap_secret(token_payload.get("access_token"))
     token_payload["refresh_token"] = unwrap_secret(token_payload.get("refresh_token"))
-    save_account_tokens(mailbox_id, account_id, token_payload)
+    save_account_tokens(mailbox_id, account_id, provider, token_payload)
 
     return AccountConnectResponse(
         connected=True,

@@ -13,11 +13,14 @@ from api.errors.exceptions import (
     AccountMisconfigured,
     AccountNotConnected,
     EnvVarError,
-    ProviderNotSupported,
     StorageError,
 )
 
 
+_ENV_CREDENTIALS: dict[str, str] = {
+    "gmail": "MIA_GMAIL_CREDENTIALS_PATH",
+    "outlook": "MIA_OUTLOOK_CREDENTIALS_PATH",
+}
 
 
 def _token_path_for_account(record: dict[str, Any]) -> Path:
@@ -28,20 +31,20 @@ def _token_path_for_account(record: dict[str, Any]) -> Path:
     account_id = str(record.get("account_id") or "")
     provider = str(record.get("provider") or "").lower()
     if not mailbox_id or not account_id or not provider:
-        # Token resolution depends on provider and account identity.
         raise AccountMisconfigured("Account record is missing required identifiers.")
     account_label = f"{mailbox_id}__{account_id}"
 
+    token_dir = os.getenv("MIA_TOKEN_PATH")
+    if not token_dir:
+        raise EnvVarError("MIA_TOKEN_PATH is not set.")
+
     if provider == "gmail":
-        token_dir = os.getenv("MIA_GMAIL_TOKEN_PATH")
-        if not token_dir:
-            raise EnvVarError("MIA_GMAIL_TOKEN_PATH is not set.")
         return Path(token_dir) / f"gmail_token_{account_label}.json"
 
     if provider == "outlook":
-        raise ProviderNotSupported("Outlook provider is not supported yet.")
+        return Path(token_dir) / f"outlook_token_{account_label}.json"
 
-    raise ProviderNotSupported(f"Provider '{provider}' is not supported.")
+    raise AccountMisconfigured(f"Unknown provider '{provider}'.")
 
 
 def _delete_account_tokens(record: dict[str, Any]) -> None:
@@ -57,7 +60,6 @@ def _delete_account_tokens(record: dict[str, Any]) -> None:
 
     try:
         if token_path.exists():
-            # Ignore missing files or unlink errors to keep deletes non-blocking.
             token_path.unlink()
     except Exception:
         return
@@ -68,17 +70,21 @@ def delete_account_tokens_for_records(accounts: Iterable[dict[str, Any]]) -> Non
     Best-effort deletion of tokens for a list of account records.
     """
     for account in accounts:
-        # Ignore per-account failures so callers can continue cleanup.
         _delete_account_tokens(account)
 
 
-def load_app_credentials() -> dict[str, Any]:
+def load_app_credentials(provider: str) -> dict[str, Any]:
     """
-    Load the Gmail app credentials from the JSON path in MIA_GMAIL_CREDENTIALS_PATH.
+    Load app credentials for the given provider from its environment-variable path.
     """
-    credentials_path = os.getenv("MIA_GMAIL_CREDENTIALS_PATH")
+    provider = provider.lower()
+    env_var = _ENV_CREDENTIALS.get(provider)
+    if not env_var:
+        raise AccountMisconfigured(f"Unknown provider '{provider}'.")
+
+    credentials_path = os.getenv(env_var)
     if not credentials_path:
-        raise EnvVarError("MIA_GMAIL_CREDENTIALS_PATH is not set.")
+        raise EnvVarError(f"{env_var} is not set.")
     config_path = Path(credentials_path)
     try:
         raw = config_path.read_text(encoding="utf-8-sig").strip()
@@ -91,21 +97,24 @@ def load_app_credentials() -> dict[str, Any]:
     if not isinstance(data, dict):
         raise StorageError("Config storage file is corrupted.", {"path": str(config_path)})
 
-    if isinstance(data.get("installed"), dict):
-        return data["installed"]
-    if isinstance(data.get("web"), dict):
-        return data["web"]
+    # Gmail credentials may be nested under "installed" or "web" blocks.
+    if provider == "gmail":
+        if isinstance(data.get("installed"), dict):
+            return data["installed"]
+        if isinstance(data.get("web"), dict):
+            return data["web"]
+
     return data
 
 
-def load_account_tokens(mailbox_id: str, account_id: str) -> dict[str, Any]:
+def load_account_tokens(mailbox_id: str, account_id: str, provider: str) -> dict[str, Any]:
     """
-    Load token credentials for a specific mailbox/account.
+    Load token credentials for a specific mailbox/account/provider.
     """
     record = {
         "mailbox_id": mailbox_id,
         "account_id": account_id,
-        "provider": "gmail",
+        "provider": provider,
     }
     token_path = _token_path_for_account(record)
     if not token_path.exists():
@@ -132,6 +141,7 @@ def load_account_tokens(mailbox_id: str, account_id: str) -> dict[str, Any]:
 def save_account_tokens(
     mailbox_id: str,
     account_id: str,
+    provider: str,
     token_data: dict[str, Any],
 ) -> None:
     """
@@ -146,7 +156,7 @@ def save_account_tokens(
     record = {
         "mailbox_id": mailbox_id,
         "account_id": account_id,
-        "provider": "gmail",
+        "provider": provider,
     }
     token_path = _token_path_for_account(record)
     try:

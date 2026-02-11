@@ -63,11 +63,6 @@ class EmailMissingAppCredentialsError(EmailConfigError):
     default_message = "Missing app credentials."
 
 
-class EmailProviderNotSupportedError(EmailError):
-    code = "email_provider_not_supported"
-    default_message = "Provider is not supported."
-
-
 class EmailDuplicateAccountLabelError(EmailConfigError):
     code = "email_duplicate_account_label"
     default_message = "Account label already exists."

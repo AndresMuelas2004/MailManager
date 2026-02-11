@@ -49,7 +49,6 @@ class GmailClient(EmailClient):
         flow = InstalledAppFlow.from_client_config(client_config, GMAIL_SCOPES)
         creds = flow.run_local_server(port=0)
 
-        self.service = build("gmail", "v1", credentials=creds)
         token_record = {
             "access_token": creds.token,
             "refresh_token": creds.refresh_token,

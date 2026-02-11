@@ -8,7 +8,6 @@ from .errors import (
     EmailClientUnsupportedError,
     EmailDuplicateAccountLabelError,
     EmailProviderConfigError,
-    EmailProviderNotSupportedError,
 )
 from .gmail_client import GmailClient
 from .outlook_client import OutlookClient
@@ -52,20 +51,8 @@ class EmailManager:
         if provider == "gmail":
             return GmailClient(account_label=account_label)
         if provider == "outlook":
-            client_id = str(config.get("client_id") or "")
-            client_secret = str(config.get("client_secret") or "")
-            tenant_id = str(config.get("tenant_id") or "")
-            if not client_id or not client_secret or not tenant_id:
-                raise EmailProviderConfigError(
-                    "Outlook account config requires client_id, client_secret, tenant_id."
-                )
-            return OutlookClient(
-                account_label=account_label,
-                client_id=client_id,
-                client_secret=client_secret,
-                tenant_id=tenant_id,
-            )
-        raise EmailProviderNotSupportedError(f"Provider '{provider}' is not supported.")
+            return OutlookClient(account_label=account_label)
+        raise EmailProviderConfigError(f"Unknown provider '{provider}'.")
 
     def add_client(self, client: EmailClient) -> None:
         """
