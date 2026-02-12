@@ -140,8 +140,13 @@ All clients use errors from `core/email/errors.py`. The service layer catches `C
 | Token refresh HTTP failure | `EmailRefreshFailedError` |
 | Client not authenticated before API call | `EmailNotAuthenticatedError` |
 | No recipients for send | `EmailRecipientsMissingError` |
+| External API call fails (network, timeout, invalid response) | `EmailExternalAPIError` |
 
-Provider-specific runtime errors (network failures, invalid responses) can be raised as `RuntimeError` — the service layer catches generic `Exception` and maps them to the appropriate `ApiError`.
+**Error Handling Pattern:**
+- All external API calls (Google API, Microsoft Graph, HTTP requests) must be wrapped in `try/except Exception` blocks.
+- Raise `EmailExternalAPIError` with a descriptive message including the **specific operation** and **client name** (e.g., `"Gmail failed to fetch message list: {exc}"`).
+- The service layer catches `CoreError` subclasses and translates them to `ApiError` subclasses via `translate_core_error()`.
+- `EmailExternalAPIError` is mapped to `ExternalAPIError` (HTTP 502 Bad Gateway), signaling a third-party API failure.
 
 ---
 
