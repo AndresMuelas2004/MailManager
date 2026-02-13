@@ -1,6 +1,7 @@
 from __future__ import annotations
 import base64
 from datetime import datetime, timezone
+from email import message_from_bytes, policy
 from email.utils import parsedate_to_datetime
 from typing import Any, List
 
@@ -218,34 +219,11 @@ class GmailClient(EmailClient):
                 return {}
             try:
                 raw_bytes = base64.urlsafe_b64decode(raw_b64url.encode("utf-8"))
+                # policy.default automatically handles decoding and folding
+                msg = message_from_bytes(raw_bytes, policy=policy.default)
+                return {k: v for k, v in msg.items()}
             except Exception:
                 return {}
-
-            raw_text = raw_bytes.decode("utf-8", errors="replace")
-            header_lines = []
-            for line in raw_text.splitlines():
-                if line == "":
-                    break
-                header_lines.append(line)
-
-            unfolded = []
-            current = ""
-            for line in header_lines:
-                if line.startswith((" ", "\t")) and current:
-                    current = f"{current} {line.strip()}"
-                else:
-                    if current:
-                        unfolded.append(current)
-                    current = line.strip()
-            if current:
-                unfolded.append(current)
-
-            headers = {}
-            for line in unfolded:
-                if ":" in line:
-                    name, value = line.split(":", 1)
-                    headers[name.strip()] = value.strip()
-            return headers
         # Retrieve each full email from Gmail in raw format using the previously collected IDs
         for message_meta in messages:
             message_id = message_meta["id"]
