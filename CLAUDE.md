@@ -114,7 +114,7 @@ Wrap secrets with `load_wrapped_app_credentials(provider)` / `load_wrapped_accou
 ### Testing
 
 - **Unit tests** (`backend/tests/unit/`) — use `FakeEmailClient` from `tests/unit/core/conftest.py`.
-- **Integration tests** (`backend/tests/integration/`) — use `FastAPI TestClient`, monkeypatch `build_manager_for_accounts` with fakes, and isolate JSON storage via `isolated_storage` autouse fixture that redirects to temp directories.
+- **Integration tests** (`backend/tests/integration/`) — use `FastAPI TestClient`, monkeypatch `build_manager_for_accounts` with fakes, and isolate JSON storage via `isolated_storage` autouse fixture that redirects to temp directories. Split into three files: `test_endpoints.py` (happy-path and behavioral), `test_api_layer_errors.py` (direct `raise ApiError` without core involvement), and `test_core_error_translation.py` (core errors escalated via `translate_core_error`). The `failing_test_client` fixture (indirect parametrize) injects failure kwargs into `FakeEmailClient` for core error translation tests.
 - Both test layers share the `FakeEmailClient` and `build_message` helper via dynamic conftest loading.
 
 ### Frontend Structure

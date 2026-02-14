@@ -41,13 +41,10 @@ class EmailManager:
             raise EmailAccountRecordError("Account record is missing provider.")
 
         account_label = f"{mailbox_id}__{account_id}"
-        config = record.get("config") or {}
-        client = self._build_client(provider, account_label, config)
+        client = self._build_client(provider, account_label)
         self.add_client(client)
 
-    def _build_client(
-        self, provider: str, account_label: str, config: dict[str, Any]
-    ) -> EmailClient:
+    def _build_client(self, provider: str, account_label: str) -> EmailClient:
         if provider == "gmail":
             return GmailClient(account_label=account_label)
         if provider == "outlook":
@@ -63,27 +60,6 @@ class EmailManager:
             if existing.get_account_label() == new_label:
                 raise EmailDuplicateAccountLabelError(f"Account label '{new_label}' already exists.")
         self._clients.append(client)
-
-    def authenticate_all(
-        self,
-        auth_payloads: dict[str, dict[str, Any]] | None = None,
-    ) -> None:
-        """
-        Authenticate all registered clients, tracking failures per account.
-
-        Convenience method intended for scripts, batch jobs, or non-UI flows.
-        Avoid calling this from API/web request handlers.
-        """
-        self._last_errors = {}
-        for client in self._clients:
-            try:
-                if auth_payloads is None:
-                    client.authenticate()
-                else:
-                    app_credentials = auth_payloads.get(client.get_account_label())
-                    client.authenticate(app_credentials)
-            except Exception as exc:
-                self._last_errors[client.get_account_label()] = exc
 
     def authenticate_all_silent(
         self,

@@ -9,8 +9,8 @@ from core.email.errors import (
     EmailClientUnsupportedError,
     EmailDuplicateAccountLabelError,
     EmailProviderConfigError,
-    EmailProviderNotSupportedError,
 )
+from core.email.outlook_client import OutlookClient
 
 
 def test_add_account_record_requires_mailbox_id(manager: EmailManager):
@@ -43,16 +43,14 @@ def test_add_account_record_builds_label_mailbox__account_and_registers_client(
 
 def test_build_client_unsupported_provider_raises_error(manager: EmailManager):
     """Rejects unknown providers."""
-    with pytest.raises(EmailProviderNotSupportedError, match="not supported"):
-        manager._build_client("yahoo", "label", {})
+    with pytest.raises(EmailProviderConfigError, match="Unknown provider"):
+        manager._build_client("yahoo", "label")
 
 
-def test_build_client_outlook_requires_client_id_client_secret_tenant_id(
-    manager: EmailManager,
-):
-    """Requires Outlook config fields even if client is unimplemented."""
-    with pytest.raises(EmailProviderConfigError, match="requires client_id"):
-        manager._build_client("outlook", "label", {})
+def test_build_client_outlook_builds_client(manager: EmailManager):
+    client = manager._build_client("outlook", "label")
+    assert isinstance(client, OutlookClient)
+    assert client.get_account_label() == "label"
 
 
 def test_add_client_accepts_multiple_distinct_labels(
@@ -72,31 +70,6 @@ def test_add_client_rejects_duplicate_account_label(
     dup = fake_client_factory(fake_client_ok.get_account_label())
     with pytest.raises(EmailDuplicateAccountLabelError, match="already exists"):
         manager.add_client(dup)
-
-
-def test_authenticate_all_calls_authenticate_on_each_client(
-    manager: EmailManager, fake_client_ok, fake_client_ok_2
-):
-    """Calls authenticate on every registered client."""
-    manager.add_client(fake_client_ok)
-    manager.add_client(fake_client_ok_2)
-    manager.authenticate_all()
-    assert fake_client_ok.authenticate_calls == 1
-    assert fake_client_ok_2.authenticate_calls == 1
-    assert manager.get_last_errors() == {}
-
-
-def test_authenticate_all_records_errors_and_continues(
-    manager: EmailManager, fake_client_fail_auth, fake_client_ok
-):
-    """Records auth errors and still authenticates remaining clients."""
-    manager.add_client(fake_client_fail_auth)
-    manager.add_client(fake_client_ok)
-    manager.authenticate_all()
-    errors = manager.get_last_errors()
-    assert set(errors.keys()) == {fake_client_fail_auth.get_account_label()}
-    assert fake_client_ok.authenticate_calls == 1
-
 
 def test_authenticate_all_silent_calls_authenticate_silent_on_each_client(
     manager: EmailManager, fake_client_ok, fake_client_ok_2
@@ -222,14 +195,14 @@ def test_send_email_from_account_not_found_raises_error(manager: EmailManager):
         manager.send_email_from_account("missing", "s", "b", ["a@example.com"])
 
 
-def test_get_last_errors_returns_copy(manager: EmailManager, fake_client_fail_auth):
+def test_get_last_errors_returns_copy(manager: EmailManager, fake_client_fail_fetch):
     """Protects internal error registry from external mutation."""
-    manager.add_client(fake_client_fail_auth)
-    manager.authenticate_all()
+    manager.add_client(fake_client_fail_fetch)
+    manager.fetch_all_unread_emails()
 
     errors = manager.get_last_errors()
     errors["new"] = Exception("mutate")
 
     fresh = manager.get_last_errors()
     assert "new" not in fresh
-    assert set(fresh.keys()) == {fake_client_fail_auth.get_account_label()}
+    assert set(fresh.keys()) == {fake_client_fail_fetch.get_account_label()}
