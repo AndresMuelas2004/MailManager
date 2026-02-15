@@ -27,9 +27,70 @@ _unit_conftest = _load_unit_conftest()
 FakeEmailClient = _unit_conftest.FakeEmailClient
 
 
+_MAILBOX_URL = "/mailboxes"
+
+
+def _setup_mailbox_and_account(client, provider: str = "gmail") -> tuple[str, str]:
+    """Create a mailbox + account and return ``(mailbox_id, account_id)``."""
+    mb = client.post(_MAILBOX_URL, json={"display_name": "Test MB"})
+    mailbox_id = mb.json()["mailbox_id"]
+    acc = client.post(
+        f"{_MAILBOX_URL}/{mailbox_id}/accounts",
+        json={"provider": provider, "display_label": f"test-{provider}"},
+    )
+    account_id = acc.json()["account_id"]
+    return mailbox_id, account_id
+
+
+@pytest.fixture
+def setup_mailbox_and_account():
+    """Factory fixture: returns a callable that creates a mailbox + account."""
+    return _setup_mailbox_and_account
+
+
 @pytest.fixture(scope="session")
 def fake_client_class():
     return FakeEmailClient
+
+
+def _apply_test_monkeypatches(monkeypatch, build_manager_fn):
+    """Wire common monkeypatches shared by ``test_client`` and ``failing_test_client``."""
+    _fake_app_creds = {"client_id": "fake", "client_secret": SecretStr("fake")}
+    _fake_account_tokens = {
+        "access_token": SecretStr("tok"),
+        "refresh_token": SecretStr("ref"),
+    }
+
+    monkeypatch.setattr(services_helpers, "build_manager_for_accounts", build_manager_fn)
+    monkeypatch.setattr(accounts_service, "build_manager_for_accounts", build_manager_fn)
+    monkeypatch.setattr(emails_service, "build_manager_for_accounts", build_manager_fn)
+
+    monkeypatch.setattr(
+        services_helpers, "load_wrapped_app_credentials", lambda _provider: _fake_app_creds,
+    )
+    monkeypatch.setattr(
+        services_helpers, "load_wrapped_account_tokens",
+        lambda _mb, _acc, _prov: _fake_account_tokens,
+    )
+    monkeypatch.setattr(
+        accounts_service, "load_wrapped_app_credentials", lambda _provider: _fake_app_creds,
+    )
+    monkeypatch.setattr(
+        emails_service, "load_wrapped_app_credentials", lambda _provider: _fake_app_creds,
+    )
+    monkeypatch.setattr(
+        emails_service, "load_wrapped_account_tokens",
+        lambda _mb, _acc, _prov: _fake_account_tokens,
+    )
+
+    monkeypatch.setattr(accounts_service, "save_account_tokens", lambda *_a, **_kw: None)
+    monkeypatch.setattr(
+        accounts_service, "delete_account_tokens_for_records", lambda *_a, **_kw: None,
+    )
+    monkeypatch.setattr(emails_service, "save_account_tokens", lambda *_a, **_kw: None)
+    monkeypatch.setattr(
+        mailboxes_service, "delete_account_tokens_for_records", lambda *_a, **_kw: None,
+    )
 
 
 @pytest.fixture
@@ -49,45 +110,7 @@ def test_client(test_client_base, sample_messages, monkeypatch):
             )
         return manager
 
-    _fake_app_creds = {"client_id": "fake", "client_secret": SecretStr("fake")}
-    _fake_account_tokens = {
-        "access_token": SecretStr("tok"),
-        "refresh_token": SecretStr("ref"),
-    }
-
-    monkeypatch.setattr(services_helpers, "build_manager_for_accounts", _build_manager)
-    monkeypatch.setattr(accounts_service, "build_manager_for_accounts", _build_manager)
-    monkeypatch.setattr(emails_service, "build_manager_for_accounts", _build_manager)
-
-    # Fake credential / token helpers so tests never hit disk or env vars.
-    monkeypatch.setattr(
-        services_helpers, "load_wrapped_app_credentials", lambda _provider: _fake_app_creds,
-    )
-    monkeypatch.setattr(
-        services_helpers, "load_wrapped_account_tokens",
-        lambda _mb, _acc, _prov: _fake_account_tokens,
-    )
-    monkeypatch.setattr(
-        accounts_service, "load_wrapped_app_credentials", lambda _provider: _fake_app_creds,
-    )
-    monkeypatch.setattr(
-        emails_service, "load_wrapped_app_credentials", lambda _provider: _fake_app_creds,
-    )
-    monkeypatch.setattr(
-        emails_service, "load_wrapped_account_tokens",
-        lambda _mb, _acc, _prov: _fake_account_tokens,
-    )
-
-    # No-op token persistence and cleanup.
-    monkeypatch.setattr(accounts_service, "save_account_tokens", lambda *_a, **_kw: None)
-    monkeypatch.setattr(
-        accounts_service, "delete_account_tokens_for_records", lambda *_a, **_kw: None,
-    )
-    monkeypatch.setattr(emails_service, "save_account_tokens", lambda *_a, **_kw: None)
-    monkeypatch.setattr(
-        mailboxes_service, "delete_account_tokens_for_records", lambda *_a, **_kw: None,
-    )
-
+    _apply_test_monkeypatches(monkeypatch, _build_manager)
     return test_client_base
 
 
@@ -117,43 +140,7 @@ def failing_test_client(test_client_base, sample_messages, monkeypatch, request)
             )
         return manager
 
-    _fake_app_creds = {"client_id": "fake", "client_secret": SecretStr("fake")}
-    _fake_account_tokens = {
-        "access_token": SecretStr("tok"),
-        "refresh_token": SecretStr("ref"),
-    }
-
-    monkeypatch.setattr(services_helpers, "build_manager_for_accounts", _build_manager)
-    monkeypatch.setattr(accounts_service, "build_manager_for_accounts", _build_manager)
-    monkeypatch.setattr(emails_service, "build_manager_for_accounts", _build_manager)
-
-    monkeypatch.setattr(
-        services_helpers, "load_wrapped_app_credentials", lambda _provider: _fake_app_creds,
-    )
-    monkeypatch.setattr(
-        services_helpers, "load_wrapped_account_tokens",
-        lambda _mb, _acc, _prov: _fake_account_tokens,
-    )
-    monkeypatch.setattr(
-        accounts_service, "load_wrapped_app_credentials", lambda _provider: _fake_app_creds,
-    )
-    monkeypatch.setattr(
-        emails_service, "load_wrapped_app_credentials", lambda _provider: _fake_app_creds,
-    )
-    monkeypatch.setattr(
-        emails_service, "load_wrapped_account_tokens",
-        lambda _mb, _acc, _prov: _fake_account_tokens,
-    )
-
-    monkeypatch.setattr(accounts_service, "save_account_tokens", lambda *_a, **_kw: None)
-    monkeypatch.setattr(
-        accounts_service, "delete_account_tokens_for_records", lambda *_a, **_kw: None,
-    )
-    monkeypatch.setattr(emails_service, "save_account_tokens", lambda *_a, **_kw: None)
-    monkeypatch.setattr(
-        mailboxes_service, "delete_account_tokens_for_records", lambda *_a, **_kw: None,
-    )
-
+    _apply_test_monkeypatches(monkeypatch, _build_manager)
     return test_client_base
 
 

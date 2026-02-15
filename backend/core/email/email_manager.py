@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-from typing import Any, List
+from typing import Any
 from .email_client import EmailClient, EmailMessage
 from .errors import (
     EmailAccountNotFoundError,
     EmailAccountRecordError,
-    EmailClientUnsupportedError,
     EmailDuplicateAccountLabelError,
     EmailProviderConfigError,
 )
@@ -23,7 +22,7 @@ class EmailManager:
         """
         Initialize the manager with empty client and error registries.
         """
-        self._clients: List[EmailClient] = []
+        self._clients: list[EmailClient] = []
         self._last_errors: dict[str, Exception] = {}
 
     def add_account_record(self, record: dict[str, Any]) -> None:
@@ -72,21 +71,17 @@ class EmailManager:
         refreshed_tokens: dict[str, dict[str, Any]] = {}
         for client in self._clients:
             try:
-                if hasattr(client, "authenticate_silent"):
-                    # Silent auth is provider-specific and should not open UI flows.
-                    if auth_payloads is None:
-                        updated = client.authenticate_silent()
-                    else:
-                        app_credentials = None
-                        user_tokens = None
-                        payload = auth_payloads.get(client.get_account_label())
-                        if payload is not None:
-                            app_credentials, user_tokens = payload
-                        updated = client.authenticate_silent(app_credentials, user_tokens)
-                    if isinstance(updated, dict) and updated:
-                        refreshed_tokens[client.get_account_label()] = updated
+                if auth_payloads is None:
+                    updated = client.authenticate_silent()
                 else:
-                    raise EmailClientUnsupportedError("Client does not support silent authentication.")
+                    app_credentials = None
+                    user_tokens = None
+                    payload = auth_payloads.get(client.get_account_label())
+                    if payload is not None:
+                        app_credentials, user_tokens = payload
+                    updated = client.authenticate_silent(app_credentials, user_tokens)
+                if isinstance(updated, dict) and updated:
+                    refreshed_tokens[client.get_account_label()] = updated
             except Exception as exc:
                 self._last_errors[client.get_account_label()] = exc
         return refreshed_tokens
@@ -98,7 +93,7 @@ class EmailManager:
     ) -> dict[str, Any] | None:
         """
         Authenticate a single account by its label.
-        This method is for UI flows, non for scripts or batch jobs.
+        This method is for UI flows, not for scripts or batch jobs.
         """
         self._last_errors = {}
         for client in self._clients:
@@ -114,12 +109,12 @@ class EmailManager:
             {"account_label": account_label},
         )
 
-    def fetch_all_unread_emails(self) -> List[EmailMessage]:
+    def fetch_all_unread_emails(self) -> list[EmailMessage]:
         """
         Fetch unread messages from all clients and return a unified list.
         """
         self._last_errors = {}
-        all_unread: List[EmailMessage] = []
+        all_unread: list[EmailMessage] = []
 
         for client in self._clients:
             try:
@@ -134,7 +129,7 @@ class EmailManager:
         account_label: str,
         subject: str,
         body: str,
-        recipients: List[str],
+        recipients: list[str],
     ) -> None:
         """
         Send an email using the client that matches the requested account label.

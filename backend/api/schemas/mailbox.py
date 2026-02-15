@@ -12,7 +12,7 @@ class MailboxCreate(BaseModel):
     Request model for creating a mailbox.
     """
 
-    display_name: str = Field(..., max_length=120)
+    display_name: str = Field(..., min_length=1, max_length=120)
 
 
 class MailboxOut(BaseModel):

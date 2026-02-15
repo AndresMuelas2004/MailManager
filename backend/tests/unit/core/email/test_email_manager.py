@@ -6,7 +6,6 @@ from core.email.email_manager import EmailManager
 from core.email.errors import (
     EmailAccountNotFoundError,
     EmailAccountRecordError,
-    EmailClientUnsupportedError,
     EmailDuplicateAccountLabelError,
     EmailProviderConfigError,
 )
@@ -93,28 +92,6 @@ def test_authenticate_all_silent_records_errors_and_continues(
     errors = manager.get_last_errors()
     assert set(errors.keys()) == {fake_client_fail_auth_silent.get_account_label()}
     assert fake_client_ok.authenticate_silent_calls == 1
-
-
-def test_authenticate_all_silent_client_without_method_is_recorded_as_error(
-    manager: EmailManager,
-):
-    """Treats missing authenticate_silent as an error."""
-    class MinimalClient:
-        def __init__(self, label: str) -> None:
-            self._label = label
-
-        def authenticate(self) -> None:
-            return None
-
-        def get_account_label(self) -> str:
-            return self._label
-
-    minimal = MinimalClient("acct_min")
-    manager.add_client(minimal)
-    manager.authenticate_all_silent()
-    errors = manager.get_last_errors()
-    assert set(errors.keys()) == {"acct_min"}
-    assert isinstance(errors["acct_min"], EmailClientUnsupportedError)
 
 
 def test_connect_account_authenticates_only_requested_label(

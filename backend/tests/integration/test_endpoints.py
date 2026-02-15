@@ -1,29 +1,18 @@
 """
 Integration tests — happy-path and behavioral tests for every API endpoint.
 
-Each test exercises the full router → service → core → storage flow.
+Each test exercises the full router -> service -> core -> storage flow.
 Only external dependencies (provider APIs, disk tokens, env vars) are faked
 via the ``test_client`` fixture defined in the integration conftest.
 
-Error-path tests live in ``test_api_errors.py``.
+Error-path tests live in ``test_api_layer_errors.py`` and
+``test_core_error_translation.py``.
 """
 
 from __future__ import annotations
 
 
 _MAILBOX_URL = "/mailboxes"
-
-
-def _setup_mailbox_and_account(client) -> tuple[str, str]:
-    """Create a mailbox + gmail account and return ``(mailbox_id, account_id)``."""
-    mb = client.post(_MAILBOX_URL, json={"display_name": "Test MB"})
-    mailbox_id = mb.json()["mailbox_id"]
-    acc = client.post(
-        f"{_MAILBOX_URL}/{mailbox_id}/accounts",
-        json={"provider": "gmail", "display_label": "my-gmail"},
-    )
-    account_id = acc.json()["account_id"]
-    return mailbox_id, account_id
 
 
 # ------------------------------------------------------------------
@@ -89,22 +78,22 @@ def test_create_account(test_client):
     assert data["provider"] == "gmail"
 
 
-def test_list_accounts(test_client):
-    mid, _ = _setup_mailbox_and_account(test_client)
+def test_list_accounts(test_client, setup_mailbox_and_account):
+    mid, _ = setup_mailbox_and_account(test_client)
     resp = test_client.get(f"{_MAILBOX_URL}/{mid}/accounts")
     assert resp.status_code == 200
     assert len(resp.json()) == 1
 
 
-def test_get_account(test_client):
-    mid, aid = _setup_mailbox_and_account(test_client)
+def test_get_account(test_client, setup_mailbox_and_account):
+    mid, aid = setup_mailbox_and_account(test_client)
     resp = test_client.get(f"{_MAILBOX_URL}/{mid}/accounts/{aid}")
     assert resp.status_code == 200
     assert resp.json()["account_id"] == aid
 
 
-def test_update_account(test_client):
-    mid, aid = _setup_mailbox_and_account(test_client)
+def test_update_account(test_client, setup_mailbox_and_account):
+    mid, aid = setup_mailbox_and_account(test_client)
     resp = test_client.patch(
         f"{_MAILBOX_URL}/{mid}/accounts/{aid}",
         json={"display_label": "renamed"},
@@ -113,15 +102,15 @@ def test_update_account(test_client):
     assert resp.json()["display_label"] == "renamed"
 
 
-def test_delete_account(test_client):
-    mid, aid = _setup_mailbox_and_account(test_client)
+def test_delete_account(test_client, setup_mailbox_and_account):
+    mid, aid = setup_mailbox_and_account(test_client)
     resp = test_client.delete(f"{_MAILBOX_URL}/{mid}/accounts/{aid}")
     assert resp.status_code == 200
     assert resp.json() == {"status": "deleted"}
 
 
-def test_connect_account(test_client):
-    mid, aid = _setup_mailbox_and_account(test_client)
+def test_connect_account(test_client, setup_mailbox_and_account):
+    mid, aid = setup_mailbox_and_account(test_client)
     resp = test_client.post(f"{_MAILBOX_URL}/{mid}/accounts/{aid}/connect")
     assert resp.status_code == 200
     data = resp.json()
@@ -133,15 +122,15 @@ def test_connect_account(test_client):
 # Emails
 # ------------------------------------------------------------------
 
-def test_list_unread_emails(test_client):
-    mid, _ = _setup_mailbox_and_account(test_client)
+def test_list_unread_emails(test_client, setup_mailbox_and_account):
+    mid, _ = setup_mailbox_and_account(test_client)
     resp = test_client.get(f"{_MAILBOX_URL}/{mid}/emails/unread")
     assert resp.status_code == 200
     assert len(resp.json()) == 3
 
 
-def test_send_email(test_client):
-    mid, aid = _setup_mailbox_and_account(test_client)
+def test_send_email(test_client, setup_mailbox_and_account):
+    mid, aid = setup_mailbox_and_account(test_client)
     resp = test_client.post(
         f"{_MAILBOX_URL}/{mid}/emails/send",
         json={
@@ -177,7 +166,7 @@ def test_multi_account_unread_aggregates(test_client):
     mid, _, _ = _setup_mailbox_with_two_accounts(test_client)
     resp = test_client.get(f"{_MAILBOX_URL}/{mid}/emails/unread")
     assert resp.status_code == 200
-    # Each FakeEmailClient returns 3 sample messages → 2 accounts = 6.
+    # Each FakeEmailClient returns 3 sample messages -> 2 accounts = 6.
     assert len(resp.json()) == 6
 
 
@@ -203,7 +192,7 @@ def test_multi_account_send_targets_specific_account(test_client):
 def test_delete_mailbox_removes_accounts(test_client):
     mid, aid1, aid2 = _setup_mailbox_with_two_accounts(test_client)
     test_client.delete(f"{_MAILBOX_URL}/{mid}")
-    # Mailbox gone → any account operation returns 404.
+    # Mailbox gone -> any account operation returns 404.
     assert test_client.get(f"{_MAILBOX_URL}/{mid}/accounts/{aid1}").status_code == 404
     assert test_client.get(f"{_MAILBOX_URL}/{mid}/accounts/{aid2}").status_code == 404
 
@@ -212,8 +201,8 @@ def test_delete_mailbox_removes_accounts(test_client):
 # Partial update
 # ==================================================================
 
-def test_update_account_config_only(test_client):
-    mid, aid = _setup_mailbox_and_account(test_client)
+def test_update_account_config_only(test_client, setup_mailbox_and_account):
+    mid, aid = setup_mailbox_and_account(test_client)
     resp = test_client.patch(
         f"{_MAILBOX_URL}/{mid}/accounts/{aid}",
         json={"config": {"extra": True}},
@@ -221,7 +210,7 @@ def test_update_account_config_only(test_client):
     assert resp.status_code == 200
     data = resp.json()
     assert data["config"] == {"extra": True}
-    assert data["display_label"] == "my-gmail"  # unchanged
+    assert data["display_label"] == "test-gmail"  # unchanged
 
 
 # ==================================================================

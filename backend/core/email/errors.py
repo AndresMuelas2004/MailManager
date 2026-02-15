@@ -80,17 +80,17 @@ class EmailAccountNotFoundError(EmailError):
 
 class EmailMissingTokenError(EmailAuthError):
     code = "email_missing_token"
-    default_message = "missing_token"
+    default_message = "Access token is missing."
 
 
 class EmailMissingRefreshTokenError(EmailAuthError):
     code = "email_missing_refresh_token"
-    default_message = "missing_refresh_token"
+    default_message = "Refresh token is missing."
 
 
 class EmailRefreshFailedError(EmailAuthError):
     code = "email_refresh_failed"
-    default_message = "refresh_failed"
+    default_message = "Token refresh failed."
 
 
 class EmailNotAuthenticatedError(EmailAuthError):

@@ -1,5 +1,9 @@
 # IDE
 .idea/
+.vscode/
+
+# Claude Code local config
+.claude/
 
 # Virtual environment
 .venv/
@@ -9,11 +13,25 @@ __pycache__/
 *.pyc
 *.pyo
 *.pyd
+*.egg-info/
+*.egg
 .pytest_cache/
+.mypy_cache/
+
+# Test coverage
+.coverage
+htmlcov/
 
 # OS files
 .DS_Store
 Thumbs.db
+
+# Logs
+*.log
+
+# Environment variables / secrets
+.env
+.env.*
 
 # Local scripts / experimental code
 backend/Scripts/
@@ -21,6 +39,6 @@ backend/Scripts/
 # Runtime persisted data (local only)
 backend/data/
 
-
-
-
+# Frontend
+node_modules/
+frontend/dist/

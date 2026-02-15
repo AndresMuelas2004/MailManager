@@ -6,8 +6,12 @@ Handlers translate domain-specific exceptions into consistent HTTP responses.
 
 from __future__ import annotations
 
+import logging
+
 from fastapi import FastAPI, Request, status
 from fastapi.responses import JSONResponse
+
+logger = logging.getLogger(__name__)
 
 from api.errors.exceptions import (
     AccountMisconfigured,
@@ -61,6 +65,7 @@ def register_error_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(Exception)
     async def handle_unexpected_error(request: Request, exc: Exception) -> JSONResponse:
+        logger.exception("Unhandled error on %s %s", request.method, request.url.path)
         fallback = ApiError("Unexpected server error.")
         return JSONResponse(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

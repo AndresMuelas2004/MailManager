@@ -5,9 +5,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import datetime, timedelta, timezone
-from typing import Any, List
-
-from pydantic import SecretStr
+from typing import Any
 
 from .email_client import EmailClient, EmailMessage
 from .errors import (
@@ -16,8 +14,15 @@ from .errors import (
     EmailMissingRefreshTokenError,
     EmailMissingTokenError,
     EmailNotAuthenticatedError,
+    EmailProviderConfigError,
     EmailRecipientsMissingError,
     EmailRefreshFailedError,
+)
+from .helpers import (
+    parse_expiry,
+    unwrap_app_credentials,
+    unwrap_user_tokens,
+    wrap_account_tokens,
 )
 
 OUTLOOK_SCOPES = [
@@ -60,7 +65,7 @@ class OutlookClient(EmailClient):
         import webbrowser
         from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-        credentials_payload = self._unwrap_app_credentials(app_credentials)
+        credentials_payload = unwrap_app_credentials(app_credentials)
         if not credentials_payload:
             raise EmailMissingAppCredentialsError()
 
@@ -76,7 +81,7 @@ class OutlookClient(EmailClient):
         parsed_redirect = urllib.parse.urlparse(redirect_uri)
         redirect_host = (parsed_redirect.hostname or "").lower()
         if parsed_redirect.scheme != "http" or redirect_host not in {"localhost", "127.0.0.1"}:
-            raise ValueError(
+            raise EmailProviderConfigError(
                 "Outlook local OAuth redirect_uri must use http://localhost or http://127.0.0.1."
             )
 
@@ -211,7 +216,7 @@ class OutlookClient(EmailClient):
             "expiry": self._compute_expiry(token_response.get("expires_in")),
             "scopes": scopes,
         }
-        return self._wrap_account_tokens(token_record)
+        return wrap_account_tokens(token_record)
 
     def authenticate_silent(
         self,
@@ -224,17 +229,17 @@ class OutlookClient(EmailClient):
         Microsoft may rotate the refresh token on every refresh, so both the
         access and refresh tokens are persisted whenever a refresh happens.
         """
-        credentials_payload = self._unwrap_app_credentials(app_credentials)
+        credentials_payload = unwrap_app_credentials(app_credentials)
         if not credentials_payload:
             raise EmailMissingAppCredentialsError()
 
-        token_payload = self._unwrap_user_tokens(user_tokens)
+        token_payload = unwrap_user_tokens(user_tokens)
         access_token = token_payload.get("access_token")
         if not access_token:
             raise EmailMissingTokenError()
 
         refresh_token = token_payload.get("refresh_token")
-        expiry = self._parse_expiry(token_payload.get("expiry"))
+        expiry = parse_expiry(token_payload.get("expiry"))
 
         # Determine whether the current access token has expired.
         is_expired = False
@@ -285,13 +290,13 @@ class OutlookClient(EmailClient):
             "expiry": self._compute_expiry(token_response.get("expires_in")),
             "scopes": scopes,
         }
-        return self._wrap_account_tokens(token_record)
+        return wrap_account_tokens(token_record)
 
     # ------------------------------------------------------------------
     # Email operations
     # ------------------------------------------------------------------
 
-    def fetch_unread_emails(self, max_total: int = 200, page_size: int = 50) -> List[EmailMessage]:
+    def fetch_unread_emails(self, max_total: int = 200, page_size: int = 50) -> list[EmailMessage]:
         """
         Fetch unread messages from Microsoft Graph, normalize them into
         EmailMessage objects and return them as a list.
@@ -320,7 +325,7 @@ class OutlookClient(EmailClient):
 
         raw_messages = raw_messages[:max_total]
 
-        unread_emails: List[EmailMessage] = []
+        unread_emails: list[EmailMessage] = []
         for msg in raw_messages:
             from_data = (msg.get("from") or {}).get("emailAddress") or {}
             sender_name = from_data.get("name") or ""
@@ -363,7 +368,7 @@ class OutlookClient(EmailClient):
         self,
         subject: str,
         body: str,
-        recipients: List[str],
+        recipients: list[str],
     ) -> None:
         """
         Send a plain text email using Microsoft Graph API.
@@ -395,59 +400,6 @@ class OutlookClient(EmailClient):
     # ------------------------------------------------------------------
     # Private helpers
     # ------------------------------------------------------------------
-
-    def _unwrap_app_credentials(
-        self, app_credentials: dict[str, Any] | None,
-    ) -> dict[str, Any]:
-        payload = dict(app_credentials or {})
-        secret = payload.get("client_secret")
-        if isinstance(secret, SecretStr):
-            payload["client_secret"] = secret.get_secret_value()
-        return payload
-
-    def _unwrap_user_tokens(
-        self, user_tokens: dict[str, Any] | None,
-    ) -> dict[str, Any]:
-        payload = dict(user_tokens or {})
-        access_token = payload.get("access_token")
-        refresh_token = payload.get("refresh_token")
-        if isinstance(access_token, SecretStr):
-            payload["access_token"] = access_token.get_secret_value()
-        if isinstance(refresh_token, SecretStr):
-            payload["refresh_token"] = refresh_token.get_secret_value()
-        return payload
-
-    def _wrap_account_tokens(self, token_data: dict[str, Any]) -> dict[str, Any]:
-        payload = dict(token_data or {})
-        if "access_token" in payload:
-            payload["access_token"] = SecretStr(str(payload.get("access_token")))
-        if "refresh_token" in payload and payload["refresh_token"] is not None:
-            payload["refresh_token"] = SecretStr(str(payload.get("refresh_token")))
-        return payload
-
-    def _parse_expiry(self, value: Any) -> datetime | None:
-        if value is None:
-            return None
-        if isinstance(value, datetime):
-            if value.tzinfo is None:
-                return value
-            return value.astimezone(timezone.utc).replace(tzinfo=None)
-        if isinstance(value, (int, float)):
-            return datetime.fromtimestamp(value, tz=timezone.utc).replace(tzinfo=None)
-        if isinstance(value, str):
-            raw = value.strip()
-            if not raw:
-                return None
-            if raw.endswith("Z"):
-                raw = raw[:-1] + "+00:00"
-            try:
-                parsed = datetime.fromisoformat(raw)
-            except ValueError:
-                return None
-            if parsed.tzinfo is None:
-                return parsed
-            return parsed.astimezone(timezone.utc).replace(tzinfo=None)
-        return None
 
     def _resolve_scopes(
         self,
@@ -513,7 +465,7 @@ class OutlookClient(EmailClient):
             raise EmailExternalAPIError("Outlook failed to parse token endpoint response: invalid JSON.") from exc
         except Exception as exc:
             raise EmailExternalAPIError(f"Outlook failed during token response parsing: {exc}") from exc
-        
+
         if not isinstance(token_response, dict):
             raise EmailExternalAPIError("Outlook failed at token endpoint: invalid response payload.")
 
@@ -521,8 +473,6 @@ class OutlookClient(EmailClient):
             err = token_response.get("error")
             desc = token_response.get("error_description")
             raise EmailExternalAPIError(f"Outlook failed at token endpoint: {err}: {desc}")
-        
-
 
         return token_response
 

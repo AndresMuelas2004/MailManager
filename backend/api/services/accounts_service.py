@@ -120,11 +120,6 @@ def connect_account(mailbox_id: str, account_id: str) -> AccountConnectResponse:
         raise translate_core_error(
             exc, fallback=ProviderAuthError, context=connect_context,
         ) from exc
-    except Exception as exc:
-        raise ProviderAuthError(
-            "Failed to authenticate provider client.",
-            connect_context,
-        ) from exc
 
     token_payload = dict(wrapped_tokens or {})
     token_payload["access_token"] = unwrap_secret(token_payload.get("access_token"))

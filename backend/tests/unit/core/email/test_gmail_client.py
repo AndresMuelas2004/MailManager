@@ -1,11 +1,11 @@
-"""Unit tests for GmailClient helper methods and guard clauses."""
+"""Unit tests for GmailClient — build config and guard clauses.
+
+Shared helper tests (parse_expiry, unwrap/wrap) live in ``test_helpers.py``.
+"""
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
-
 import pytest
-from pydantic import SecretStr
 
 from core.email.errors import (
     EmailMissingAppCredentialsError,
@@ -29,45 +29,6 @@ def test_get_account_label_returns_constructor_value(client: GmailClient):
     assert client.get_account_label() == "mb__acct"
 
 
-# ── _unwrap_app_credentials ─────────────────────────────────────────
-
-
-class TestUnwrapAppCredentials:
-    def test_plain_dict_unchanged(self, client: GmailClient):
-        creds = {"client_id": "id", "client_secret": "secret"}
-        result = client._unwrap_app_credentials(creds)
-        assert result == {"client_id": "id", "client_secret": "secret"}
-
-    def test_secret_str_unwrapped(self, client: GmailClient):
-        creds = {"client_id": "id", "client_secret": SecretStr("secret")}
-        result = client._unwrap_app_credentials(creds)
-        assert result["client_secret"] == "secret"
-
-    def test_none_returns_empty_dict(self, client: GmailClient):
-        result = client._unwrap_app_credentials(None)
-        assert result == {}
-
-
-# ── _unwrap_user_tokens ──────────────────────────────────────────────
-
-
-class TestUnwrapUserTokens:
-    def test_unwraps_both_fields(self, client: GmailClient):
-        tokens = {
-            "access_token": SecretStr("at"),
-            "refresh_token": SecretStr("rt"),
-        }
-        result = client._unwrap_user_tokens(tokens)
-        assert result["access_token"] == "at"
-        assert result["refresh_token"] == "rt"
-
-    def test_plain_strings_unchanged(self, client: GmailClient):
-        tokens = {"access_token": "at", "refresh_token": "rt"}
-        result = client._unwrap_user_tokens(tokens)
-        assert result["access_token"] == "at"
-        assert result["refresh_token"] == "rt"
-
-
 # ── _build_client_config ─────────────────────────────────────────────
 
 
@@ -86,68 +47,6 @@ class TestBuildClientConfig:
         payload = {"web": {"client_id": "id"}}
         result = client._build_client_config(payload)
         assert result is payload
-
-
-# ── _wrap_account_tokens ─────────────────────────────────────────────
-
-
-class TestWrapAccountTokens:
-    def test_wraps_access_and_refresh(self, client: GmailClient):
-        token_data = {"access_token": "at", "refresh_token": "rt", "scopes": ["s"]}
-        result = client._wrap_account_tokens(token_data)
-        assert isinstance(result["access_token"], SecretStr)
-        assert result["access_token"].get_secret_value() == "at"
-        assert isinstance(result["refresh_token"], SecretStr)
-        assert result["refresh_token"].get_secret_value() == "rt"
-        assert result["scopes"] == ["s"]
-
-
-# ── _parse_expiry ────────────────────────────────────────────────────
-
-
-class TestParseExpiry:
-    def test_none_returns_none(self, client: GmailClient):
-        assert client._parse_expiry(None) is None
-
-    def test_datetime_naive_returned_as_is(self, client: GmailClient):
-        dt = datetime(2024, 6, 15, 10, 30, 0)
-        result = client._parse_expiry(dt)
-        assert result == dt
-        assert result.tzinfo is None
-
-    def test_datetime_aware_converted_to_utc_naive(self, client: GmailClient):
-        from datetime import timedelta
-
-        tz_plus5 = timezone(timedelta(hours=5))
-        dt = datetime(2024, 6, 15, 15, 30, 0, tzinfo=tz_plus5)
-        result = client._parse_expiry(dt)
-        assert result == datetime(2024, 6, 15, 10, 30, 0)
-        assert result.tzinfo is None
-
-    def test_timestamp_int(self, client: GmailClient):
-        ts = 1718444400  # 2024-06-15T11:00:00Z
-        result = client._parse_expiry(ts)
-        expected = datetime.fromtimestamp(ts, tz=timezone.utc).replace(tzinfo=None)
-        assert result == expected
-        assert result.tzinfo is None
-
-    def test_iso_string(self, client: GmailClient):
-        result = client._parse_expiry("2024-06-15T10:30:00")
-        assert result == datetime(2024, 6, 15, 10, 30, 0)
-
-    def test_iso_string_with_z_suffix(self, client: GmailClient):
-        result = client._parse_expiry("2024-06-15T10:30:00Z")
-        assert result == datetime(2024, 6, 15, 10, 30, 0)
-        assert result.tzinfo is None
-
-    def test_empty_string_returns_none(self, client: GmailClient):
-        assert client._parse_expiry("") is None
-
-    def test_invalid_string_returns_none(self, client: GmailClient):
-        assert client._parse_expiry("not-a-date") is None
-
-    def test_unsupported_type_returns_none(self, client: GmailClient):
-        assert client._parse_expiry([1, 2, 3]) is None
 
 
 # ── Guard clauses ────────────────────────────────────────────────────

@@ -12,21 +12,6 @@ from __future__ import annotations
 _MAILBOX_URL = "/mailboxes"
 
 
-# ------------------------------------------------------------------
-# Helpers
-# ------------------------------------------------------------------
-
-def _setup_mailbox_and_account(client) -> tuple[str, str]:
-    mb = client.post(_MAILBOX_URL, json={"display_name": "ErrMB"})
-    mailbox_id = mb.json()["mailbox_id"]
-    acc = client.post(
-        f"{_MAILBOX_URL}/{mailbox_id}/accounts",
-        json={"provider": "gmail", "display_label": "err-gmail"},
-    )
-    account_id = acc.json()["account_id"]
-    return mailbox_id, account_id
-
-
 # ==================================================================
 # MailboxNotFound (404) — ensure_mailbox_exists / direct service guard
 # ==================================================================
@@ -81,14 +66,14 @@ def test_send_missing_mailbox(test_client):
 # AccountNotFound (404) — direct service lookups
 # ==================================================================
 
-def test_get_account_not_found(test_client):
-    mid, _ = _setup_mailbox_and_account(test_client)
+def test_get_account_not_found(test_client, setup_mailbox_and_account):
+    mid, _ = setup_mailbox_and_account(test_client)
     resp = test_client.get(f"{_MAILBOX_URL}/{mid}/accounts/nonexistent")
     assert resp.status_code == 404
 
 
-def test_update_account_not_found(test_client):
-    mid, _ = _setup_mailbox_and_account(test_client)
+def test_update_account_not_found(test_client, setup_mailbox_and_account):
+    mid, _ = setup_mailbox_and_account(test_client)
     resp = test_client.patch(
         f"{_MAILBOX_URL}/{mid}/accounts/nonexistent",
         json={"display_label": "nope"},
@@ -96,20 +81,20 @@ def test_update_account_not_found(test_client):
     assert resp.status_code == 404
 
 
-def test_delete_account_not_found(test_client):
-    mid, _ = _setup_mailbox_and_account(test_client)
+def test_delete_account_not_found(test_client, setup_mailbox_and_account):
+    mid, _ = setup_mailbox_and_account(test_client)
     resp = test_client.delete(f"{_MAILBOX_URL}/{mid}/accounts/nonexistent")
     assert resp.status_code == 404
 
 
-def test_connect_account_not_found(test_client):
-    mid, _ = _setup_mailbox_and_account(test_client)
+def test_connect_account_not_found(test_client, setup_mailbox_and_account):
+    mid, _ = setup_mailbox_and_account(test_client)
     resp = test_client.post(f"{_MAILBOX_URL}/{mid}/accounts/nonexistent/connect")
     assert resp.status_code == 404
 
 
-def test_send_account_not_found(test_client):
-    mid, _ = _setup_mailbox_and_account(test_client)
+def test_send_account_not_found(test_client, setup_mailbox_and_account):
+    mid, _ = setup_mailbox_and_account(test_client)
     resp = test_client.post(
         f"{_MAILBOX_URL}/{mid}/emails/send",
         json={

@@ -3,7 +3,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, List
+from typing import Any
 
 
 @dataclass
@@ -15,7 +15,7 @@ class EmailMessage:
     message_id: str
     subject: str
     sender: str
-    recipients: List[str]
+    recipients: list[str]
     body: str
     sent_at: datetime
     is_unread: bool
@@ -39,7 +39,6 @@ class EmailClient(ABC):
         Perform any authentication or token refresh needed for this client.
         This method should be called before making API calls.
         """
-        raise NotImplementedError
 
     @abstractmethod
     def authenticate_silent(
@@ -51,23 +50,20 @@ class EmailClient(ABC):
         Perform authentication without starting interactive flows.
         Returns updated token payload when a refresh occurs.
         """
-        # Providers should refresh tokens or raise when non-interactive auth fails.
-        raise NotImplementedError
 
     @abstractmethod
-    def fetch_unread_emails(self) -> List[EmailMessage]:
+    def fetch_unread_emails(self) -> list[EmailMessage]:
         """
         Retrieve unread emails from the provider and return them as a list
         of normalized EmailMessage objects.
         """
-        raise NotImplementedError
 
     @abstractmethod
     def send_email(
         self,
         subject: str,
         body: str,
-        recipients: List[str],
+        recipients: list[str],
     ) -> None:
         """
         Send a simple email message using this provider.
@@ -75,7 +71,6 @@ class EmailClient(ABC):
         :param body: Plain text body of the email.
         :param recipients: List of recipient email addresses.
         """
-        raise NotImplementedError
 
     @abstractmethod
     def get_account_label(self) -> str:
@@ -84,4 +79,3 @@ class EmailClient(ABC):
         'personal_gmail', 'university_outlook', etc).
         This helps the manager know which account is which.
         """
-        raise NotImplementedError

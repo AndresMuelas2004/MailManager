@@ -49,20 +49,18 @@ def _token_path_for_account(record: dict[str, Any]) -> Path:
 
 def _delete_account_tokens(record: dict[str, Any]) -> None:
     """
-    Best-effort deletion of account tokens on disk.
+    Delete account tokens on disk.
     """
-    try:
-        token_path = _token_path_for_account(record)
-    except EnvVarError:
-        raise
-    except Exception:
-        return
+    token_path = _token_path_for_account(record)
 
     try:
         if token_path.exists():
             token_path.unlink()
-    except Exception:
-        return
+    except OSError as exc:
+        raise StorageError(
+            "Failed to delete token storage file.",
+            {"path": str(token_path)},
+        ) from exc
 
 
 def delete_account_tokens_for_records(accounts: Iterable[dict[str, Any]]) -> None:
@@ -162,7 +160,9 @@ def save_account_tokens(
     try:
         token_path.parent.mkdir(parents=True, exist_ok=True)
         payload = json.dumps(token_data, indent=2, sort_keys=True)
-        token_path.write_text(payload, encoding="utf-8")
+        temp_path = token_path.with_name(f"{token_path.name}.tmp")
+        temp_path.write_text(payload, encoding="utf-8")
+        temp_path.replace(token_path)
     except OSError as exc:
         raise StorageError(
             "Failed to write token storage file.",
