@@ -39,6 +39,10 @@ class ProviderAuthError(ApiError):
     code = "provider_auth_error"
 
 
+class AccountConnectAuthError(ApiError):
+    code = "account_connect_auth_error"
+
+
 class AccountNotConnected(ApiError):
     code = "account_not_connected"
 

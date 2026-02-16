@@ -1,6 +1,5 @@
 import contextlib
 import os
-from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
 
 import psycopg2
@@ -13,25 +12,9 @@ from api.database import repository as repo_module
 from api.database import token_store as token_store_module
 from api.services import accounts_service, emails_service, services_helpers
 from core.email.email_manager import EmailManager
-
-_UNIT_CONFTEST_PATH = (
-    Path(__file__).resolve().parents[1] / "unit" / "core" / "conftest.py"
-)
+from tests.shared.email_fakes import FakeEmailClient
 
 _SCHEMA_PATH = Path(__file__).resolve().parents[2] / "api" / "database" / "schema.sql"
-
-
-def _load_unit_conftest():
-    spec = spec_from_file_location("tests_unit_conftest", _UNIT_CONFTEST_PATH)
-    module = module_from_spec(spec)
-    if spec.loader is None:
-        raise RuntimeError("Unable to load unit conftest module.")
-    spec.loader.exec_module(module)
-    return module
-
-
-_unit_conftest = _load_unit_conftest()
-FakeEmailClient = _unit_conftest.FakeEmailClient
 
 
 _MAILBOX_URL = "/mailboxes"

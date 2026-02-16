@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Integration tests verify that the **full request flow** (router → service → core → storage) works correctly when all internal layers are wired together. Only external boundaries are faked: provider APIs, disk-based token files, and environment variables for credentials. JSON storage runs against real implementations redirected to temporary directories.
+Integration tests verify that the **full request flow** (router → service → database → core) works correctly when all internal layers are wired together. Only external boundaries are faked: provider APIs and credential/token I/O. Database operations run against a real PostgreSQL instance, with each test wrapped in a transaction that is rolled back at teardown for isolation.
 
 ## What is Real vs Faked
 
@@ -10,13 +10,12 @@ Integration tests verify that the **full request flow** (router → service → 
 |-----------|-------------|-----------|
 | FastAPI router | Real | `TestClient` (ASGI in-process) |
 | Services | Real | Normal import path |
-| JSON storage | Real | `isolated_storage` autouse fixture → temp dir |
+| PostgreSQL database | Real | `isolated_db` autouse fixture → per-test transaction, rolled back |
 | EmailManager (orchestrator) | Real | Standard instantiation |
 | EmailClient (Gmail/Outlook) | **Fake** | `build_manager_for_accounts` patch → `FakeEmailClient` |
-| App credentials (disk/env) | **Fake** | `load_wrapped_app_credentials` → static dict |
-| Account tokens (disk/env) | **Fake** | `load_wrapped_account_tokens` → static dict |
+| App credentials (file/env) | **Fake** | `load_wrapped_app_credentials` → static dict |
+| Account tokens (database) | **Fake** | `load_wrapped_account_tokens` → static dict |
 | Token persistence | **Fake** | `save_account_tokens` → no-op |
-| Token cleanup | **Fake** | `delete_account_tokens_for_records` → no-op |
 
 ## Test File Organization
 
@@ -24,7 +23,7 @@ Integration tests verify that the **full request flow** (router → service → 
 |------|---------------|-------|
 | `test_endpoints.py` | Happy-path CRUD for all 13 endpoints, multi-account scenarios, delete cascade, partial updates, and cross-provider (Outlook) flows | 18 |
 | `test_api_layer_errors.py` | Direct `raise ApiError(...)` in services — no core error translation involved (404s, 422s) | 14 |
-| `test_core_error_translation.py` | Core errors escalated via `translate_core_error` / `raise_on_silent_auth_errors` to API errors (409, 502, 400) | 7 |
+| `test_core_error_translation.py` | Core errors escalated via `translate_connect_error` / `translate_core_error` / `raise_on_silent_auth_errors` to API errors (401, 409, 502, 400) | 7 |
 
 ## `test_endpoints.py` — Happy-Path and Behavioral Tests
 
@@ -52,7 +51,7 @@ Integration tests verify that the **full request flow** (router → service → 
 |------|-----------------|
 | `test_multi_account_unread_aggregates` | Two accounts (gmail + outlook) → unread returns 6 messages (3 per fake client) |
 | `test_multi_account_send_targets_specific_account` | Send routes to the correct account by `account_id` |
-| `test_delete_mailbox_removes_accounts` | Deleting a mailbox also deletes all its accounts |
+| `test_delete_mailbox_removes_accounts` | Deleting a mailbox also deletes all its accounts (CASCADE) |
 | `test_update_account_config_only` | PATCH with only `config` updates config without changing `display_label` |
 | `test_outlook_account_connect` | Create + connect an Outlook account end-to-end |
 
@@ -91,13 +90,13 @@ These test every `raise ApiError(...)` that the service layer performs **directl
 
 ## `test_core_error_translation.py` — Core → API Error Translation
 
-These test errors that **originate in the core layer** (`CoreError` subclasses) and are translated to `ApiError` subclasses via `translate_core_error` or `raise_on_silent_auth_errors`. The `failing_test_client` fixture injects failure kwargs into `FakeEmailClient`.
+These test errors that **originate in the core layer** (`CoreError` subclasses) and are translated to `ApiError` subclasses via `translate_connect_error`, `translate_core_error`, or `raise_on_silent_auth_errors`. The `failing_test_client` fixture injects failure kwargs into `FakeEmailClient`.
 
-### connect_account — EmailAuthError → translate_core_error (1 test)
+### connect_account — EmailAuthError → translate_connect_error (1 test)
 
 | Test | Core error | Expected status |
 |------|-----------|-----------------|
-| `test_connect_auth_failure` | `EmailAuthError` via `auth_exc` | 409 (AccountNotConnected per `_CORE_TO_API_MAP`) |
+| `test_connect_auth_failure` | `EmailAuthError` via `auth_exc` | 401 (`AccountConnectAuthError`) |
 
 ### authenticate_all_silent — raise_on_silent_auth_errors (2 tests)
 
@@ -119,14 +118,10 @@ These test errors that **originate in the core layer** (`CoreError` subclasses) 
 |------|-----------|-----------------|
 | `test_connect_account_misconfigured` | `EmailProviderConfigError` → `translate_core_error` | 400 |
 
-### Known issue
-
-`test_connect_auth_failure` returns 409 because `_CORE_TO_API_MAP` maps `EmailAuthError` → `AccountNotConnected`, overriding the `fallback=ProviderAuthError` in `accounts_service.connect_account`. This may warrant a review of the mapping or a dedicated exception for interactive auth failures.
-
 ## Fixture Stack
 
-1. **`temp_base_dir`** (session) — shared temporary directory for the test session.
-2. **`isolated_db`** (autouse, per-test) — wraps each test in a PostgreSQL transaction that is rolled back at teardown, ensuring every test starts with a clean database state.
+1. **`create_test_schema`** (session, autouse) — connects directly to PostgreSQL and executes `schema.sql` to ensure tables exist before any test runs.
+2. **`isolated_db`** (autouse, per-test) — opens a PostgreSQL connection with `autocommit=False`, monkeypatches `get_connection` in `db`, `repository`, and `token_store` modules so all database operations use this single transactional connection. Rolled back at teardown, ensuring every test starts with a clean database state.
 3. **`test_client`** (per-test) — wraps `test_client_base` (FastAPI `TestClient`) and applies all monkeypatches for faking credentials, tokens, and the email client builder. Used by happy-path and direct API error tests.
 4. **`failing_test_client`** (per-test, indirect parametrize) — same patches as `test_client` but forwards extra kwargs (e.g. `auth_exc`, `fetch_exc`) to `FakeEmailClient`. Used by core error translation tests.
 
@@ -140,7 +135,7 @@ These test errors that **originate in the core layer** (`CoreError` subclasses) 
 ## Running Tests
 
 ```bash
-# All integration tests
+# All integration tests (requires DATABASE_URL)
 python -m pytest backend/tests/integration -v
 
 # Happy-path tests only

@@ -29,6 +29,7 @@ from core.email.errors import (
 )
 
 from api.errors.exceptions import (
+    AccountConnectAuthError,
     AccountMisconfigured,
     AccountNotConnected,
     AccountNotFound,
@@ -88,6 +89,26 @@ def translate_core_error(
         # Unreachable when CoreError is in the map, but safe fallback.
         return fallback(str(exc), {**(context or {}), "core_code": exc.code})
     return fallback(str(exc) or "Unexpected error.", context or {})
+
+
+def translate_connect_error(
+    exc: Exception,
+    *,
+    context: dict[str, Any] | None = None,
+) -> ApiError:
+    """
+    Translate errors for the interactive account-connect flow.
+
+    Unlike mailbox operations that require a pre-connected account (409),
+    connect-time authentication failures should return 401.
+    """
+    if isinstance(exc, EmailAuthError):
+        detail = exc.detail if hasattr(exc, "detail") else {}
+        if context:
+            detail = {**detail, **context}
+        detail["core_code"] = exc.code
+        return AccountConnectAuthError(exc.message, detail)
+    return translate_core_error(exc, fallback=AccountConnectAuthError, context=context)
 
 
 def ensure_mailbox_exists(mailbox_id: str) -> None:

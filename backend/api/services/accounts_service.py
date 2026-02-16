@@ -8,7 +8,6 @@ from uuid import uuid4
 
 from api.errors.exceptions import (
     AccountNotFound,
-    ProviderAuthError,
 )
 from core.email.errors import CoreError
 from api.schemas.account import (
@@ -21,7 +20,7 @@ from api.services.services_helpers import (
     build_manager_for_accounts,
     ensure_mailbox_exists,
     load_wrapped_app_credentials,
-    translate_core_error,
+    translate_connect_error,
     unwrap_secret,
 )
 from api.database import account_store, save_account_tokens
@@ -114,9 +113,7 @@ def connect_account(mailbox_id: str, account_id: str) -> AccountConnectResponse:
     try:
         wrapped_tokens = manager.connect_account(account_label, app_credentials)
     except CoreError as exc:
-        raise translate_core_error(
-            exc, fallback=ProviderAuthError, context=connect_context,
-        ) from exc
+        raise translate_connect_error(exc, context=connect_context) from exc
 
     token_payload = dict(wrapped_tokens or {})
     token_payload["access_token"] = unwrap_secret(token_payload.get("access_token"))

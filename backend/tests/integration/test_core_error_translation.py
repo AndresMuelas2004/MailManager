@@ -1,9 +1,9 @@
 """
-Integration tests — core errors escalated to API errors via ``translate_core_error``.
+Integration tests - core errors escalated to API errors via translation helpers.
 
 Each test triggers a ``CoreError`` inside a provider client (via ``FakeEmailClient``
 kwargs) and verifies that the service layer translates it into the correct HTTP
-status code.  Direct API-layer raises are covered in ``test_api_layer_errors.py``.
+status code. Direct API-layer raises are covered in ``test_api_layer_errors.py``.
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ _MAILBOX_URL = "/mailboxes"
 
 
 # ==================================================================
-# connect_account — CoreError during authenticate (translate_core_error)
+# connect_account - CoreError during authenticate (translate_connect_error)
 # ==================================================================
 
 @pytest.mark.parametrize(
@@ -32,16 +32,15 @@ _MAILBOX_URL = "/mailboxes"
     indirect=True,
 )
 def test_connect_auth_failure(failing_test_client, setup_mailbox_and_account):
-    """EmailAuthError during connect -> translate_core_error -> HTTP status."""
+    """EmailAuthError during connect -> translate_connect_error -> HTTP status."""
     mid, aid = setup_mailbox_and_account(failing_test_client)
     resp = failing_test_client.post(f"{_MAILBOX_URL}/{mid}/accounts/{aid}/connect")
-    # EmailAuthError maps to AccountNotConnected (409) through _CORE_TO_API_MAP,
-    # even though the service fallback is ProviderAuthError.
-    assert resp.status_code == 409
+    # Connect flow maps EmailAuthError to AccountConnectAuthError (401).
+    assert resp.status_code == 401
 
 
 # ==================================================================
-# authenticate_all_silent — auth errors -> raise_on_silent_auth_errors
+# authenticate_all_silent - auth errors -> raise_on_silent_auth_errors
 # ==================================================================
 
 @pytest.mark.parametrize(
@@ -77,7 +76,7 @@ def test_send_account_not_connected(failing_test_client, setup_mailbox_and_accou
 
 
 # ==================================================================
-# fetch_all_unread_emails — per-client error -> post-fetch check (502)
+# fetch_all_unread_emails - per-client error -> post-fetch check (502)
 # ==================================================================
 
 @pytest.mark.parametrize(
@@ -93,7 +92,7 @@ def test_unread_fetch_failure(failing_test_client, setup_mailbox_and_account):
 
 
 # ==================================================================
-# send_email_from_account — CoreError during send (translate_core_error)
+# send_email_from_account - CoreError during send (translate_core_error)
 # ==================================================================
 
 @pytest.mark.parametrize(
@@ -117,7 +116,7 @@ def test_send_failure(failing_test_client, setup_mailbox_and_account):
 
 
 # ==================================================================
-# build_manager_for_accounts — CoreError -> translate_core_error -> 400
+# build_manager_for_accounts - CoreError -> translate_core_error -> 400
 # ==================================================================
 
 def test_connect_account_misconfigured(test_client, setup_mailbox_and_account, monkeypatch):
@@ -140,3 +139,4 @@ def test_connect_account_misconfigured(test_client, setup_mailbox_and_account, m
 
     resp = test_client.post(f"{_MAILBOX_URL}/{mid}/accounts/{aid}/connect")
     assert resp.status_code == 400
+

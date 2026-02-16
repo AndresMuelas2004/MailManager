@@ -14,6 +14,7 @@ from fastapi.responses import JSONResponse
 logger = logging.getLogger(__name__)
 
 from api.errors.exceptions import (
+    AccountConnectAuthError,
     AccountMisconfigured,
     AccountNotConnected,
     AccountNotFound,
@@ -33,6 +34,7 @@ _STATUS_MAP: dict[type[ApiError], int] = {
     MailboxNotFound: status.HTTP_404_NOT_FOUND,
     AccountNotFound: status.HTTP_404_NOT_FOUND,
     AccountMisconfigured: status.HTTP_400_BAD_REQUEST,
+    AccountConnectAuthError: status.HTTP_401_UNAUTHORIZED,
     ProviderAuthError: status.HTTP_401_UNAUTHORIZED,
     AccountNotConnected: status.HTTP_409_CONFLICT,
     EmailFetchError: status.HTTP_502_BAD_GATEWAY,
@@ -71,4 +73,3 @@ def register_error_handlers(app: FastAPI) -> None:
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             content=_error_payload(fallback),
         )
-

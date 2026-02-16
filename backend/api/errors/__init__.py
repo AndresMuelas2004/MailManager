@@ -3,6 +3,7 @@ Error package exports for the API layer.
 """
 
 from api.errors.exceptions import (
+    AccountConnectAuthError,
     AccountMisconfigured,
     AccountNotConnected,
     AccountNotFound,
@@ -17,6 +18,7 @@ from api.errors.exceptions import (
 )
 
 __all__ = [
+    "AccountConnectAuthError",
     "AccountMisconfigured",
     "AccountNotConnected",
     "AccountNotFound",
@@ -29,4 +31,3 @@ __all__ = [
     "StorageError",
     "MailboxNotFound",
 ]
-
