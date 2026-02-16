@@ -2,14 +2,14 @@
 
 ## Purpose
 
-End-to-end tests that exercise the full API flow against **real** Gmail and Outlook APIs. Nothing is faked — real OAuth, real email sending, real token persistence. The only isolation is JSON storage, which is redirected to a temp directory so production data files are never touched.
+End-to-end tests that exercise the full API flow against **real** Gmail and Outlook APIs. Nothing is faked — real OAuth, real email sending, real token persistence. Database writes are isolated via a transaction that is rolled back at session teardown.
 
 ## Prerequisites
 
 1. **Environment variables** must be set and pointing to real files/directories:
+   - `DATABASE_URL` — PostgreSQL connection string
    - `MIA_GMAIL_CREDENTIALS_PATH` — path to Gmail OAuth client JSON
    - `MIA_OUTLOOK_CREDENTIALS_PATH` — path to Outlook app credentials JSON
-   - `MIA_TOKEN_PATH` — directory for token files
 2. **Internet access** — tests call live provider APIs.
 3. **A browser** — OAuth flows open the browser for user authorization.
 

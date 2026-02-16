@@ -126,7 +126,7 @@ These test errors that **originate in the core layer** (`CoreError` subclasses) 
 ## Fixture Stack
 
 1. **`temp_base_dir`** (session) — shared temporary directory for the test session.
-2. **`isolated_storage`** (autouse, per-test) — redirects `json_store._MAILBOXES_PATH` and `_ACCOUNTS_PATH` to a fresh temp subdirectory so each test starts with empty storage.
+2. **`isolated_db`** (autouse, per-test) — wraps each test in a PostgreSQL transaction that is rolled back at teardown, ensuring every test starts with a clean database state.
 3. **`test_client`** (per-test) — wraps `test_client_base` (FastAPI `TestClient`) and applies all monkeypatches for faking credentials, tokens, and the email client builder. Used by happy-path and direct API error tests.
 4. **`failing_test_client`** (per-test, indirect parametrize) — same patches as `test_client` but forwards extra kwargs (e.g. `auth_exc`, `fetch_exc`) to `FakeEmailClient`. Used by core error translation tests.
 

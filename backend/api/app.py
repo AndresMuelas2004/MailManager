@@ -7,9 +7,12 @@ entrypoint in backend/main.py unchanged.
 
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from api.database import close_pool, init_db
 from api.errors.handlers import register_error_handlers
 from api.routers.accounts import router as accounts_router
 from api.routers.emails import router as emails_router
@@ -17,11 +20,19 @@ from api.routers.health import router as health_router
 from api.routers.mailboxes import router as mailboxes_router
 
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Initialise the database pool on startup and close it on shutdown."""
+    init_db()
+    yield
+    close_pool()
+
+
 def create_app() -> FastAPI:
     """
     Build the FastAPI application with modular routers and error handlers.
     """
-    app = FastAPI(title="MailApp API")
+    app = FastAPI(title="MailApp API", lifespan=lifespan)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["http://localhost:5173"],

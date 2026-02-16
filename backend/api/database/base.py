@@ -1,8 +1,8 @@
 """
-Storage interfaces for the API layer.
+Persistence interfaces for the API layer.
 
 These abstract classes keep routers and services independent from the
-current persistence implementation (JSON today, database later).
+concrete persistence implementation (PostgreSQL).
 """
 
 from __future__ import annotations

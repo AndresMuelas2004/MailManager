@@ -24,8 +24,7 @@ from api.services.services_helpers import (
     translate_core_error,
     unwrap_secret,
 )
-from api.storage.json_store import account_store
-from api.storage.token_store import save_account_tokens
+from api.database import account_store, save_account_tokens
 
 
 def _persist_refreshed_tokens(

@@ -159,9 +159,9 @@ All clients use errors from `core/email/errors.py`. The service layer catches `C
 - [ ] Define a `<PROVIDER>_SCOPES` constant if the provider uses OAuth scopes.
 - [ ] Import and add a branch for the new provider in `EmailManager._build_client`.
 
-### Storage layer (`backend/api/storage/token_store.py`)
+### Database layer (`backend/api/database/token_store.py`)
 - [ ] Add the new env var name to `_ENV_CREDENTIALS` dict.
-- [ ] Add a branch in `_token_path_for_account` returning `Path(token_dir) / f"<provider>_token_{account_label}.json"`.
+- [ ] Update the `provider` CHECK constraint in `schema.sql` to include the new provider.
 
 ### No changes needed in
 - `services_helpers.py` — already provider-aware via the `provider` parameter.

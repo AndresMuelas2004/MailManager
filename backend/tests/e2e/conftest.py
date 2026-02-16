@@ -4,16 +4,17 @@ E2E test fixtures — nothing faked, real providers and real APIs.
 
 from __future__ import annotations
 
+import contextlib
 import os
-from pathlib import Path
-from tempfile import TemporaryDirectory
-from uuid import uuid4
 
+import psycopg2
 import pytest
 from fastapi.testclient import TestClient
 
 from api.app import create_app
-from api.storage import json_store
+from api.database import db as db_module
+from api.database import repository as repo_module
+from api.database import token_store as token_store_module
 
 
 @pytest.fixture(autouse=True, scope="session")
@@ -22,17 +23,17 @@ def skip_without_credentials():
     required_env = {
         "MIA_GMAIL_CREDENTIALS_PATH": "file",
         "MIA_OUTLOOK_CREDENTIALS_PATH": "file",
-        "MIA_TOKEN_PATH": "dir",
+        "DATABASE_URL": "any",
     }
     for var, kind in required_env.items():
         value = os.environ.get(var)
         if not value:
             pytest.skip(f"E2E credentials not configured: {var} not set")
-        path = Path(value)
-        if kind == "file" and not path.is_file():
-            pytest.skip(f"E2E credentials not configured: {var} does not point to a file")
-        if kind == "dir" and not path.is_dir():
-            pytest.skip(f"E2E credentials not configured: {var} does not point to a directory")
+        if kind == "file":
+            from pathlib import Path
+
+            if not Path(value).is_file():
+                pytest.skip(f"E2E credentials not configured: {var} does not point to a file")
 
 
 @pytest.fixture(scope="session")
@@ -52,18 +53,27 @@ def e2e_client(monkeypatch_session):
 
 
 @pytest.fixture(autouse=True, scope="session")
-def isolated_e2e_storage(monkeypatch_session):
-    """Redirect JSON storage to a temp dir so real data files are never touched."""
-    with TemporaryDirectory() as tempdir:
-        temp_root = Path(tempdir) / f"e2e_storage_{uuid4().hex}"
-        temp_root.mkdir(parents=True, exist_ok=True)
+def isolated_e2e_db(monkeypatch_session):
+    """Redirect database operations to a transaction that is rolled back at teardown."""
+    dsn = os.getenv("DATABASE_URL", "").strip()
+    if not dsn:
+        pytest.skip("DATABASE_URL is not set.")
 
-        temp_mailboxes = temp_root / "mailboxes.json"
-        temp_accounts = temp_root / "accounts.json"
-        temp_mailboxes.write_text("[]", encoding="utf-8")
-        temp_accounts.write_text("[]", encoding="utf-8")
+    conn = psycopg2.connect(dsn=dsn)
+    conn.autocommit = False
 
-        monkeypatch_session.setattr(json_store, "_MAILBOXES_PATH", temp_mailboxes)
-        monkeypatch_session.setattr(json_store, "_ACCOUNTS_PATH", temp_accounts)
+    @contextlib.contextmanager
+    def _get_conn():
+        try:
+            yield conn
+        except Exception:
+            raise
 
-        yield
+    monkeypatch_session.setattr(db_module, "get_connection", _get_conn)
+    monkeypatch_session.setattr(repo_module, "get_connection", _get_conn)
+    monkeypatch_session.setattr(token_store_module, "get_connection", _get_conn)
+
+    yield
+
+    conn.rollback()
+    conn.close()

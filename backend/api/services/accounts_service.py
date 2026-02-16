@@ -24,8 +24,7 @@ from api.services.services_helpers import (
     translate_core_error,
     unwrap_secret,
 )
-from api.storage.token_store import delete_account_tokens_for_records, save_account_tokens
-from api.storage.json_store import account_store, now_iso
+from api.database import account_store, save_account_tokens
 
 
 def _resolve_display_label(record: dict) -> str:
@@ -58,7 +57,6 @@ def create_account(mailbox_id: str, payload: AccountCreate) -> AccountOut:
         "provider": payload.provider,
         "display_label": payload.display_label,
         "config": payload.config,
-        "created_at": now_iso(),
     }
     created = account_store.upsert(record)
     return _build_response(created)
@@ -92,8 +90,7 @@ def delete_account(mailbox_id: str, account_id: str) -> dict[str, str]:
     record = account_store.get(mailbox_id, account_id)
     if record is None:
         raise AccountNotFound(f"Account '{account_id}' not found.")
-    # Best-effort cleanup of provider tokens before removing the account record.
-    delete_account_tokens_for_records([record])
+    # ON DELETE CASCADE removes associated tokens automatically.
     account_store.delete(mailbox_id, account_id)
     return {"status": "deleted"}
 

@@ -38,8 +38,7 @@ from api.errors.exceptions import (
     ExternalAPIError,
     MailboxNotFound,
 )
-from api.storage.json_store import mailbox_store
-from api.storage.token_store import load_account_tokens, load_app_credentials
+from api.database import load_account_tokens, load_app_credentials, mailbox_store
 
 
 # ---------------------------------------------------------------------------

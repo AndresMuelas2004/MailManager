@@ -1,17 +1,24 @@
+import contextlib
+import os
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
-from uuid import uuid4
 
+import psycopg2
+import psycopg2.extras
 import pytest
 from pydantic import SecretStr
 
-from api.services import accounts_service, emails_service, mailboxes_service, services_helpers
-from api.storage import json_store
+from api.database import db as db_module
+from api.database import repository as repo_module
+from api.database import token_store as token_store_module
+from api.services import accounts_service, emails_service, services_helpers
 from core.email.email_manager import EmailManager
 
 _UNIT_CONFTEST_PATH = (
     Path(__file__).resolve().parents[1] / "unit" / "core" / "conftest.py"
 )
+
+_SCHEMA_PATH = Path(__file__).resolve().parents[2] / "api" / "database" / "schema.sql"
 
 
 def _load_unit_conftest():
@@ -53,6 +60,45 @@ def fake_client_class():
     return FakeEmailClient
 
 
+@pytest.fixture(scope="session", autouse=True)
+def create_test_schema():
+    """Create tables once per test session."""
+    dsn = os.getenv("DATABASE_URL", "").strip()
+    if not dsn:
+        pytest.skip("DATABASE_URL is not set.")
+    conn = psycopg2.connect(dsn=dsn)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(_SCHEMA_PATH.read_text(encoding="utf-8"))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+@pytest.fixture(autouse=True)
+def isolated_db(monkeypatch):
+    """Use a single transaction per test, rolled back for isolation."""
+    dsn = os.getenv("DATABASE_URL", "").strip()
+    conn = psycopg2.connect(dsn=dsn)
+    conn.autocommit = False
+
+    @contextlib.contextmanager
+    def _get_conn():
+        try:
+            yield conn
+        except Exception:
+            raise
+
+    monkeypatch.setattr(db_module, "get_connection", _get_conn)
+    monkeypatch.setattr(repo_module, "get_connection", _get_conn)
+    monkeypatch.setattr(token_store_module, "get_connection", _get_conn)
+
+    yield conn
+
+    conn.rollback()
+    conn.close()
+
+
 def _apply_test_monkeypatches(monkeypatch, build_manager_fn):
     """Wire common monkeypatches shared by ``test_client`` and ``failing_test_client``."""
     _fake_app_creds = {"client_id": "fake", "client_secret": SecretStr("fake")}
@@ -84,13 +130,7 @@ def _apply_test_monkeypatches(monkeypatch, build_manager_fn):
     )
 
     monkeypatch.setattr(accounts_service, "save_account_tokens", lambda *_a, **_kw: None)
-    monkeypatch.setattr(
-        accounts_service, "delete_account_tokens_for_records", lambda *_a, **_kw: None,
-    )
     monkeypatch.setattr(emails_service, "save_account_tokens", lambda *_a, **_kw: None)
-    monkeypatch.setattr(
-        mailboxes_service, "delete_account_tokens_for_records", lambda *_a, **_kw: None,
-    )
 
 
 @pytest.fixture
@@ -142,66 +182,3 @@ def failing_test_client(test_client_base, sample_messages, monkeypatch, request)
 
     _apply_test_monkeypatches(monkeypatch, _build_manager)
     return test_client_base
-
-
-@pytest.fixture
-def storage_path(temp_base_dir):
-    return Path(temp_base_dir) / "test_storage.json"
-
-
-@pytest.fixture
-def mailbox_store():
-    return json_store.mailbox_store
-
-
-@pytest.fixture
-def account_store():
-    return json_store.account_store
-
-
-@pytest.fixture
-def token_path_dir(temp_base_dir, monkeypatch):
-    token_dir = Path(temp_base_dir) / f"tokens_{uuid4().hex}"
-    token_dir.mkdir(parents=True, exist_ok=True)
-    monkeypatch.setenv("MIA_GMAIL_TOKEN_PATH", str(token_dir))
-    return token_dir
-
-
-@pytest.fixture(autouse=True)
-def isolated_storage(temp_base_dir, monkeypatch):
-    original_mailboxes_path = json_store._MAILBOXES_PATH
-    original_accounts_path = json_store._ACCOUNTS_PATH
-
-    original_mailboxes = (
-        original_mailboxes_path.read_text(encoding="utf-8")
-        if original_mailboxes_path.exists()
-        else None
-    )
-    original_accounts = (
-        original_accounts_path.read_text(encoding="utf-8")
-        if original_accounts_path.exists()
-        else None
-    )
-
-    temp_root = Path(temp_base_dir) / f"storage_{uuid4().hex}"
-    temp_root.mkdir(parents=True, exist_ok=True)
-    temp_mailboxes = temp_root / "mailboxes.json"
-    temp_accounts = temp_root / "accounts.json"
-
-    temp_mailboxes.write_text(original_mailboxes or "[]", encoding="utf-8")
-    temp_accounts.write_text(original_accounts or "[]", encoding="utf-8")
-
-    monkeypatch.setattr(json_store, "_MAILBOXES_PATH", temp_mailboxes)
-    monkeypatch.setattr(json_store, "_ACCOUNTS_PATH", temp_accounts)
-
-    yield
-
-    if original_mailboxes is not None and original_mailboxes_path.exists():
-        current = original_mailboxes_path.read_text(encoding="utf-8")
-        if current != original_mailboxes:
-            original_mailboxes_path.write_text(original_mailboxes, encoding="utf-8")
-
-    if original_accounts is not None and original_accounts_path.exists():
-        current = original_accounts_path.read_text(encoding="utf-8")
-        if current != original_accounts:
-            original_accounts_path.write_text(original_accounts, encoding="utf-8")
