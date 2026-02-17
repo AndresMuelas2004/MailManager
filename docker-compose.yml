@@ -1,0 +1,49 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: mailmanager-db
+    environment:
+      POSTGRES_USER: mailmanager
+      POSTGRES_PASSWORD: mailmanager
+      POSTGRES_DB: mailmanager
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mailmanager"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: mailmanager-backend
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql://mailmanager:mailmanager@db:5432/mailmanager
+      MIA_GMAIL_CREDENTIALS_PATH: /app/credentials/gmail_credentials.json
+      MIA_OUTLOOK_CREDENTIALS_PATH: /app/credentials/outlook_credentials.json
+    volumes:
+      - C:/Users/amuel/Desktop/SecureCredentials/MailApp:/app/credentials:ro
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: mailmanager-frontend
+    ports:
+      - "5173:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  pgdata:

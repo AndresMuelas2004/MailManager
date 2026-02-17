@@ -66,6 +66,7 @@ MailManager/
 - PostgreSQL
 - Gmail OAuth app credentials JSON (Google Cloud)
 - Outlook app credentials JSON (Azure app registration)
+- Docker and Docker Compose (optional, for containerized deployment)
 
 ## Getting Started
 
@@ -86,7 +87,7 @@ pip install -r requirements.txt
 
 ### 2. Configure environment variables
 
-MailManager reads environment variables directly from the OS environment.
+MailManager reads environment variables from the OS environment. The backend also supports a `backend/.env` file via `python-dotenv` (`override=False`, so OS-level variables take precedence). See `backend/.env.example` for a template.
 
 Required:
 
@@ -121,6 +122,26 @@ npm run dev
 
 Frontend URL: `http://localhost:5173`
 
+### Docker (alternative)
+
+Instead of manual setup, run everything with Docker Compose:
+
+```bash
+# (Optional) Place OAuth credentials in credentials/
+mkdir credentials
+# cp /path/to/gmail_oauth.json credentials/gmail_credentials.json
+# cp /path/to/outlook_oauth.json credentials/outlook_credentials.json
+
+docker compose up --build
+```
+
+This starts PostgreSQL, the backend (port 8000), and the frontend (port 5173). The database schema is created automatically on first startup.
+
+```bash
+docker compose down      # stop all services
+docker compose down -v   # stop and delete database volume
+```
+
 ## Environment Variables
 
 | Variable | Required | Description |
@@ -128,6 +149,7 @@ Frontend URL: `http://localhost:5173`
 | `DATABASE_URL` | Yes | PostgreSQL DSN used by connection pool and schema init. |
 | `MIA_GMAIL_CREDENTIALS_PATH` | Yes | Path to Gmail OAuth credentials JSON file. |
 | `MIA_OUTLOOK_CREDENTIALS_PATH` | Yes | Path to Outlook app credentials JSON file. |
+| `VITE_API_BASE_URL` | No | Frontend override for the backend URL. Defaults to `http://localhost:8000`. |
 
 Outlook credential file keys: `client_id`, `client_secret`, `tenant`, `redirect_uri`, `scopes`.
 

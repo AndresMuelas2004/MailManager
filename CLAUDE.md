@@ -39,6 +39,14 @@ npm run build        # TypeScript check + Vite production build
 npm run lint         # ESLint
 ```
 
+### Docker
+
+```bash
+docker compose up --build       # build and start all services
+docker compose down             # stop all services
+docker compose down -v          # stop and delete database volume
+```
+
 ## Architecture — STRICT, DO NOT VIOLATE
 
 The layered architecture below is **mandatory**. Every change must preserve it. Never skip layers, never put business logic in routers, never import API exceptions from core, never instantiate provider clients outside of `build_manager_for_accounts()`.
@@ -104,7 +112,9 @@ Only Services can talk with manager or Database, and both can communicate only w
 - `DATABASE_URL` — PostgreSQL connection string (`postgresql://user:password@host:port/dbname`).
 - `MIA_GMAIL_CREDENTIALS_PATH` — path to Gmail OAuth client JSON (supports `installed` or `web` blocks).
 - `MIA_OUTLOOK_CREDENTIALS_PATH` — path to Outlook app credentials JSON (flat dict with `client_id`, `client_secret`, `tenant`, `redirect_uri`, `scopes`, and optionally `provider`).
+- `VITE_API_BASE_URL` — (frontend, optional) overrides the default backend URL (`http://localhost:8000`).
 - Missing any required env var must raise `EnvVarError`.
+- The backend loads `backend/.env` via `python-dotenv` (`override=False`) so OS/Docker env vars take precedence. Template: `backend/.env.example`. Frontend template: `frontend/.env.example`.
 
 ### Secrets Handling
 
@@ -121,6 +131,14 @@ Wrap secrets with `load_wrapped_app_credentials(provider)` / `load_wrapped_accou
 - `src/api/` — HTTP client (`client/http.ts`), typed endpoints (`endpoints/`), DTOs (`types/dto.ts`).
 - `src/features/`, `src/pages/`, `src/components/` — feature-based React organization.
 - CORS is configured to allow `http://localhost:5173`.
+
+### Docker
+
+- `Dockerfile` (root) — backend image (Python 3.12-slim).
+- `frontend/Dockerfile` — multi-stage frontend image (Node build + nginx).
+- `frontend/nginx.conf` — SPA routing for nginx.
+- `docker-compose.yml` — orchestrates `db` (PostgreSQL 16), `backend` (port 8000), and `frontend` (port 5173). Backend waits for database via `service_healthy`. Database volume `pgdata` persists data across restarts.
+- OAuth credential files are mounted from `./credentials/` into the backend container.
 
 ## Extensibility / TODO
 

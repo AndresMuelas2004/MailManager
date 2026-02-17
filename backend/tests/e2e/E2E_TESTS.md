@@ -48,7 +48,6 @@ Runtime requirements:
 ```bash
 python -m pytest backend/tests/e2e -v -s
 ```
-
 Why `-s` matters:
 
 - OAuth URLs may be printed when browser auto-open fails.
