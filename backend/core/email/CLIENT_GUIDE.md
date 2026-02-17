@@ -1,189 +1,188 @@
-# Email Client Implementation Guide
+﻿# Email Client Implementation Guide
 
-This document describes the architecture, flows, and conventions shared by every `EmailClient` implementation in MailManager. Use it as a reference when reading existing clients (Gmail, Outlook) and as a step-by-step template when adding new providers.
+This guide documents the current contract and implementation patterns for provider clients in `backend/core/email`.
+Use it when maintaining Gmail/Outlook clients or adding a new provider.
 
----
+## Scope
 
-## 1. Abstract Contract (`email_client.py`)
+This guide covers:
 
-Every provider client extends `EmailClient` and implements five abstract methods:
+- `EmailClient` abstract interface
+- `EmailManager` orchestration behavior
+- Shared helpers for token and expiry handling
+- Authentication flows (interactive and silent)
+- Error conventions
+- New provider checklist
 
-| Method | Purpose | Returns |
+## 1. Core Contract (`email_client.py`)
+
+Every provider client must implement the `EmailClient` abstract methods:
+
+| Method | Purpose | Return |
 |---|---|---|
-| `authenticate(app_credentials)` | Interactive OAuth flow (opens browser). | `dict[str, Any]` — wrapped tokens (always). |
-| `authenticate_silent(app_credentials, user_tokens)` | Non-interactive token refresh. | `dict[str, Any] \| None` — wrapped tokens if refreshed, `None` if still valid. |
-| `fetch_unread_emails()` | Retrieve unread messages from the provider. | `List[EmailMessage]` |
-| `send_email(subject, body, recipients)` | Send a plain-text email. | `None` |
-| `get_account_label()` | Return the unique label for this account. | `str` |
+| `authenticate(app_credentials)` | Interactive account connection flow. | `dict[str, Any] \| None` |
+| `authenticate_silent(app_credentials, user_tokens)` | Non-interactive auth and refresh path. | `dict[str, Any] \| None` |
+| `fetch_unread_emails(...)` | Fetch unread provider messages. | `list[EmailMessage]` |
+| `send_email(subject, body, recipients)` | Send plain-text email. | `None` |
+| `get_account_label()` | Stable account identifier in manager. | `str` |
 
-`EmailMessage` is a provider-agnostic dataclass defined in the same module.
+`EmailMessage` is the normalized provider-agnostic payload used by the API layer.
 
----
+## 2. Account Label Convention
 
-## 2. Constructor Pattern
+The service layer builds labels as:
 
-```python
-def __init__(self, account_label: str = "<provider>") -> None:
-    self._account_label = account_label
-    self._<api_client_state> = None  # e.g. self.service (Gmail) or self._access_token (Outlook)
+```text
+{mailbox_id}__{account_id}
 ```
 
-- The constructor receives **only** `account_label`.
-- Provider credentials (client_id, client_secret, etc.) come from `app_credentials` at authentication time, **not** from the constructor.
-- Internal API client state starts as `None` and is initialized during authentication.
+Requirements:
 
----
+- Labels must be unique across clients registered in `EmailManager`.
+- Duplicate labels raise `EmailDuplicateAccountLabelError`.
 
-## 3. Common Private Helpers
+## 3. Shared Helpers (`helpers.py`)
 
-All clients implement these four helpers with identical signatures and logic:
+Provider clients should use shared helpers instead of re-implementing token logic:
 
-### `_unwrap_app_credentials(app_credentials) -> dict`
-Shallow-copies the dict and unwraps any `SecretStr` value for `client_secret`.
+- `parse_expiry(value)`
+- `unwrap_app_credentials(app_credentials)`
+- `unwrap_user_tokens(user_tokens)`
+- `wrap_account_tokens(token_data)`
 
-### `_unwrap_user_tokens(user_tokens) -> dict`
-Shallow-copies the dict and unwraps `SecretStr` values for `access_token` and `refresh_token`.
+These helpers standardize:
 
-### `_wrap_account_tokens(token_data) -> dict`
-Shallow-copies the dict and wraps `access_token` and `refresh_token` as `SecretStr`.
+- `SecretStr` unwrapping/wrapping for sensitive fields
+- Expiry parsing from datetime, timestamps, and ISO strings
 
-### `_parse_expiry(value) -> datetime | None`
-Converts a value (ISO string, Unix timestamp, or `datetime`) into a naive UTC `datetime`. Returns `None` for unparseable or missing values. Handles `"Z"` suffix, timezone-aware datetimes, and numeric timestamps.
+## 4. EmailManager Responsibilities
 
-These helpers keep SecretStr handling consistent and isolated from business logic.
+`EmailManager` orchestrates all registered clients.
 
----
+Main methods:
 
-## 4. Authentication Flows
+- `add_account_record(record)`
+- `authenticate_all_silent(auth_payloads)`
+- `connect_account(account_label, app_credentials)`
+- `fetch_all_unread_emails()`
+- `send_email_from_account(account_label, ...)`
+- `get_last_errors()`
 
-### 4.1 Interactive — `authenticate(app_credentials)`
+Behavioral notes:
 
-Called by `EmailManager.connect_account` through the service layer when a user connects an account for the first time.
+- Manager stores per-account errors in `_last_errors`.
+- Silent auth can refresh tokens and return updated payloads per account label.
+- Missing target account label raises `EmailAccountNotFoundError`.
 
-**Flow:**
-1. `_unwrap_app_credentials(app_credentials)` — get raw credentials.
-2. Validate required fields (client_id, client_secret, provider-specific fields).
-3. Start OAuth flow (browser-based consent).
-4. Exchange authorization code for tokens.
-5. Initialize internal API client state.
-6. Build a `token_record` dict with `access_token`, `refresh_token`, `expiry`, `scopes`.
-7. Return `_wrap_account_tokens(token_record)`.
+## 5. Authentication Flows
 
-**Provider specifics:**
-- **Gmail**: Uses `InstalledAppFlow.from_client_config` + `run_local_server`. The Google library handles PKCE and the callback server.
-- **Outlook**: Manual PKCE flow with a local `ThreadingHTTPServer` to capture the callback, then a POST to the Microsoft token endpoint.
+### 5.1 Interactive flow (`authenticate`)
 
-### 4.2 Silent — `authenticate_silent(app_credentials, user_tokens)`
+Used by `POST /mailboxes/{mailbox_id}/accounts/{account_id}/connect`.
 
-Called automatically before every fetch/send operation via `EmailManager.authenticate_all_silent`.
+Expected flow:
 
-**Flow:**
-1. `_unwrap_app_credentials(app_credentials)` and `_unwrap_user_tokens(user_tokens)`.
-2. Validate `access_token` is present (`EmailMissingTokenError` if not).
-3. Parse expiry with `_parse_expiry`.
-4. **If not expired**: set internal client state, return `None` (no persistence needed).
-5. **If expired without refresh_token**: raise `EmailMissingRefreshTokenError`.
-6. **If expired with refresh_token**: call the provider's token refresh endpoint.
-7. Update internal client state with the new access token.
-8. Build `token_record` and return `_wrap_account_tokens(token_record)`.
+1. Validate app credentials.
+2. Execute provider interactive OAuth flow.
+3. Obtain access token (and refresh token when provided).
+4. Build token record with `access_token`, `refresh_token`, `expiry`, `scopes`.
+5. Return wrapped tokens via `wrap_account_tokens(...)`.
 
-**Key difference — refresh token rotation:**
-- **Gmail**: The refresh token stays the same after refresh.
-- **Outlook**: Microsoft may return a **new** refresh token on every refresh. Always persist the newest one.
+Provider specifics:
 
-The service layer persists returned tokens via `save_account_tokens` whenever `authenticate_silent` returns a non-`None` result.
+- Gmail: `InstalledAppFlow.run_local_server(...)`.
+- Outlook: manual PKCE flow with local callback HTTP server.
 
----
+### 5.2 Silent flow (`authenticate_silent`)
 
-## 5. Email Operations
+Used before fetch/send operations.
 
-### 5.1 `fetch_unread_emails(max_total=200, page_size=50)`
+Expected flow:
 
-**Flow:**
-1. Check internal client state is initialized (`EmailNotAuthenticatedError` if not).
-2. Query the provider API for unread messages with pagination.
-3. Enforce `max_total` limit across pages.
-4. Normalize each raw message into an `EmailMessage`:
-   - `message_id` — provider's unique ID.
-   - `thread_id` — conversation/thread grouping (optional).
-   - `subject`, `sender`, `recipients`, `body` — extracted/normalized from provider format.
-   - `sent_at` — parsed to `datetime` with timezone.
-   - `is_unread` — always `True` (we're fetching unread).
-   - `provider` — `"gmail"`, `"outlook"`, etc.
+1. Validate app credentials and stored user tokens.
+2. Parse token expiry.
+3. If token is still valid, initialize client state and return `None`.
+4. If expired and refresh token exists, refresh access token.
+5. Return wrapped updated tokens only when refreshed.
 
-**Provider specifics:**
-- **Gmail**: Fetches message IDs first, then each message in `raw` format. Parses RFC822 headers manually.
-- **Outlook**: Uses Microsoft Graph `GET /me/messages?$filter=isRead eq false` with `$select` and `@odata.nextLink` pagination. Fields come pre-parsed in JSON.
+Provider-specific token refresh behavior:
 
-### 5.2 `send_email(subject, body, recipients)`
+- Gmail refresh token is commonly stable.
+- Outlook may rotate refresh tokens. Always persist returned refresh token.
 
-**Flow:**
-1. Check internal client state (`EmailNotAuthenticatedError`).
-2. Validate recipients list is not empty (`EmailRecipientsMissingError`).
-3. Build provider-specific payload and send.
+## 6. Email Operations
 
-**Provider specifics:**
-- **Gmail**: Constructs a MIME message, base64url-encodes it, sends via `users().messages().send`.
-- **Outlook**: Builds a JSON payload with `message.body.contentType = "Text"`, sends via `POST /me/sendMail`.
+### 6.1 `fetch_unread_emails`
 
----
+Requirements:
 
-## 6. Error Handling
+- Fail fast if client is not authenticated (`EmailNotAuthenticatedError`).
+- Return normalized `EmailMessage` items.
+- Include provider identifier (`gmail`, `outlook`, etc.) in each message.
+- Raise typed core errors for provider/network failures.
 
-All clients use errors from `core/email/errors.py`. The service layer catches `CoreError` subclasses and translates them to `ApiError` subclasses via `translate_core_error()`.
+### 6.2 `send_email`
 
-| Situation | Error to raise |
+Requirements:
+
+- Fail if not authenticated.
+- Validate non-empty `recipients` (`EmailRecipientsMissingError`).
+- Raise typed core errors for provider/network failures.
+
+## 7. Error Conventions
+
+Use typed errors from `core/email/errors.py`.
+Do not raise raw provider exceptions beyond the core boundary.
+
+Typical mappings:
+
+| Scenario | Core Error |
 |---|---|
-| No app credentials | `EmailMissingAppCredentialsError` |
-| No access token stored | `EmailMissingTokenError` |
-| Token expired, no refresh token | `EmailMissingRefreshTokenError` |
-| Token refresh HTTP failure | `EmailRefreshFailedError` |
-| Client not authenticated before API call | `EmailNotAuthenticatedError` |
-| No recipients for send | `EmailRecipientsMissingError` |
-| External API call fails (network, timeout, invalid response) | `EmailExternalAPIError` |
+| Missing app credentials | `EmailMissingAppCredentialsError` |
+| Missing access token | `EmailMissingTokenError` |
+| Expired token without refresh token | `EmailMissingRefreshTokenError` |
+| Refresh request failure | `EmailRefreshFailedError` |
+| Unauthenticated operation | `EmailNotAuthenticatedError` |
+| Missing recipients | `EmailRecipientsMissingError` |
+| External API failure | `EmailExternalAPIError` |
+| Unknown provider in manager | `EmailProviderConfigError` |
 
-**Error Handling Pattern:**
-- All external API calls (Google API, Microsoft Graph, HTTP requests) must be wrapped in `try/except Exception` blocks.
-- Raise `EmailExternalAPIError` with a descriptive message including the **specific operation** and **client name** (e.g., `"Gmail failed to fetch message list: {exc}"`).
-- The service layer catches `CoreError` subclasses and translates them to `ApiError` subclasses via `translate_core_error()`.
-- `EmailExternalAPIError` is mapped to `ExternalAPIError` (HTTP 502 Bad Gateway), signaling a third-party API failure.
+The API service layer translates these into `ApiError` subclasses.
 
----
-
-## 7. Adding a New Provider — Checklist
-
-### Core layer
-- [ ] Create `backend/core/email/<provider>_client.py` implementing all 5 abstract methods.
-- [ ] Add the four common helpers (`_unwrap_app_credentials`, `_unwrap_user_tokens`, `_wrap_account_tokens`, `_parse_expiry`).
-- [ ] Add any provider-specific helpers (API request wrappers, scope resolution, etc.).
-- [ ] Define a `<PROVIDER>_SCOPES` constant if the provider uses OAuth scopes.
-- [ ] Import and add a branch for the new provider in `EmailManager._build_client`.
-
-### Database layer (`backend/api/database/token_store.py`)
-- [ ] Add the new env var name to `_ENV_CREDENTIALS` dict.
-- [ ] Update the `provider` CHECK constraint in `schema.sql` to include the new provider.
-
-### No changes needed in
-- `services_helpers.py` — already provider-aware via the `provider` parameter.
-- `accounts_service.py` / `emails_service.py` — already pass `provider` to all load/save functions.
-- `api/errors/` — reuse existing error classes.
-
-### Documentation
-- [ ] Update `CLAUDE.md`: project overview, env vars section, and any relevant notes.
-- [ ] Update this guide if the new provider introduces patterns not yet covered.
-
----
-
-## 8. Reference Comparison
+## 8. Gmail and Outlook Reference
 
 | Aspect | Gmail | Outlook |
 |---|---|---|
-| API client | `googleapiclient` service object (`self.service`) | Raw `urllib.request` with bearer token (`self._access_token`) |
-| OAuth library | `google-auth-oauthlib` (`InstalledAppFlow`) | Manual PKCE + local HTTP server |
-| Token refresh | `google.oauth2.credentials.Credentials.refresh()` | POST to Microsoft token endpoint |
-| Refresh token rotation | No (same token reused) | Yes (may change on every refresh) |
-| Unread query | `users().messages().list(q="is:unread")` + per-message `get(format="raw")` | `GET /me/messages?$filter=isRead eq false` (JSON response) |
-| Send mechanism | MIME → base64url → `users().messages().send` | JSON payload → `POST /me/sendMail` |
-| Credentials env var | `MIA_GMAIL_CREDENTIALS_PATH` | `MIA_OUTLOOK_CREDENTIALS_PATH` |
-| Credentials JSON format | Nested under `"installed"` or `"web"` key | Flat dict |
-| Token filename | `gmail_token_{label}.json` | `outlook_token_{label}.json` |
+| API integration | `googleapiclient` service object | `urllib` requests to Microsoft Graph |
+| Interactive OAuth | `google-auth-oauthlib` local server flow | PKCE + local callback server |
+| Silent refresh | Google `Credentials.refresh()` | Token endpoint POST (`refresh_token`) |
+| Send operation | Gmail `users.messages.send` | Graph `POST /me/sendMail` |
+| Unread fetch | Gmail list + per-message get | Graph `/me/messages` with filter |
+
+## 9. Adding a New Provider Checklist
+
+Core layer:
+
+- [ ] Implement `EmailClient` in `backend/core/email/<provider>_client.py`.
+- [ ] Reuse helper functions from `helpers.py`.
+- [ ] Add provider branch in `EmailManager._build_client`.
+- [ ] Raise typed `CoreError` subclasses for all failure paths.
+
+Database and config:
+
+- [ ] Add provider env var mapping in `api/database/token_store.py`.
+- [ ] Update provider CHECK constraint in `api/database/schema.sql`.
+
+Services/tests/docs:
+
+- [ ] Ensure service flows call provider through existing helper APIs.
+- [ ] Add unit tests for helper, auth, fetch, and send behavior.
+- [ ] Add integration and E2E coverage.
+- [ ] Update `README.md` and API/database docs.
+
+## 10. Implementation Rules
+
+- Keep provider-specific behavior inside provider client modules.
+- Keep API-layer concerns out of core code.
+- Keep secrets wrapped at boundaries and unwrapped only when required.
+- Keep error messages explicit and operation-specific.

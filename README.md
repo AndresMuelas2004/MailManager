@@ -1,260 +1,192 @@
-# MailManager
+﻿# MailManager
 
-A multi-account email management platform with a FastAPI backend and a React frontend. MailManager lets users group multiple email accounts (Gmail, Outlook) under unified mailboxes, fetch unread messages across providers in a single call, and send emails from any connected account.
+MailManager is a multi-account email management platform with a FastAPI backend and a React frontend.
+It lets you group Gmail and Outlook accounts under mailbox entities, connect them with OAuth 2.0, fetch unread messages across providers, and send emails from any connected account.
 
-## Table of Contents
+## Highlights
 
-- [Features](#features)
-- [Architecture](#architecture)
-- [Tech Stack](#tech-stack)
-- [Project Structure](#project-structure)
-- [Getting Started](#getting-started)
-- [Environment Variables](#environment-variables)
-- [Database](#database)
-- [API Reference](#api-reference)
-- [Testing](#testing)
-- [Extensibility](#extensibility)
-
-## Features
-
-- **Multi-mailbox management** &mdash; Create isolated mailboxes that group email accounts by context (work, personal, clients).
-- **Multi-provider support** &mdash; Gmail and Outlook fully implemented. The architecture supports adding new providers with minimal effort.
-- **Unified inbox** &mdash; Fetch unread emails from every connected account in a single API call.
-- **Send from any account** &mdash; Compose and send emails through any connected provider account.
-- **OAuth 2.0 authentication** &mdash; Interactive and silent flows with PKCE, automatic token refresh, and rotation handling (Outlook).
-- **PostgreSQL persistence** &mdash; Mailboxes, accounts, and tokens stored with cascading deletes and connection pooling.
-- **Layered architecture** &mdash; Strict separation between HTTP surface, business logic, persistence, and provider-specific code, backed by a two-tier error hierarchy with centralized mapping.
+- Multi-mailbox model to isolate contexts (work, personal, clients).
+- Multi-provider support: Gmail and Outlook are implemented.
+- Unified unread inbox per mailbox across all connected accounts.
+- Send email from a specific account in a mailbox.
+- OAuth 2.0 interactive connect flow plus silent re-authentication.
+- PostgreSQL persistence for mailboxes, accounts, and tokens.
+- Strict layered architecture with centralized API error mapping.
 
 ## Architecture
 
-```
-┌──────────────────────────────────────────────────┐
-│                   Frontend                       │
-│          React + Vite + TypeScript               │
-└────────────────────┬─────────────────────────────┘
-                     │ HTTP/JSON
-┌────────────────────▼─────────────────────────────┐
-│  Routers (api/routers/)                          │
-│  Thin HTTP surface — zero business logic         │
-├──────────────────────────────────────────────────┤
-│  Services (api/services/)                        │
-│  Orchestration, validation, error translation    │
-├─────────────────┬────────────────────────────────┤
-│  Database       │  Core (core/email/)            │
-│ (api/database/) │  EmailManager + EmailClients   │
-│  PostgreSQL     │  Provider-specific logic       │
-│  persistence    ├────────────────────────────────┤
-│                 │  GmailClient │ OutlookClient   │
-└─────────────────┴────────────────────────────────┘
+Request flow:
+
+```text
+Routers (api/routers)
+  -> Services (api/services)
+    -> Database (api/database)
+    -> Core (core/email)
+      -> EmailManager
+        -> GmailClient / OutlookClient
 ```
 
-| Layer | Responsibility | Constraints |
-|-------|---------------|-------------|
-| **Routers** | HTTP endpoints, request parsing | No business logic; delegate to services |
-| **Services** | Orchestration, validation, error mapping | Only layer that talks to both Database and Core |
-| **Database** | PostgreSQL persistence | No imports from Core |
-| **Core** | Provider logic, multi-account orchestration | No imports from API layer |
+Layer contracts:
 
-## Tech Stack
+- `Routers`: HTTP interface only. No business logic.
+- `Services`: orchestration, validation, and error translation.
+- `Database`: PostgreSQL persistence and token storage.
+- `Core`: provider-specific email behavior and client orchestration.
 
-### Backend
+## Repository Structure
 
-| Technology | Purpose |
-|-----------|---------|
-| Python 3.12+ | Runtime |
-| FastAPI | Web framework |
-| Uvicorn | ASGI server |
-| PostgreSQL | Relational database |
-| psycopg2 | PostgreSQL driver with connection pooling |
-| Pydantic v2 | Schema validation and secrets handling |
-| google-api-python-client | Gmail API integration |
-| google-auth-oauthlib | Gmail OAuth 2.0 |
-| pytest | Testing framework |
-
-### Frontend
-
-| Technology | Purpose |
-|-----------|---------|
-| React 19 | UI library |
-| TypeScript | Type safety |
-| Vite | Build tool and dev server |
-| Tailwind CSS 4 | Utility-first styling |
-| React Router 7 | Client-side routing |
-
-## Project Structure
-
-```
+```text
 MailManager/
-├── backend/
-│   ├── main.py                     # Uvicorn entrypoint
-│   ├── api/
-│   │   ├── app.py                  # FastAPI app factory, lifespan, CORS
-│   │   ├── routers/                # health, mailboxes, accounts, emails
-│   │   ├── services/               # Business logic and orchestration
-│   │   ├── schemas/                # Pydantic request/response models
-│   │   ├── errors/                 # ApiError hierarchy and HTTP mapping
-│   │   └── database/               # PostgreSQL persistence layer
-│   ├── core/
-│   │   └── email/                  # Provider clients, EmailManager, errors
-│   └── tests/
-│       ├── unit/                   # Isolated tests with FakeEmailClient
-│       ├── integration/            # API tests with TestClient + isolated DB
-│       └── e2e/                    # Full-flow tests against real providers
-├── frontend/
-│   ├── src/
-│   │   ├── api/                    # HTTP client, typed endpoints, DTOs
-│   │   ├── app/                    # Router, layout, providers
-│   │   ├── pages/                  # Page components
-│   │   ├── features/               # Feature-based modules
-│   │   └── components/             # Shared UI components
-│   └── package.json
-├── requirements.txt
-└── README.md
+|-- backend/
+|   |-- api/
+|   |   |-- routers/
+|   |   |-- services/
+|   |   |-- schemas/
+|   |   |-- errors/
+|   |   `-- database/
+|   |-- core/
+|   |   `-- email/
+|   |-- tests/
+|   |   |-- unit/
+|   |   |-- integration/
+|   |   |-- e2e/
+|   |   `-- shared/
+|   `-- main.py
+|-- frontend/
+|   |-- src/
+|   `-- package.json
+|-- requirements.txt
+`-- README.md
 ```
 
-## Getting Started
-
-### Prerequisites
+## Prerequisites
 
 - Python 3.12+
 - Node.js 18+
-- PostgreSQL (local or remote instance)
-- A Google Cloud project with the Gmail API enabled and an OAuth 2.0 client
-- An Azure AD app registration with Microsoft Graph Mail permissions
+- PostgreSQL
+- Gmail OAuth app credentials JSON (Google Cloud)
+- Outlook app credentials JSON (Azure app registration)
 
-### Backend
+## Getting Started
+
+### 1. Clone and install backend dependencies
 
 ```bash
-git clone https://github.com/AndresMuelas2004/MailApp.git
-cd MailApp
+git clone <your-repo-url>
+cd MailManager
 
 python -m venv .venv
-# Windows
-.venv\Scripts\activate
-# macOS / Linux
+# Windows PowerShell
+.venv\Scripts\Activate.ps1
+# Linux/macOS
 source .venv/bin/activate
 
 pip install -r requirements.txt
-
-# Configure environment variables (see next section)
-
-cd backend
-python main.py
-# → http://localhost:8000
 ```
 
-### Frontend
+### 2. Configure environment variables
+
+MailManager reads environment variables directly from the OS environment.
+
+Required:
+
+- `DATABASE_URL`
+- `MIA_GMAIL_CREDENTIALS_PATH`
+- `MIA_OUTLOOK_CREDENTIALS_PATH`
+
+Example (PowerShell):
+
+```powershell
+$env:DATABASE_URL = "postgresql://user:pass@localhost:5432/mailmanager"
+$env:MIA_GMAIL_CREDENTIALS_PATH = "C:\\secrets\\gmail_oauth.json"
+$env:MIA_OUTLOOK_CREDENTIALS_PATH = "C:\\secrets\\outlook_oauth.json"
+```
+
+### 3. Run backend
+
+```bash
+cd backend
+python main.py
+```
+
+Backend URL: `http://localhost:8000`
+
+### 4. Run frontend
 
 ```bash
 cd frontend
 npm install
 npm run dev
-# → http://localhost:5173
 ```
+
+Frontend URL: `http://localhost:5173`
 
 ## Environment Variables
 
-Set these before starting the backend:
+| Variable | Required | Description |
+|---|---|---|
+| `DATABASE_URL` | Yes | PostgreSQL DSN used by connection pool and schema init. |
+| `MIA_GMAIL_CREDENTIALS_PATH` | Yes | Path to Gmail OAuth credentials JSON file. |
+| `MIA_OUTLOOK_CREDENTIALS_PATH` | Yes | Path to Outlook app credentials JSON file. |
 
-| Variable | Description |
-|----------|-------------|
-| `DATABASE_URL` | PostgreSQL connection string (`postgresql://user:pass@localhost:5432/mailmanager`) |
-| `MIA_GMAIL_CREDENTIALS_PATH` | Path to the Gmail OAuth client credentials JSON |
-| `MIA_OUTLOOK_CREDENTIALS_PATH` | Path to the Outlook app credentials JSON |
+Outlook credential file keys: `client_id`, `client_secret`, `tenant`, `redirect_uri`, `scopes`.
 
-**Gmail** &mdash; Download the OAuth 2.0 client JSON from Google Cloud Console (Desktop application type). The file must contain an `installed` or `web` block with `client_id`, `client_secret`, and token URIs.
+## API Summary
 
-**Outlook** &mdash; Create a JSON file with this structure:
+Health:
 
-```json
-{
-  "client_id": "your-azure-client-id",
-  "client_secret": "your-azure-client-secret",
-  "tenant": "common",
-  "redirect_uri": "http://localhost:8080/callback",
-  "scopes": [
-    "https://graph.microsoft.com/Mail.ReadWrite",
-    "https://graph.microsoft.com/Mail.Send",
-    "offline_access"
-  ]
-}
-```
+- `GET /health`
 
-## Database
+Mailboxes:
 
-MailManager uses PostgreSQL for all persistent data. The schema is defined in [`backend/api/database/schema.sql`](backend/api/database/schema.sql) and applied automatically on startup via `init_db()`.
+- `POST /mailboxes`
+- `GET /mailboxes`
+- `GET /mailboxes/{mailbox_id}`
+- `DELETE /mailboxes/{mailbox_id}`
 
-| Table | Purpose |
-|-------|---------|
-| `mailboxes` | Mailbox records with display name |
-| `accounts` | Email accounts linked to a mailbox, with provider type and config |
-| `tokens` | OAuth tokens per account (access, refresh, expiry, scopes) |
+Accounts:
 
-All DDL is idempotent (`CREATE TABLE IF NOT EXISTS`). Foreign keys use `ON DELETE CASCADE`, so deleting a mailbox automatically removes its accounts and tokens.
+- `GET /mailboxes/{mailbox_id}/accounts`
+- `POST /mailboxes/{mailbox_id}/accounts`
+- `GET /mailboxes/{mailbox_id}/accounts/{account_id}`
+- `PATCH /mailboxes/{mailbox_id}/accounts/{account_id}`
+- `DELETE /mailboxes/{mailbox_id}/accounts/{account_id}`
+- `POST /mailboxes/{mailbox_id}/accounts/{account_id}/connect`
 
-See [`backend/api/database/DATABASE.md`](backend/api/database/DATABASE.md) for implementation details.
+Emails:
 
-## API Reference
+- `GET /mailboxes/{mailbox_id}/emails/unread`
+- `POST /mailboxes/{mailbox_id}/emails/send`
 
-### Health
+Detailed endpoint contracts: `backend/api/API_ENDPOINTS.md`
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `GET` | `/health` | Server health check |
+## Error Response Format
 
-### Mailboxes
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `GET` | `/mailboxes` | List all mailboxes |
-| `POST` | `/mailboxes` | Create a new mailbox |
-| `GET` | `/mailboxes/{mailbox_id}` | Get a single mailbox |
-| `DELETE` | `/mailboxes/{mailbox_id}` | Delete a mailbox and its accounts |
-
-### Accounts
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `GET` | `/mailboxes/{mailbox_id}/accounts` | List accounts in a mailbox |
-| `POST` | `/mailboxes/{mailbox_id}/accounts` | Add an account |
-| `PATCH` | `/mailboxes/{mailbox_id}/accounts/{account_id}` | Update account metadata |
-| `DELETE` | `/mailboxes/{mailbox_id}/accounts/{account_id}` | Remove an account |
-| `POST` | `/mailboxes/{mailbox_id}/accounts/{account_id}/connect` | Start OAuth flow |
-
-### Emails
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `GET` | `/mailboxes/{mailbox_id}/emails/unread` | Fetch unread emails from all connected accounts |
-| `POST` | `/mailboxes/{mailbox_id}/emails/send` | Send an email from a specific account |
-
-### Error Responses
-
-All errors follow a consistent structure:
+All API errors follow this schema:
 
 ```json
 {
   "error": {
     "code": "account_not_found",
-    "message": "Account not found.",
-    "detail": { "account_id": "..." }
+    "message": "Account '...' not found.",
+    "detail": {}
   }
 }
 ```
 
-| Code | Status | Trigger |
-|------|--------|---------|
-| `mailbox_not_found` | 404 | Mailbox does not exist |
-| `account_not_found` | 404 | Account does not exist |
-| `account_misconfigured` | 400 | Invalid provider or missing credentials |
-| `account_connect_auth_error` | 401 | Provider authentication failed during `/connect` |
-| `provider_auth_error` | 401 | OAuth authentication failure |
-| `account_not_connected` | 409 | Account has not completed OAuth |
-| `email_fetch_error` | 502 | Provider failure during fetch |
-| `email_send_error` | 502 | Provider failure during send |
-| `external_api_error` | 502 | Generic external API failure |
-| `storage_error` | 503 | Database failure |
-| `env_var_error` | 500 | Missing environment variable |
+Primary API error codes include:
+
+- `mailbox_not_found`
+- `account_not_found`
+- `account_misconfigured`
+- `account_connect_auth_error`
+- `provider_auth_error`
+- `account_not_connected`
+- `email_fetch_error`
+- `email_send_error`
+- `external_api_error`
+- `env_var_error`
+- `storage_error`
 
 ## Testing
 
@@ -262,33 +194,26 @@ All errors follow a consistent structure:
 # All tests
 python -m pytest backend/tests
 
-# Unit tests only
-python -m pytest backend/tests/unit
+# Unit tests
+python -m pytest backend/tests/unit -v
 
 # Integration tests (requires DATABASE_URL)
-python -m pytest backend/tests/integration
+python -m pytest backend/tests/integration -v
 
-# E2E tests (requires DATABASE_URL + provider credentials + browser)
+# E2E tests (requires DATABASE_URL and provider credentials)
 python -m pytest backend/tests/e2e -v -s
-
-# Single file or pattern
-python -m pytest backend/tests/unit/core/email/test_email_manager.py
-python -m pytest backend/tests -k "test_fetch"
 ```
 
-| Layer | Scope | Dependencies |
-|-------|-------|-------------|
-| **Unit** | Core email logic in isolation | None &mdash; uses `FakeEmailClient` |
-| **Integration** | Full request flow through the API | PostgreSQL (each test in a rolled-back transaction) |
-| **E2E** | Complete flow against real providers | PostgreSQL + provider credentials + browser |
+Testing docs:
 
-See [`INTEGRATION_TESTS.md`](backend/tests/integration/INTEGRATION_TESTS.md) and [`E2E_TESTS.md`](backend/tests/e2e/E2E_TESTS.md) for details.
+- `backend/tests/unit/UNIT_TESTS.md`
+- `backend/tests/integration/INTEGRATION_TESTS.md`
+- `backend/tests/e2e/E2E_TESTS.md`
 
-## Extensibility
+## Additional Documentation
 
-Adding a new email provider is straightforward. See [`CLIENT_GUIDE.md`](backend/core/email/CLIENT_GUIDE.md) for the full guide. In short:
-
-1. Implement the `EmailClient` abstract interface.
-2. Register the provider in `EmailManager._build_client`.
-3. Add the credentials env var in `token_store._ENV_CREDENTIALS`.
-4. Update the `provider` CHECK constraint in `schema.sql`.
+- API endpoints: `backend/api/API_ENDPOINTS.md`
+- Database package: `backend/api/database/DATABASE.md`
+- Email client implementation guide: `backend/core/email/CLIENT_GUIDE.md`
+- Frontend setup: `frontend/README.md`
+- Agent guidance: `CLAUDE.md`

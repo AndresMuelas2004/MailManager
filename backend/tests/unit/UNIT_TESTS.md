@@ -1,73 +1,79 @@
-# Unit Tests — `backend/tests/unit/`
+﻿# Unit Tests (`backend/tests/unit`)
 
 ## Purpose
 
-Unit tests verify the **core email layer** (`core/email/`) in isolation, without network access, databases, or browser interaction. External boundaries (Google OAuth, Microsoft Graph, urllib) are replaced by fakes or mocks.
+Unit tests validate the email core in isolation.
+They do not require external services, browser interaction, or a database.
 
-## Test File Organization
+Primary target:
 
-| File | What it covers | Approx. tests |
-|------|---------------|---------------|
-| `core/email/test_email_manager.py` | `EmailManager` CRUD, auth orchestration, fetch/send routing, error registry | ~24 |
-| `core/email/test_email_manager_extended.py` | `EmailManager` gap-filling: auth_payloads forwarding, refreshed token collection, send error propagation | ~8 |
-| `core/email/test_errors.py` | Error hierarchy: inheritance chains, `code` uniqueness, `default_message`, `detail` dict, `CoreUnexpectedError.original` | ~20 |
-| `core/email/test_gmail_client.py` | `GmailClient` pure helpers (`_parse_expiry`, `_unwrap_*`, `_build_client_config`, `_wrap_account_tokens`) and guard clauses | ~25 |
-| `core/email/test_outlook_client.py` | `OutlookClient` pure helpers (`_parse_expiry`, `_unwrap_*`, `_resolve_scopes`, `_compute_expiry`, `_token_url`), guard clauses, and refresh path with mocked `_token_request` | ~30 |
+- `backend/core/email`
+
+## Test Principles
+
+- Test one behavior per case.
+- Keep tests deterministic and fast.
+- Mock only external boundaries.
+- Prefer pure function testing where possible.
+
+## File Map
+
+| File | Main Focus |
+|---|---|
+| `core/email/test_email_manager.py` | `EmailManager` lifecycle, account registration, routing, and error handling |
+| `core/email/test_email_manager_extended.py` | Additional manager scenarios and edge-case behavior |
+| `core/email/test_errors.py` | Core error hierarchy contracts (`code`, default messages, details) |
+| `core/email/test_helpers.py` | Shared helper functions (`parse_expiry`, wrapping/unwrapping secrets) |
+| `core/email/test_gmail_client.py` | Gmail client helper logic and guard clauses |
+| `core/email/test_outlook_client.py` | Outlook helper logic, guards, and refresh path behavior |
 
 ## Shared Test Utilities
-/
-### `FakeEmailClient` (in `core/conftest.py`)
 
-A concrete `EmailClient` subclass for testing `EmailManager` without real providers.
+`tests/shared/email_fakes.py` provides reusable fakes for both unit and integration tests:
 
-**Constructor parameters:**
-- `account_label` — label returned by `get_account_label()`
-- `auth_exc` / `auth_silent_exc` / `fetch_exc` / `send_exc` — exceptions raised by the corresponding methods
-- `unread_messages` — list of `EmailMessage` returned by `fetch_unread_emails()`
-- `auth_return` / `auth_silent_return` — values returned by `authenticate()` / `authenticate_silent()`
+- `FakeEmailClient`
+- `build_message(...)`
 
-**Tracking attributes:**
-- `authenticate_calls`, `authenticate_silent_calls`, `fetch_calls` — call counters
-- `sent_emails` — list of `(subject, body, recipients)` tuples
-- `last_app_credentials`, `last_user_tokens` — last arguments passed
-
-### `build_message` helper
-
-Factory function for creating `EmailMessage` instances with sensible defaults.
+These keep provider-independent tests simple and stable.
 
 ## Mocking Strategy
 
-- **Pure helpers** (e.g., `_parse_expiry`, `_resolve_scopes`) are tested directly — no mocking needed.
-- **Guard clauses** require minimal setup (just constructor + bad input) — no mocking needed.
-- **Refresh paths** mock at the boundary: `OutlookClient._token_request` is patched via `unittest.mock.patch` to simulate Microsoft token endpoint responses.
-- **EmailManager** tests use `FakeEmailClient` instead of real `GmailClient`/`OutlookClient`.
+Used where external boundaries exist:
 
-## What is NOT Unit-Tested
+- Token endpoint and Graph request boundaries in Outlook client tests
+- OAuth/network related boundaries in provider client tests
+- Client orchestration behavior via fake clients in manager tests
 
-- **Interactive OAuth flows** (`authenticate()` full flow) — requires browser/local server
-- **Actual HTTP calls** (`_token_request`, `_graph_request`, Gmail API `build()`) — hit external servers
-- **`fetch_unread_emails` parsing** — tightly coupled to provider API response formats; better tested in integration/E2E
-- **API services layer** — covered by integration tests
+Pure helpers are tested directly without mocking.
 
-## Running Tests
+## What Is Not Unit-Tested
+
+- Real OAuth browser flows
+- Real Gmail or Microsoft Graph API calls
+- Real token persistence in PostgreSQL
+- API router/service wiring
+
+Those behaviors are covered in integration and E2E suites.
+
+## Running Unit Tests
 
 ```bash
 # All unit tests
 python -m pytest backend/tests/unit -v
 
-# Core email tests only
-python -m pytest backend/tests/unit/core/email/ -v
+# Only core email unit tests
+python -m pytest backend/tests/unit/core/email -v
 
 # Single file
-python -m pytest backend/tests/unit/core/email/test_errors.py -v
+python -m pytest backend/tests/unit/core/email/test_helpers.py -v
 
-# Single test by name
-python -m pytest backend/tests/unit -k "test_parse_expiry_iso_string"
+# Filter by test name
+python -m pytest backend/tests/unit -k "parse_expiry"
 ```
 
-## Naming Conventions
+## Naming and Organization
 
-- Test files: `test_<module>.py`
-- Test functions: `test_<method_or_behavior>_<scenario>` (e.g., `test_parse_expiry_none_returns_none`)
-- Test classes: group related tests (e.g., `TestParseExpiry`, `TestGuardClauses`)
-- Fixtures: descriptive names matching what they provide (e.g., `client`, `manager`, `fake_client_factory`)
+- File naming: `test_<module>.py`
+- Test function naming: `test_<behavior>_<scenario>`
+- Group related cases in classes when it improves readability
+- Keep fixtures in `conftest.py` focused and composable
