@@ -31,8 +31,8 @@ class AccountNotFound(ApiError):
     code = "account_not_found"
 
 
-class StorageError(ApiError):
-    code = "storage_error"
+class DatabaseError(ApiError):
+    code = "database_error"
 
 
 class AccountConnectAuthError(ApiError):

@@ -11,7 +11,7 @@ import psycopg2
 from psycopg2 import pool
 
 from api.database.config import get_database_url
-from api.errors.exceptions import StorageError
+from api.errors.exceptions import DatabaseError
 
 _SCHEMA_PATH = Path(__file__).resolve().parent / "schema.sql"
 
@@ -28,7 +28,7 @@ def _get_pool() -> pool.ThreadedConnectionPool:
                 dsn=get_database_url(),
             )
         except psycopg2.Error as exc:
-            raise StorageError("Failed to create database connection pool.") from exc
+            raise DatabaseError("Failed to create database connection pool.") from exc
     return _pool
 
 

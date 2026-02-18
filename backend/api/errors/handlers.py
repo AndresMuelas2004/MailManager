@@ -23,7 +23,7 @@ from api.errors.exceptions import (
     EmailSendError,
     EnvVarError,
     ExternalAPIError,
-    StorageError,
+    DatabaseError,
     MailboxNotFound,
 )
 from api.schemas.error import ErrorResponse
@@ -39,7 +39,7 @@ _STATUS_MAP: dict[type[ApiError], int] = {
     EmailSendError: status.HTTP_502_BAD_GATEWAY,
     ExternalAPIError: status.HTTP_502_BAD_GATEWAY,
     EnvVarError: status.HTTP_500_INTERNAL_SERVER_ERROR,
-    StorageError: status.HTTP_503_SERVICE_UNAVAILABLE,
+    DatabaseError: status.HTTP_503_SERVICE_UNAVAILABLE,
 }
 
 

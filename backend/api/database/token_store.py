@@ -18,8 +18,8 @@ from api.database.db import get_connection
 from api.errors.exceptions import (
     AccountMisconfigured,
     AccountNotConnected,
+    DatabaseError,
     EnvVarError,
-    StorageError,
 )
 
 
@@ -51,10 +51,10 @@ def load_app_credentials(provider: str) -> dict[str, Any]:
             return {}
         data = json.loads(raw)
     except (OSError, json.JSONDecodeError) as exc:
-        raise StorageError("Failed to read config storage file.", {"path": str(config_path)}) from exc
+        raise DatabaseError("Failed to read config storage file.", {"path": str(config_path)}) from exc
 
     if not isinstance(data, dict):
-        raise StorageError("Config storage file is corrupted.", {"path": str(config_path)})
+        raise DatabaseError("Config storage file is corrupted.", {"path": str(config_path)})
 
     if provider == "gmail":
         if isinstance(data.get("installed"), dict):
@@ -82,7 +82,7 @@ def load_account_tokens(mailbox_id: str, account_id: str, provider: str) -> dict
                 cur.execute(sql, (account_id,))
                 row = cur.fetchone()
     except psycopg2.Error as exc:
-        raise StorageError("Failed to read token from database.") from exc
+        raise DatabaseError("Failed to read token from database.") from exc
 
     if row is None:
         raise AccountNotConnected("Account token not found.")
@@ -105,7 +105,7 @@ def save_account_tokens(
     Persist token credentials for an account in the tokens table (upsert).
     """
     if not isinstance(token_data, dict):
-        raise StorageError(
+        raise DatabaseError(
             "Token payload is invalid.",
             {"mailbox_id": mailbox_id, "account_id": account_id},
         )
@@ -137,7 +137,7 @@ def save_account_tokens(
             with conn.cursor() as cur:
                 cur.execute(sql, params)
     except psycopg2.Error as exc:
-        raise StorageError("Failed to save token to database.") from exc
+        raise DatabaseError("Failed to save token to database.") from exc
 
 
 def delete_account_tokens_for_records(accounts: Iterable[dict[str, Any]]) -> None:
@@ -158,4 +158,4 @@ def delete_account_tokens_for_records(accounts: Iterable[dict[str, Any]]) -> Non
             with conn.cursor() as cur:
                 cur.execute(sql, (account_ids,))
     except psycopg2.Error as exc:
-        raise StorageError("Failed to delete tokens from database.") from exc
+        raise DatabaseError("Failed to delete tokens from database.") from exc

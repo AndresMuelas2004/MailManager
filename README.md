@@ -207,7 +207,7 @@ Primary API error codes include:
 - `email_send_error`
 - `external_api_error`
 - `env_var_error`
-- `storage_error`
+- `database_error`
 
 ## Testing
 

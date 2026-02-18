@@ -12,7 +12,7 @@ import psycopg2.extras
 
 from api.database.base import AccountStore, MailboxStore
 from api.database.db import get_connection
-from api.errors.exceptions import StorageError
+from api.errors.exceptions import DatabaseError
 
 
 def _row_to_dict(row: dict[str, Any]) -> dict[str, Any]:
@@ -41,7 +41,7 @@ class PgMailboxStore(MailboxStore):
                     cur.execute(sql, mailbox)
                     row = cur.fetchone()
         except psycopg2.Error as exc:
-            raise StorageError("Failed to create mailbox.") from exc
+            raise DatabaseError("Failed to create mailbox.") from exc
         return _row_to_dict(row)
 
     def list(self) -> list[dict[str, Any]]:
@@ -52,7 +52,7 @@ class PgMailboxStore(MailboxStore):
                     cur.execute(sql)
                     rows = cur.fetchall()
         except psycopg2.Error as exc:
-            raise StorageError("Failed to list mailboxes.") from exc
+            raise DatabaseError("Failed to list mailboxes.") from exc
         return [_row_to_dict(r) for r in rows]
 
     def get(self, mailbox_id: str) -> dict[str, Any] | None:
@@ -68,7 +68,7 @@ class PgMailboxStore(MailboxStore):
         except psycopg2.errors.InvalidTextRepresentation:
             return None
         except psycopg2.Error as exc:
-            raise StorageError("Failed to get mailbox.") from exc
+            raise DatabaseError("Failed to get mailbox.") from exc
         if row is None:
             return None
         return _row_to_dict(row)
@@ -82,7 +82,7 @@ class PgMailboxStore(MailboxStore):
         except psycopg2.errors.InvalidTextRepresentation:
             return
         except psycopg2.Error as exc:
-            raise StorageError("Failed to delete mailbox.") from exc
+            raise DatabaseError("Failed to delete mailbox.") from exc
 
 
 class PgAccountStore(AccountStore):
@@ -101,7 +101,7 @@ class PgAccountStore(AccountStore):
         except psycopg2.errors.InvalidTextRepresentation:
             return []
         except psycopg2.Error as exc:
-            raise StorageError("Failed to list accounts.") from exc
+            raise DatabaseError("Failed to list accounts.") from exc
         return [_row_to_dict(r) for r in rows]
 
     def get(self, mailbox_id: str, account_id: str) -> dict[str, Any] | None:
@@ -117,7 +117,7 @@ class PgAccountStore(AccountStore):
         except psycopg2.errors.InvalidTextRepresentation:
             return None
         except psycopg2.Error as exc:
-            raise StorageError("Failed to get account.") from exc
+            raise DatabaseError("Failed to get account.") from exc
         if row is None:
             return None
         return _row_to_dict(row)
@@ -143,7 +143,7 @@ class PgAccountStore(AccountStore):
                     cur.execute(sql, params)
                     row = cur.fetchone()
         except psycopg2.Error as exc:
-            raise StorageError("Failed to upsert account.") from exc
+            raise DatabaseError("Failed to upsert account.") from exc
         return _row_to_dict(row)
 
     def delete(self, mailbox_id: str, account_id: str) -> None:
@@ -155,7 +155,7 @@ class PgAccountStore(AccountStore):
         except psycopg2.errors.InvalidTextRepresentation:
             return
         except psycopg2.Error as exc:
-            raise StorageError("Failed to delete account.") from exc
+            raise DatabaseError("Failed to delete account.") from exc
 
 
 mailbox_store = PgMailboxStore()

@@ -281,7 +281,7 @@ Mapped API error codes and status codes:
 | `email_send_error` | `502` |
 | `external_api_error` | `502` |
 | `env_var_error` | `500` |
-| `storage_error` | `503` |
+| `database_error` | `503` |
 
 Additional notes:
 

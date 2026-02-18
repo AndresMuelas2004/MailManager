@@ -67,7 +67,7 @@ Implementation details:
 - Uses `psycopg2` and `RealDictCursor`.
 - Uses raw SQL (no ORM).
 - Converts UUID and timestamp fields into JSON-serializable strings.
-- Wraps database driver exceptions as `StorageError`.
+- Wraps database driver exceptions as `DatabaseError`.
 
 Exported singletons used by services:
 
@@ -97,7 +97,7 @@ Error behavior:
 
 - Unknown provider -> `AccountMisconfigured`
 - Missing env var -> `EnvVarError`
-- DB or JSON file failures -> `StorageError`
+- DB or JSON file failures -> `DatabaseError`
 - Missing account token row -> `AccountNotConnected`
 
 ### `schema.sql`
