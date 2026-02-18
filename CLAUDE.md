@@ -79,10 +79,10 @@ Only Services can talk with manager or Database, and both can communicate only w
 
 ### Error Hierarchy — Two Separate Trees
 
-- **API layer** (`api/errors/exceptions.py`): `ApiError` base → `MailboxNotFound`, `AccountNotFound`, `AccountMisconfigured`, `StorageError`, etc. Mapped to HTTP status codes in `api/errors/handlers.py` via `_STATUS_MAP`. `ProviderNotSupported` has been removed — unknown providers are handled via `AccountMisconfigured` / `EmailProviderConfigError`.
+- **API layer** (`api/errors/exceptions.py`): `ApiError` base → `MailboxNotFound`, `AccountNotFound`, `AccountMisconfigured`, `StorageError`, etc. Mapped to HTTP status codes in `api/errors/handlers.py` via `_STATUS_MAP`. Unknown providers are handled via `AccountMisconfigured` / `EmailProviderConfigError`.
 - **Core layer** (`core/email/errors.py`): `CoreError` base → `EmailError` → `EmailAuthError`, `EmailAccountNotFoundError`, etc. Services catch these and re-raise as `ApiError` subclasses.
 
-**Hard rules**: only raise `ApiError` subclasses from services/routers. Core must never import API exceptions. API must never raise `CoreError` directly to the client. Prefer explicit error handling with meaningful messages consistent with `ApiError` patterns.
+**Hard rules**: only raise `ApiError` subclasses explicitly from `api/database/` and `api/services/` — never from routers, which must stay logic-free. Core must never import API exceptions. API must never raise `CoreError` directly to the client. Prefer explicit error handling with meaningful messages consistent with `ApiError` patterns. (FastAPI's request validation errors — HTTP 422 — are raised automatically by Pydantic schema parsing and are framework-managed; no explicit raise is needed or expected for them.)
 
 ### Email Core Flows and Authentication
 
@@ -159,8 +159,3 @@ Code must meet a **senior-level standard**: clear, efficient, and readable.
 
 Update this file when architecture layers change, environment variables are added, new providers are introduced, error mapping changes, or the persistence strategy evolves. If this document grows too large, move detailed subsections to `docs/` and keep this as an index.
 
-## Extras
-Never toch the test called generalTest, this is only for me to comprobate the complete behavior of the backend with one execution, and in the future it will not exist.
-
-## Workflow Rules
-- **Never run tests automatically** after making code changes. Only run tests when explicitly requested by the user in a separate instruction.

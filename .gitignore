@@ -43,6 +43,12 @@ frontend/.env.*
 # OAuth credentials (Docker mount)
 credentials/
 
+# Personal notes
+PersonalNotes.md
+
+# Architecture planning documents
+general-plan-extrapolate-architecture.md
+
 # Local scripts / experimental code
 backend/Scripts/
 

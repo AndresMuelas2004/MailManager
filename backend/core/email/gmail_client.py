@@ -5,11 +5,12 @@ from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from typing import Any
 
-from google.auth.exceptions import RefreshError
+from google.auth.exceptions import RefreshError, TransportError
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
 
 from .email_client import EmailClient, EmailMessage
 from .errors import (
@@ -37,7 +38,7 @@ def _parse_headers_from_raw(raw_b64url: str) -> dict[str, str]:
         return {}
     try:
         raw_bytes = base64.urlsafe_b64decode(raw_b64url.encode("utf-8"))
-    except Exception:
+    except (ValueError, TypeError):
         return {}
 
     raw_text = raw_bytes.decode("utf-8", errors="replace")
@@ -86,14 +87,20 @@ class GmailClient(EmailClient):
         """
         credentials_payload = unwrap_app_credentials(app_credentials)
         if not credentials_payload:
-            raise EmailMissingAppCredentialsError()
+            raise EmailMissingAppCredentialsError("Gmail interactive auth requires app credentials.")
 
         client_config = self._build_client_config(credentials_payload)
         flow = InstalledAppFlow.from_client_config(client_config, GMAIL_SCOPES)
         try:
             creds = flow.run_local_server(port=0)
+        except OSError as exc:
+            raise EmailExternalAPIError(
+                f"Gmail failed to start local OAuth callback server: {exc}"
+            ) from exc
         except Exception as exc:
-            raise EmailExternalAPIError(f"Gmail failed to execute OAuth flow: {exc}") from exc
+            raise EmailExternalAPIError(
+                f"Gmail unexpected OAuth flow error ({type(exc).__name__}): {exc}"
+            ) from exc
 
         token_record = {
             "access_token": creds.token,
@@ -113,12 +120,12 @@ class GmailClient(EmailClient):
         """
         credentials_payload = unwrap_app_credentials(app_credentials)
         if not credentials_payload:
-            raise EmailMissingAppCredentialsError()
+            raise EmailMissingAppCredentialsError("Gmail silent auth requires app credentials.")
 
         token_payload = unwrap_user_tokens(user_tokens)
         access_token = token_payload.get("access_token")
         if not access_token:
-            raise EmailMissingTokenError()
+            raise EmailMissingTokenError("Gmail silent auth requires access_token.")
 
         refresh_token = token_payload.get("refresh_token")
         expiry = parse_expiry(token_payload.get("expiry"))
@@ -126,8 +133,14 @@ class GmailClient(EmailClient):
         token_uri = credentials_payload.get("token_uri")
         client_id = credentials_payload.get("client_id")
         client_secret = credentials_payload.get("client_secret")
-        if not token_uri or not client_id or not client_secret:
-            raise EmailMissingAppCredentialsError("Missing required app credentials.")
+        missing_fields = [
+            field for field in ("token_uri", "client_id", "client_secret")
+            if not credentials_payload.get(field)
+        ]
+        if missing_fields:
+            raise EmailMissingAppCredentialsError(
+                f"Missing required app credentials for Gmail silent auth: {', '.join(missing_fields)}."
+            )
 
         creds = Credentials(
             token=access_token,
@@ -143,10 +156,18 @@ class GmailClient(EmailClient):
             try:
                 creds.refresh(Request())
                 refreshed = True
+            except TransportError as exc:
+                raise EmailRefreshFailedError(f"Gmail token refresh transport error: {exc}") from exc
             except RefreshError as exc:
-                raise EmailRefreshFailedError(f"Gmail failed to refresh access token: {exc}") from exc
+                raise EmailRefreshFailedError(
+                    f"Gmail token refresh rejected by provider: {exc}"
+                ) from exc
+            except Exception as exc:
+                raise EmailRefreshFailedError(
+                    f"Gmail unexpected token refresh error ({type(exc).__name__}): {exc}"
+                ) from exc
         elif creds.expired and not creds.refresh_token:
-            raise EmailMissingRefreshTokenError()
+            raise EmailMissingRefreshTokenError("Gmail token expired and refresh_token is missing.")
 
         self.service = build("gmail", "v1", credentials=creds)
         if refreshed:
@@ -170,7 +191,7 @@ class GmailClient(EmailClient):
         and return them as a list.
         """
         if self.service is None:
-            raise EmailNotAuthenticatedError()
+            raise EmailNotAuthenticatedError("Gmail fetch_unread_emails requires authentication.")
 
         unread_emails: list[EmailMessage] = []
 
@@ -189,8 +210,16 @@ class GmailClient(EmailClient):
 
             try:
                 response = self.service.users().messages().list(**list_kwargs).execute()
+            except HttpError as exc:
+                status = getattr(exc.resp, "status", "unknown")
+                reason = getattr(exc, "reason", "unknown")
+                raise EmailExternalAPIError(
+                    f"Gmail failed to fetch message list (HTTP {status}: {reason})."
+                ) from exc
             except Exception as exc:
-                raise EmailExternalAPIError(f"Gmail failed to fetch message list: {exc}") from exc
+                raise EmailExternalAPIError(
+                    f"Gmail unexpected fetch message list error ({type(exc).__name__}): {exc}"
+                ) from exc
             messages.extend(response.get("messages", []))
 
             if len(messages) >= max_total:
@@ -203,7 +232,9 @@ class GmailClient(EmailClient):
 
         # Retrieve each full email from Gmail in raw format using the previously collected IDs.
         for message_meta in messages:
-            message_id = message_meta["id"]
+            message_id = str(message_meta.get("id") or "").strip()
+            if not message_id:
+                raise EmailExternalAPIError("Gmail response missing message id in message list.")
 
             try:
                 message = self.service.users().messages().get(
@@ -211,8 +242,16 @@ class GmailClient(EmailClient):
                     id=message_id,
                     format="raw",
                 ).execute()
+            except HttpError as exc:
+                status = getattr(exc.resp, "status", "unknown")
+                reason = getattr(exc, "reason", "unknown")
+                raise EmailExternalAPIError(
+                    f"Gmail failed to fetch message {message_id} (HTTP {status}: {reason})."
+                ) from exc
             except Exception as exc:
-                raise EmailExternalAPIError(f"Gmail failed to fetch message {message_id}: {exc}") from exc
+                raise EmailExternalAPIError(
+                    f"Gmail unexpected fetch message error for {message_id} ({type(exc).__name__}): {exc}"
+                ) from exc
 
             raw_rfc822_b64url = message.get("raw", "")
             raw_headers = _parse_headers_from_raw(raw_rfc822_b64url)
@@ -225,7 +264,10 @@ class GmailClient(EmailClient):
 
             date_value = raw_headers.get("Date", "")
             if date_value:
-                sent_at = parsedate_to_datetime(date_value)
+                try:
+                    sent_at = parsedate_to_datetime(date_value)
+                except (TypeError, ValueError):
+                    sent_at = datetime.now(timezone.utc)
             else:
                 internal_date = message.get("internalDate")
                 if internal_date:
@@ -260,10 +302,10 @@ class GmailClient(EmailClient):
         Send a plain text email using the Gmail API.
         """
         if self.service is None:
-            raise EmailNotAuthenticatedError()
+            raise EmailNotAuthenticatedError("Gmail send_email requires authentication.")
 
         if not recipients:
-            raise EmailRecipientsMissingError()
+            raise EmailRecipientsMissingError("Gmail send_email requires at least one recipient.")
 
         from email.mime.text import MIMEText
 
@@ -276,8 +318,16 @@ class GmailClient(EmailClient):
 
         try:
             self.service.users().messages().send(userId="me", body=payload).execute()
+        except HttpError as exc:
+            status = getattr(exc.resp, "status", "unknown")
+            reason = getattr(exc, "reason", "unknown")
+            raise EmailExternalAPIError(
+                f"Gmail failed to send email (HTTP {status}: {reason})."
+            ) from exc
         except Exception as exc:
-            raise EmailExternalAPIError(f"Gmail failed to send email: {exc}") from exc
+            raise EmailExternalAPIError(
+                f"Gmail unexpected send email error ({type(exc).__name__}): {exc}"
+            ) from exc
 
     def get_account_label(self) -> str:
         """

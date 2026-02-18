@@ -70,8 +70,6 @@ def get_unread(mailbox_id: str) -> list[EmailOut]:
 
     try:
         unread = manager.fetch_all_unread_emails()
-    except CoreError as exc:
-        raise translate_core_error(exc, fallback=EmailFetchError) from exc
     except Exception as exc:
         raise EmailFetchError("Failed to fetch unread emails.") from exc
 

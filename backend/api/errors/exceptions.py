@@ -35,10 +35,6 @@ class StorageError(ApiError):
     code = "storage_error"
 
 
-class ProviderAuthError(ApiError):
-    code = "provider_auth_error"
-
-
 class AccountConnectAuthError(ApiError):
     code = "account_connect_auth_error"
 

@@ -6,11 +6,9 @@ import pytest
 
 from core.email.errors import (
     CoreError,
-    CoreUnexpectedError,
     EmailAccountNotFoundError,
     EmailAccountRecordError,
     EmailAuthError,
-    EmailClientUnsupportedError,
     EmailConfigError,
     EmailDuplicateAccountLabelError,
     EmailError,
@@ -23,9 +21,6 @@ from core.email.errors import (
     EmailRecipientsMissingError,
     EmailRefreshFailedError,
 )
-
-
-# ── Inheritance chain ────────────────────────────────────────────────
 
 
 class TestInheritanceChain:
@@ -60,7 +55,6 @@ class TestInheritanceChain:
             EmailProviderConfigError,
             EmailMissingAppCredentialsError,
             EmailDuplicateAccountLabelError,
-            EmailClientUnsupportedError,
         ],
     )
     def test_config_subclasses_inherit_email_config_error(self, cls):
@@ -74,12 +68,6 @@ class TestInheritanceChain:
 
     def test_email_external_api_error_inherits_email_error(self):
         assert issubclass(EmailExternalAPIError, EmailError)
-
-    def test_core_unexpected_error_inherits_core_error(self):
-        assert issubclass(CoreUnexpectedError, CoreError)
-
-
-# ── Attribute behavior ───────────────────────────────────────────────
 
 
 class TestAttributes:
@@ -106,20 +94,9 @@ class TestAttributes:
         err = EmailAuthError("auth failed")
         assert str(err) == "auth failed"
 
-    def test_core_unexpected_error_stores_original_exception(self):
-        original = ValueError("original cause")
-        err = CoreUnexpectedError("wrapped", original=original)
-        assert err.original is original
-        assert err.message == "wrapped"
-
-    def test_core_unexpected_error_original_defaults_to_none(self):
-        err = CoreUnexpectedError("no original")
-        assert err.original is None
-
     def test_each_error_has_unique_code(self):
         all_classes = [
             CoreError,
-            CoreUnexpectedError,
             EmailError,
             EmailAuthError,
             EmailConfigError,
@@ -127,7 +104,6 @@ class TestAttributes:
             EmailProviderConfigError,
             EmailMissingAppCredentialsError,
             EmailDuplicateAccountLabelError,
-            EmailClientUnsupportedError,
             EmailAccountNotFoundError,
             EmailMissingTokenError,
             EmailMissingRefreshTokenError,
@@ -143,7 +119,6 @@ class TestAttributes:
         """Every error class must define a non-empty default_message."""
         all_classes = [
             CoreError,
-            CoreUnexpectedError,
             EmailError,
             EmailAuthError,
             EmailConfigError,
@@ -151,7 +126,6 @@ class TestAttributes:
             EmailProviderConfigError,
             EmailMissingAppCredentialsError,
             EmailDuplicateAccountLabelError,
-            EmailClientUnsupportedError,
             EmailAccountNotFoundError,
             EmailMissingTokenError,
             EmailMissingRefreshTokenError,

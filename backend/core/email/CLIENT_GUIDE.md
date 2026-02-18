@@ -149,6 +149,18 @@ Typical mappings:
 
 The API service layer translates these into `ApiError` subclasses.
 
+### Capture technique
+
+Every provider client follows these rules when catching exceptions:
+
+1. **Validate early, fail with domain errors.** Check config, tokens, and auth state at the top of each method before any external call. Raise the corresponding `EmailMissing*` or `EmailNotAuthenticatedError` immediately.
+2. **Catch provider-specific exceptions first.** Each `try` block lists the concrete exception types the provider SDK can throw (e.g. `HttpError`, `TransportError`, `RefreshError` for Gmail; `HTTPError`, `URLError` for Outlook) before any generic handler.
+3. **Generic fallback last.** A final `except Exception as exc` with message `"<Provider> unexpected <operation> error ({type}): {exc}"` ensures no exception escapes untyped.
+4. **Preserve the cause chain.** Always `raise ... from exc` so the original traceback remains available for debugging.
+5. **Never double-wrap typed errors.** If the exception is already a `CoreError` subclass (e.g. `EmailExternalAPIError`), re-raise it directly (`except EmailExternalAPIError: raise`) before the generic handler catches it.
+6. **Reclassify when the functional meaning changes.** An external API failure during token refresh becomes `EmailRefreshFailedError`, not `EmailExternalAPIError`, because the operation that failed is authentication refresh.
+7. **Best-effort parsing with soft fallback.** When processing response data (headers, dates, error bodies), tolerate malformed values with a fallback instead of aborting the entire operation.
+
 ## 8. Gmail and Outlook Reference
 
 | Aspect | Gmail | Outlook |

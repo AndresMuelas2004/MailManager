@@ -202,7 +202,6 @@ Primary API error codes include:
 - `account_not_found`
 - `account_misconfigured`
 - `account_connect_auth_error`
-- `provider_auth_error`
 - `account_not_connected`
 - `email_fetch_error`
 - `email_send_error`

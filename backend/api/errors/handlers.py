@@ -23,7 +23,6 @@ from api.errors.exceptions import (
     EmailSendError,
     EnvVarError,
     ExternalAPIError,
-    ProviderAuthError,
     StorageError,
     MailboxNotFound,
 )
@@ -35,7 +34,6 @@ _STATUS_MAP: dict[type[ApiError], int] = {
     AccountNotFound: status.HTTP_404_NOT_FOUND,
     AccountMisconfigured: status.HTTP_400_BAD_REQUEST,
     AccountConnectAuthError: status.HTTP_401_UNAUTHORIZED,
-    ProviderAuthError: status.HTTP_401_UNAUTHORIZED,
     AccountNotConnected: status.HTTP_409_CONFLICT,
     EmailFetchError: status.HTTP_502_BAD_GATEWAY,
     EmailSendError: status.HTTP_502_BAD_GATEWAY,

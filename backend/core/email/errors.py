@@ -18,21 +18,6 @@ class CoreError(Exception):
         return self.message
 
 
-class CoreUnexpectedError(CoreError):
-    code = "core_unexpected_error"
-    default_message = "Unexpected core error."
-
-    def __init__(
-        self,
-        message: str | None = None,
-        detail: dict[str, Any] | None = None,
-        *,
-        original: Exception | None = None,
-    ) -> None:
-        super().__init__(message, detail)
-        self.original = original
-
-
 class EmailError(CoreError):
     code = "email_error"
     default_message = "Email error."
@@ -66,11 +51,6 @@ class EmailMissingAppCredentialsError(EmailConfigError):
 class EmailDuplicateAccountLabelError(EmailConfigError):
     code = "email_duplicate_account_label"
     default_message = "Account label already exists."
-
-
-class EmailClientUnsupportedError(EmailConfigError):
-    code = "email_client_unsupported"
-    default_message = "Client does not support this operation."
 
 
 class EmailAccountNotFoundError(EmailError):

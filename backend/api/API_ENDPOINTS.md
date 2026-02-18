@@ -276,7 +276,6 @@ Mapped API error codes and status codes:
 | `account_not_found` | `404` |
 | `account_misconfigured` | `400` |
 | `account_connect_auth_error` | `401` |
-| `provider_auth_error` | `401` |
 | `account_not_connected` | `409` |
 | `email_fetch_error` | `502` |
 | `email_send_error` | `502` |

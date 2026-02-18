@@ -60,6 +60,18 @@ class EmailManager:
                 raise EmailDuplicateAccountLabelError(f"Account label '{new_label}' already exists.")
         self._clients.append(client)
 
+    def _get_client_or_raise(self, account_label: str) -> EmailClient:
+        """
+        Return the client matching *account_label* or raise EmailAccountNotFoundError.
+        """
+        for client in self._clients:
+            if client.get_account_label() == account_label:
+                return client
+        raise EmailAccountNotFoundError(
+            f"Account '{account_label}' not found.",
+            {"account_label": account_label},
+        )
+
     def authenticate_all_silent(
         self,
         auth_payloads: dict[str, tuple[dict[str, Any], dict[str, Any]]] | None = None,
@@ -96,18 +108,12 @@ class EmailManager:
         This method is for UI flows, not for scripts or batch jobs.
         """
         self._last_errors = {}
-        for client in self._clients:
-            if client.get_account_label() != account_label:
-                continue
-            try:
-                return client.authenticate(app_credentials)
-            except Exception as exc:
-                self._last_errors[account_label] = exc
-                raise
-        raise EmailAccountNotFoundError(
-            f"Account '{account_label}' not found.",
-            {"account_label": account_label},
-        )
+        client = self._get_client_or_raise(account_label)
+        try:
+            return client.authenticate(app_credentials)
+        except Exception as exc:
+            self._last_errors[account_label] = exc
+            raise
 
     def fetch_all_unread_emails(self) -> list[EmailMessage]:
         """
@@ -134,15 +140,8 @@ class EmailManager:
         """
         Send an email using the client that matches the requested account label.
         """
-        for client in self._clients:
-            if client.get_account_label() == account_label:
-                client.send_email(subject, body, recipients)
-                return
-
-        raise EmailAccountNotFoundError(
-            f"Account '{account_label}' not found.",
-            {"account_label": account_label},
-        )
+        client = self._get_client_or_raise(account_label)
+        client.send_email(subject, body, recipients)
 
     def get_last_errors(self) -> dict[str, Exception]:
         """

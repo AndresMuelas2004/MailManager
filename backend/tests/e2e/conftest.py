@@ -36,24 +36,24 @@ def skip_without_credentials():
                 pytest.skip(f"E2E credentials not configured: {var} does not point to a file")
 
 
-@pytest.fixture(scope="session")
-def monkeypatch_session():
-    """Session-scoped monkeypatch."""
+@pytest.fixture(scope="module")
+def monkeypatch_module():
+    """Module-scoped monkeypatch."""
     mp = pytest.MonkeyPatch()
     yield mp
     mp.undo()
 
 
-@pytest.fixture(scope="session")
-def e2e_client(monkeypatch_session):
+@pytest.fixture(scope="module")
+def e2e_client(isolated_e2e_db):
     """Real FastAPI TestClient — no fakes, no monkeypatching of providers."""
     app = create_app()
     with TestClient(app) as client:
         yield client
 
 
-@pytest.fixture(autouse=True, scope="session")
-def isolated_e2e_db(monkeypatch_session):
+@pytest.fixture(autouse=True, scope="module")
+def isolated_e2e_db(monkeypatch_module):
     """Redirect database operations to a transaction that is rolled back at teardown."""
     dsn = os.getenv("DATABASE_URL", "").strip()
     if not dsn:
@@ -69,9 +69,9 @@ def isolated_e2e_db(monkeypatch_session):
         except Exception:
             raise
 
-    monkeypatch_session.setattr(db_module, "get_connection", _get_conn)
-    monkeypatch_session.setattr(repo_module, "get_connection", _get_conn)
-    monkeypatch_session.setattr(token_store_module, "get_connection", _get_conn)
+    monkeypatch_module.setattr(db_module, "get_connection", _get_conn)
+    monkeypatch_module.setattr(repo_module, "get_connection", _get_conn)
+    monkeypatch_module.setattr(token_store_module, "get_connection", _get_conn)
 
     yield
 

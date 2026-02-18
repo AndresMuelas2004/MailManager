@@ -11,7 +11,6 @@ from pydantic import SecretStr
 from core.email.email_manager import EmailManager
 from core.email.errors import (
     CoreError,
-    CoreUnexpectedError,
     EmailAccountNotFoundError,
     EmailAuthError,
     EmailConfigError,
@@ -25,7 +24,6 @@ from core.email.errors import (
     EmailAccountRecordError,
     EmailProviderConfigError,
     EmailDuplicateAccountLabelError,
-    EmailClientUnsupportedError,
 )
 
 from api.errors.exceptions import (
@@ -57,11 +55,9 @@ _CORE_TO_API_MAP: list[tuple[type[CoreError], type[ApiError]]] = [
     (EmailProviderConfigError, AccountMisconfigured),
     (EmailMissingAppCredentialsError, AccountMisconfigured),
     (EmailDuplicateAccountLabelError, AccountMisconfigured),
-    (EmailClientUnsupportedError, AccountMisconfigured),
     (EmailConfigError, AccountMisconfigured),
     (EmailRecipientsMissingError, EmailSendError),
     (EmailExternalAPIError, ExternalAPIError),
-    (CoreUnexpectedError, ApiError),
     (CoreError, ApiError),
 ]
 
