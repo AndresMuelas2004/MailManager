@@ -1,145 +1,113 @@
-﻿# Database Package (`api/database`)
+# Database Package (`api/database`)
 
 This package is the PostgreSQL persistence layer for MailManager.
-Only this layer should execute SQL or manage database connections.
+Schema changes are managed with Alembic migrations.
 
-## Design Goals
+## Design Principles
 
-- Keep storage concerns isolated from routers, services, and core clients.
-- Expose stable interfaces (`MailboxStore`, `AccountStore`) to service modules.
-- Centralize connection pooling and transaction behavior.
-- Persist OAuth tokens in PostgreSQL, not in per-account local files.
+- Keep SQL and connection management inside `api/database`.
+- Keep service and router contracts stable (`api.database` re-exports).
+- Evolve schema with Alembic, not app-startup DDL.
+- Store provider app credentials separately from account tokens.
+- Store account tokens encrypted, with temporary legacy fallback.
 
-## Public Surface
+## Directory Responsibilities
 
-Consumers should import from `api.database` (package root), not from internal modules.
+| Path | Responsibility |
+|---|---|
+| `settings.py` | Reads and validates env vars for DB pool, migrations, and token security. |
+| `connection.py` | Connection pool and transaction context (`get_connection`). |
+| `lifecycle.py` | Startup helpers (`warmup_connection`, optional startup migrations). |
+| `contracts.py` | Persistence interfaces (`MailboxStore`, `AccountStore`). |
+| `queries/mailboxes.py` | Raw SQL for mailbox operations. |
+| `queries/accounts.py` | Raw SQL for account operations. |
+| `queries/tokens.py` | Raw SQL for token load/save/backfill/delete operations. |
+| `repositories/mailbox_repository.py` | Mailbox repository implementation. |
+| `repositories/account_repository.py` | Account repository implementation. |
+| `security/app_credentials.py` | Loads provider app credentials from env-defined JSON files. |
+| `security/token_crypto.py` | Fernet encryption/decryption helpers for account tokens. |
+| `security/token_store.py` | Encrypted token persistence with context validation and legacy fallback. |
+| `migrations/env.py` | Alembic migration runtime config. |
+| `migrations/versions/*.py` | Versioned schema migrations. |
+| `schema.sql` | Legacy schema snapshot for reference only (not migration source of truth). |
 
-Re-exported symbols:
+## Public API (`api.database`)
+
+Use package-root imports from `api.database`:
 
 - `mailbox_store`
 - `account_store`
 - `get_connection`
-- `init_db`
 - `close_pool`
+- `warmup_connection`
+- `init_db` (deprecated compatibility helper)
+- `run_startup_migrations_if_enabled`
 - `load_app_credentials`
 - `load_account_tokens`
 - `save_account_tokens`
 - `delete_account_tokens_for_records`
 
-## Module Breakdown
+## Migration Workflow (Alembic)
 
-### `base.py`
+Run from repository root:
 
-Defines abstract contracts:
+```bash
+python -m alembic -c backend/api/database/alembic.ini upgrade head
+```
 
-- `MailboxStore`
-- `AccountStore`
+For an existing DB already created outside Alembic baseline:
 
-These contracts allow replacing the concrete storage implementation with minimal service-layer impact.
+```bash
+python -m alembic -c backend/api/database/alembic.ini stamp 0001_initial_schema
+python -m alembic -c backend/api/database/alembic.ini upgrade head
+```
 
-### `config.py`
+Production recommendation:
 
-Contains `get_database_url()`.
+- Run `upgrade head` in CI/CD before API rollout.
+- Keep `DB_AUTO_MIGRATE=false` in API runtime by default.
 
-- Reads `DATABASE_URL` from the environment.
-- Raises `EnvVarError` if the variable is missing or empty.
+## Token Security Model
 
-### `db.py`
+- New token writes are encrypted (`access_token_encrypted`, `refresh_token_encrypted`).
+- `TOKEN_ENCRYPTION_KEY` and `TOKEN_ENCRYPTION_KEY_ID` control encryption behavior.
+- Token reads validate full account context (`account_id + mailbox_id + provider`).
+- Legacy plaintext fallback is controlled by `TOKEN_PLAINTEXT_FALLBACK_ENABLED`.
+- On legacy plaintext read, token store tries lazy backfill to encrypted columns.
 
-Connection and schema utilities:
+## Operational Env Vars
 
-- `ThreadedConnectionPool` is initialized lazily.
-- `get_connection()` yields one pooled connection in a context manager.
-- Successful block execution commits automatically.
-- Exceptions trigger rollback before re-raising.
-- `init_db()` executes `schema.sql` at application startup.
-- `close_pool()` closes all pooled connections on shutdown.
+Required:
 
-### `repository.py`
+- `DATABASE_URL`
 
-Concrete PostgreSQL implementations:
+DB tuning:
 
-- `PgMailboxStore`
-- `PgAccountStore`
+- `DB_POOL_MIN_CONN` (default `1`)
+- `DB_POOL_MAX_CONN` (default `10`)
+- `DB_CONNECT_TIMEOUT_SECONDS` (default `10`)
+- `DB_APPLICATION_NAME` (default `mailmanager-api`)
 
-Implementation details:
+Migration control:
 
-- Uses `psycopg2` and `RealDictCursor`.
-- Uses raw SQL (no ORM).
-- Converts UUID and timestamp fields into JSON-serializable strings.
-- Wraps database driver exceptions as `DatabaseError`.
+- `DB_AUTO_MIGRATE` (default `false`)
+- `DB_ALEMBIC_INI_PATH` (optional override)
 
-Exported singletons used by services:
+Token encryption:
 
-- `mailbox_store`
-- `account_store`
-
-### `token_store.py`
-
-Handles two separate credential domains.
-
-1. App credentials (provider-level OAuth client settings)
-
-- Loaded from JSON files pointed by environment variables.
-- Provider mapping is in `_ENV_CREDENTIALS`:
-  - `gmail -> MIA_GMAIL_CREDENTIALS_PATH`
-  - `outlook -> MIA_OUTLOOK_CREDENTIALS_PATH`
-
-2. Account tokens (user-level OAuth tokens)
-
-- Loaded/saved in PostgreSQL table `tokens`.
-- Main functions:
-  - `load_account_tokens(...)`
-  - `save_account_tokens(...)`
-  - `delete_account_tokens_for_records(...)`
-
-Error behavior:
-
-- Unknown provider -> `AccountMisconfigured`
-- Missing env var -> `EnvVarError`
-- DB or JSON file failures -> `DatabaseError`
-- Missing account token row -> `AccountNotConnected`
-
-### `schema.sql`
-
-Defines three tables:
-
-- `mailboxes`
-- `accounts`
-- `tokens`
-
-Schema characteristics:
-
-- Idempotent DDL (`CREATE TABLE IF NOT EXISTS`).
-- UUID primary keys for mailbox and account IDs.
-- Provider constraint on `accounts.provider` (`gmail`, `outlook`).
-- Foreign keys with `ON DELETE CASCADE`:
-  - deleting a mailbox deletes related accounts and tokens
-  - deleting an account deletes its token row
-
-## Transaction Model
-
-All repository and token operations run inside `get_connection()` context blocks.
-
-Implications:
-
-- Commit on success.
-- Rollback on exception.
-- Per-operation transaction boundaries by default.
-- In tests, `get_connection()` is monkeypatched to a shared transaction for isolation.
-
-## Operational Notes
-
-- `init_db()` is called from FastAPI lifespan during app startup.
-- Connection pool size is currently fixed to `minconn=1`, `maxconn=10`.
-- Startup fails fast if `DATABASE_URL` is missing or invalid.
-- Token persistence includes `updated_at` refresh on upsert.
+- `TOKEN_ENCRYPTION_KEY` (required for encrypted read/write)
+- `TOKEN_ENCRYPTION_KEY_ID` (default `v1`)
+- `TOKEN_PLAINTEXT_FALLBACK_ENABLED` (default `true`)
 
 ## Extension Guidance
 
-When adding a new provider:
+When adding a provider:
 
-1. Add provider env var mapping in `token_store._ENV_CREDENTIALS`.
-2. Update `accounts.provider` CHECK constraint in `schema.sql`.
-3. Ensure services pass normalized provider names consistently.
-4. Add integration and E2E coverage for token load/save behavior.
+1. Add provider support in app credential loading (`security/app_credentials.py`).
+2. Update provider validation constraints via a new migration.
+3. Add/adjust integration and E2E tests for connect, send, and unread flows.
+
+## Deprecation Note
+
+The plaintext token columns (`access_token`, `refresh_token`) remain temporarily for migration compatibility.
+A future migration should remove them once legacy data is fully backfilled.

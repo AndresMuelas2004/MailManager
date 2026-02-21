@@ -1,12 +1,11 @@
 """
-Database package — PostgreSQL persistence layer.
-
-Re-exports all public symbols so consumers import from ``api.database``.
+Database package public surface.
 """
 
-from api.database.db import close_pool, get_connection, init_db
-from api.database.repository import account_store, mailbox_store
-from api.database.token_store import (
+from api.database.connection import close_pool, get_connection
+from api.database.lifecycle import init_db, run_startup_migrations_if_enabled, warmup_connection
+from api.database.repositories import account_store, mailbox_store
+from api.database.security import (
     delete_account_tokens_for_records,
     load_account_tokens,
     load_app_credentials,
@@ -22,5 +21,7 @@ __all__ = [
     "load_account_tokens",
     "load_app_credentials",
     "mailbox_store",
+    "run_startup_migrations_if_enabled",
     "save_account_tokens",
+    "warmup_connection",
 ]

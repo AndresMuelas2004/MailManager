@@ -94,6 +94,7 @@ Required:
 - `DATABASE_URL`
 - `MIA_GMAIL_CREDENTIALS_PATH`
 - `MIA_OUTLOOK_CREDENTIALS_PATH`
+- `TOKEN_ENCRYPTION_KEY`
 
 Example (PowerShell):
 
@@ -101,9 +102,30 @@ Example (PowerShell):
 $env:DATABASE_URL = "postgresql://user:pass@localhost:5432/mailmanager"
 $env:MIA_GMAIL_CREDENTIALS_PATH = "C:\\secrets\\gmail_oauth.json"
 $env:MIA_OUTLOOK_CREDENTIALS_PATH = "C:\\secrets\\outlook_oauth.json"
+$env:TOKEN_ENCRYPTION_KEY = "<FERNET_KEY>"
+$env:TOKEN_ENCRYPTION_KEY_ID = "v1"
 ```
 
-### 3. Run backend
+Generate a Fernet key (one-time):
+
+```bash
+python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+```
+
+### 3. Apply database migrations
+
+```bash
+python -m alembic -c backend/api/database/alembic.ini upgrade head
+```
+
+For existing databases initialized before Alembic:
+
+```bash
+python -m alembic -c backend/api/database/alembic.ini stamp 0001_initial_schema
+python -m alembic -c backend/api/database/alembic.ini upgrade head
+```
+
+### 4. Run backend
 
 ```bash
 cd backend
@@ -112,7 +134,7 @@ python main.py
 
 Backend URL: `http://localhost:8000`
 
-### 4. Run frontend
+### 5. Run frontend
 
 ```bash
 cd frontend
@@ -135,7 +157,7 @@ mkdir credentials
 docker compose up --build
 ```
 
-This starts PostgreSQL, the backend (port 8000), and the frontend (port 5173). The database schema is created automatically on first startup.
+This starts PostgreSQL, the backend (port 8000), and the frontend (port 5173). Run Alembic migrations before exposing the API.
 
 ```bash
 docker compose down      # stop all services
@@ -146,7 +168,16 @@ docker compose down -v   # stop and delete database volume
 
 | Variable | Required | Description |
 |---|---|---|
-| `DATABASE_URL` | Yes | PostgreSQL DSN used by connection pool and schema init. |
+| `DATABASE_URL` | Yes | PostgreSQL DSN used by connection pool and Alembic migrations. |
+| `DB_POOL_MIN_CONN` | No | Minimum pooled DB connections. Default: `1`. |
+| `DB_POOL_MAX_CONN` | No | Maximum pooled DB connections. Default: `10`. |
+| `DB_CONNECT_TIMEOUT_SECONDS` | No | Connection timeout for PostgreSQL. Default: `10`. |
+| `DB_APPLICATION_NAME` | No | PostgreSQL `application_name`. Default: `mailmanager-api`. |
+| `DB_AUTO_MIGRATE` | No | If `true`, API startup runs `alembic upgrade head`. Default: `false`. |
+| `DB_ALEMBIC_INI_PATH` | No | Custom Alembic config path. |
+| `TOKEN_ENCRYPTION_KEY` | Yes (recommended) | Fernet key for encrypted account tokens in DB. |
+| `TOKEN_ENCRYPTION_KEY_ID` | No | Identifier for active encryption key. Default: `v1`. |
+| `TOKEN_PLAINTEXT_FALLBACK_ENABLED` | No | Enables temporary legacy plaintext token reads. Default: `true`. |
 | `MIA_GMAIL_CREDENTIALS_PATH` | Yes | Path to Gmail OAuth credentials JSON file. |
 | `MIA_OUTLOOK_CREDENTIALS_PATH` | Yes | Path to Outlook app credentials JSON file. |
 | `VITE_API_BASE_URL` | No | Frontend override for the backend URL. Defaults to `http://localhost:8000`. |

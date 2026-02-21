@@ -1,3 +1,4 @@
+alembic==1.18.4
 annotated-doc==0.0.4
 annotated-types==0.7.0
 anyio==4.12.0
@@ -6,6 +7,7 @@ certifi==2025.11.12
 charset-normalizer==3.4.4
 click==8.3.1
 colorama==0.4.6
+cryptography==46.0.5
 fastapi==0.126.0
 google-api-core==2.28.1
 google-api-python-client==2.187.0
@@ -35,6 +37,7 @@ pytest==9.0.2
 requests==2.32.5
 requests-oauthlib==2.0.0
 rsa==4.9.1
+SQLAlchemy==2.0.46
 starlette==0.50.0
 typing-inspection==0.4.2
 typing_extensions==4.15.0

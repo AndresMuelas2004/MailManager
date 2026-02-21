@@ -84,12 +84,15 @@ def test_03_post_connect_connect_gmail_and_outlook(
         response = e2e_client.post(
             f"/mailboxes/{flow_state['mid']}/accounts/{flow_state['gmail_id']}/connect"
         )
-        _assert_ok(response)
+        assert response.status_code == 200, (
+            "Gmail connect failed. Outlook connect was not attempted.\n"
+            f"Response: {response.text}"
+        )
 
         response = e2e_client.post(
             f"/mailboxes/{flow_state['mid']}/accounts/{flow_state['outlook_id']}/connect"
         )
-        _assert_ok(response)
+        assert response.status_code == 200, f"Outlook connect failed. Response: {response.text}"
 
     run_flow_step(_step)
 

@@ -37,15 +37,16 @@ while replacing external provider boundaries with fakes.
 ### `create_test_schema` (session, autouse)
 
 - Requires `DATABASE_URL`.
-- Executes `api/database/schema.sql` once at session start.
+- Runs `alembic upgrade head` using `api/database/alembic.ini`.
 
 ### `isolated_db` (autouse, per test)
 
 - Opens one PostgreSQL connection with `autocommit=False`.
 - Monkeypatches `get_connection` in:
-  - `api.database.db`
-  - `api.database.repository`
-  - `api.database.token_store`
+  - `api.database.connection`
+  - `api.database.repositories.mailbox_repository`
+  - `api.database.repositories.account_repository`
+  - `api.database.security.token_store`
 - Rolls back after each test for clean isolation.
 
 ### `test_client`

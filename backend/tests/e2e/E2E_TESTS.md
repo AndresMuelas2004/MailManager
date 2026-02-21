@@ -33,6 +33,11 @@ Required environment variables:
 - `MIA_GMAIL_CREDENTIALS_PATH`
 - `MIA_OUTLOOK_CREDENTIALS_PATH`
 
+Token persistence note:
+
+- E2E connect flow persists account tokens in DB.
+- If encryption dependencies/config are unavailable, runtime may use temporary plaintext fallback depending on backend settings.
+
 Validation behavior:
 
 - `DATABASE_URL` must be present.

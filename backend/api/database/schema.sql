@@ -1,6 +1,6 @@
 -- ============================================================
--- MailManager – Database Schema (DDL)
--- PostgreSQL 18
+-- MailManager - Database Schema Snapshot (legacy reference)
+-- Source of truth for schema evolution: Alembic migrations.
 -- ============================================================
 
 -- ---------- MAILBOXES ----------
@@ -30,11 +30,14 @@ CREATE INDEX IF NOT EXISTS idx_accounts_mailbox_id
 -- ---------- TOKENS ----------
 
 CREATE TABLE IF NOT EXISTS tokens (
-    account_id    UUID        PRIMARY KEY
-                  REFERENCES accounts(account_id) ON DELETE CASCADE,
-    access_token  TEXT,
-    refresh_token TEXT,
-    expiry        TIMESTAMPTZ,
-    scopes        TEXT[],
-    updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+    account_id              UUID         PRIMARY KEY
+                            REFERENCES accounts(account_id) ON DELETE CASCADE,
+    access_token            TEXT,
+    refresh_token           TEXT,
+    access_token_encrypted  TEXT,
+    refresh_token_encrypted TEXT,
+    encryption_key_id       VARCHAR(64),
+    expiry                  TIMESTAMPTZ,
+    scopes                  TEXT[],
+    updated_at              TIMESTAMPTZ  NOT NULL DEFAULT now()
 );

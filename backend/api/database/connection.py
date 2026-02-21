@@ -1,19 +1,18 @@
 """
-PostgreSQL connection pool and database initialization.
+Shared PostgreSQL connection-pool utilities.
 """
 
 from __future__ import annotations
 
 import contextlib
-from pathlib import Path
+from collections.abc import Iterator
 
 import psycopg2
 from psycopg2 import pool
 
-from api.database.config import get_database_url
+from api.database.settings import get_database_settings
 from api.errors.exceptions import DatabaseError
 
-_SCHEMA_PATH = Path(__file__).resolve().parent / "schema.sql"
 
 _pool: pool.ThreadedConnectionPool | None = None
 
@@ -21,11 +20,14 @@ _pool: pool.ThreadedConnectionPool | None = None
 def _get_pool() -> pool.ThreadedConnectionPool:
     global _pool
     if _pool is None:
+        cfg = get_database_settings()
         try:
             _pool = pool.ThreadedConnectionPool(
-                minconn=1,
-                maxconn=10,
-                dsn=get_database_url(),
+                minconn=cfg.pool_min_conn,
+                maxconn=cfg.pool_max_conn,
+                dsn=cfg.database_url,
+                connect_timeout=cfg.connect_timeout_seconds,
+                application_name=cfg.application_name,
             )
         except psycopg2.Error as exc:
             raise DatabaseError("Failed to create database connection pool.") from exc
@@ -33,9 +35,9 @@ def _get_pool() -> pool.ThreadedConnectionPool:
 
 
 @contextlib.contextmanager
-def get_connection():
+def get_connection() -> Iterator:
     """
-    Yield a connection from the pool. Commits on success, rolls back on error.
+    Yield one pooled connection and wrap operation in a transaction.
     """
     p = _get_pool()
     conn = p.getconn()
@@ -49,21 +51,12 @@ def get_connection():
         p.putconn(conn)
 
 
-def init_db() -> None:
-    """
-    Execute schema.sql to create tables if they do not exist.
-    """
-    ddl = _SCHEMA_PATH.read_text(encoding="utf-8")
-    with get_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute(ddl)
-
-
 def close_pool() -> None:
     """
-    Close all connections in the pool. Call on application shutdown.
+    Close all pooled connections.
     """
     global _pool
     if _pool is not None:
         _pool.closeall()
         _pool = None
+

@@ -1,8 +1,5 @@
 """
-Persistence interfaces for the API layer.
-
-These abstract classes keep routers and services independent from the
-concrete persistence implementation (PostgreSQL).
+Persistence contracts for the API layer.
 """
 
 from __future__ import annotations
@@ -53,3 +50,4 @@ class AccountStore(ABC):
     @abstractmethod
     def delete(self, mailbox_id: str, account_id: str) -> None:
         raise NotImplementedError
+

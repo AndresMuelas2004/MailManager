@@ -8,6 +8,7 @@ They do not require external services, browser interaction, or a database.
 Primary target:
 
 - `backend/core/email`
+- `backend/api/database` (settings, token crypto, token store behavior)
 
 ## Test Principles
 
@@ -20,6 +21,9 @@ Primary target:
 
 | File | Main Focus |
 |---|---|
+| `api/database/test_settings.py` | Env var parsing and validation for DB/token settings |
+| `api/database/test_token_crypto.py` | Fernet encryption/decryption behavior and key validation |
+| `api/database/test_token_store.py` | Token dual-read fallback, lazy backfill, and context validation |
 | `core/email/test_email_manager.py` | `EmailManager` lifecycle, account registration, routing, and error handling |
 | `core/email/test_email_manager_extended.py` | Additional manager scenarios and edge-case behavior |
 | `core/email/test_errors.py` | Core error hierarchy contracts (`code`, default messages, details) |
