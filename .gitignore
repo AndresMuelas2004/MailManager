@@ -48,6 +48,7 @@ PersonalNotes.md
 
 # Architecture planning documents
 general-plan-extrapolate-architecture.md
+backend/api/database/UNDERSTANDING_DATABASE_SYSTEM.md
 
 # Local scripts / experimental code
 backend/Scripts/

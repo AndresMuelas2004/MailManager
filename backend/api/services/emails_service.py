@@ -47,15 +47,21 @@ def get_unread(mailbox_id: str) -> list[EmailOut]:
     accounts = account_store.list_by_mailbox(mailbox_id)
     auth_payloads = {}
     label_lookup: dict[str, tuple[str, str, str]] = {}
-    credentials_cache: dict[str, dict[str, Any]] = {}
+    valid_providers = {
+        str(account.get("provider") or "").lower()
+        for account in accounts
+        if str(account.get("account_id") or "").strip() and str(account.get("provider") or "").strip()
+    }
+    credentials_cache: dict[str, dict[str, Any]] = {
+        provider: load_wrapped_app_credentials(provider)
+        for provider in valid_providers
+    }
     for account in accounts:
         account_id = str(account.get("account_id") or "")
         provider = str(account.get("provider") or "").lower()
         if not account_id:
             continue
         account_label = f"{mailbox_id}__{account_id}"
-        if provider not in credentials_cache:
-            credentials_cache[provider] = load_wrapped_app_credentials(provider)
         app_credentials = credentials_cache[provider]
         user_tokens = load_wrapped_account_tokens(mailbox_id, account_id, provider)
         auth_payloads[account_label] = (app_credentials, user_tokens)

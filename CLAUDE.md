@@ -64,7 +64,7 @@ Routers (FastAPI)
 Only Services can talk with manager or Database, and both can communicate only with Services or in the case of manager also it can communicate with the clients. Important, database can not communicate with core.
 ### Layer Rules
 
-- **Routers** (`api/routers/`) — thin HTTP surface. Zero business logic. Delegate everything to services.
+- **Routers** (`api/routers/`) — thin HTTP surface. Zero business logic. Routers only know schemas (`api/schemas/`) and services (`api/services/`). Each endpoint declares its Pydantic request/response schemas and contains a single call to a service function — nothing else.
 - **Services** (`api/services/`) — orchestration, validation, error mapping. Always call `ensure_mailbox_exists(mailbox_id)` before any mailbox-scoped action. Build provider clients exclusively via `build_manager_for_accounts()` — never instantiate `EmailClient` subclasses directly in services or routers.
 - **Database** (`api/database/`) — PostgreSQL persistence layer. The interfaces `MailboxStore` / `AccountStore` in `contracts.py` are stable contracts. `repositories/` implements them with SQL queries from `queries/`. `security/token_store.py` handles account tokens in the `tokens` table and `security/app_credentials.py` loads provider app credentials from file-based env vars. All public symbols are re-exported from the package `__init__.py` so consumers import from `api.database`. See `backend/api/database/DATABASE.md` for a detailed description of each file.
 - **Core** (`core/email/`) — provider-specific logic, multi-account orchestration, and future AI features. `EmailManager` coordinates `EmailClient` instances (`GmailClient`, `OutlookClient`). Core knows nothing about the API layer.

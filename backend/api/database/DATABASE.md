@@ -3,6 +3,62 @@
 This package is the PostgreSQL persistence layer for MailManager.
 Schema changes are managed with Alembic migrations.
 
+## Architecture
+
+The package follows an internal layered design with a **single public facade**: all external consumers (services, routers) import exclusively from `api.database` (`__init__.py`), never from internal submodules. This gives full freedom to reorganize internals without breaking any consumer.
+
+```
+api/database/
+├── __init__.py                  # Public facade (re-exports everything below)
+│
+├── settings.py                  # Centralized env var reading and validation
+├── connection.py                # ThreadedConnectionPool + transactional context manager
+├── lifecycle.py                 # App startup helpers (warmup, optional auto-migrate)
+├── contracts.py                 # Abstract interfaces (MailboxStore, AccountStore)
+│
+├── queries/                     # Raw SQL constants only — no Python logic
+│   ├── mailboxes.py             #   CRUD for mailboxes table
+│   ├── accounts.py              #   CRUD for accounts table
+│   └── tokens.py                #   SELECT/UPSERT/BACKFILL/DELETE for tokens table
+│
+├── repositories/                # Concrete implementations of contracts
+│   ├── mailbox_repository.py    #   PgMailboxStore (implements MailboxStore)
+│   └── account_repository.py    #   PgAccountStore (implements AccountStore)
+│
+├── security/                    # Credentials and token encryption
+│   ├── app_credentials.py       #   Loads provider OAuth app credentials from JSON files
+│   ├── token_crypto.py          #   Fernet encrypt/decrypt helpers
+│   └── token_store.py           #   Token persistence with context validation and legacy fallback
+│
+├── migrations/                  # Schema evolution
+│   ├── env.py                   #   Alembic runtime config
+│   ├── runner.py                #   Fallback DDL runner (environments without Alembic)
+│   └── versions/                #   Versioned migration scripts
+│
+└── schema.sql                   # Reference snapshot (NOT migration source of truth)
+```
+
+### Internal data flow
+
+```
+repositories/ & security/token_store.py
+  → import queries from queries/
+  → import connection from connection.py
+    → connection.py reads pool config from settings.py
+      → settings.py reads env vars (DATABASE_URL, pool tuning, encryption keys)
+```
+
+Repositories and token_store are the only modules that execute SQL. They combine a query from `queries/` with a connection from `connection.py`, and raise `DatabaseError` on failure.
+
+### Layer boundaries
+
+- **`settings.py`** is the only module that reads `os.environ`.
+- **`connection.py`** is the only module that manages the connection pool.
+- **`queries/`** contains only SQL string constants — zero imports, zero logic.
+- **`repositories/`** and **`security/token_store.py`** are the only modules that execute SQL.
+- **`contracts.py`** defines abstract interfaces that decouple services from concrete implementations.
+- **`__init__.py`** re-exports everything — external code never imports submodules directly.
+
 ## Design Principles
 
 - Keep SQL and connection management inside `api/database`.
@@ -11,41 +67,23 @@ Schema changes are managed with Alembic migrations.
 - Store provider app credentials separately from account tokens.
 - Store account tokens encrypted, with temporary legacy fallback.
 
-## Directory Responsibilities
-
-| Path | Responsibility |
-|---|---|
-| `settings.py` | Reads and validates env vars for DB pool, migrations, and token security. |
-| `connection.py` | Connection pool and transaction context (`get_connection`). |
-| `lifecycle.py` | Startup helpers (`warmup_connection`, optional startup migrations). |
-| `contracts.py` | Persistence interfaces (`MailboxStore`, `AccountStore`). |
-| `queries/mailboxes.py` | Raw SQL for mailbox operations. |
-| `queries/accounts.py` | Raw SQL for account operations. |
-| `queries/tokens.py` | Raw SQL for token load/save/backfill/delete operations. |
-| `repositories/mailbox_repository.py` | Mailbox repository implementation. |
-| `repositories/account_repository.py` | Account repository implementation. |
-| `security/app_credentials.py` | Loads provider app credentials from env-defined JSON files. |
-| `security/token_crypto.py` | Fernet encryption/decryption helpers for account tokens. |
-| `security/token_store.py` | Encrypted token persistence with context validation and legacy fallback. |
-| `migrations/env.py` | Alembic migration runtime config. |
-| `migrations/versions/*.py` | Versioned schema migrations. |
-| `schema.sql` | Legacy schema snapshot for reference only (not migration source of truth). |
-
 ## Public API (`api.database`)
 
-Use package-root imports from `api.database`:
+All external code imports from the package root. The `__init__.py` facade re-exports:
 
-- `mailbox_store`
-- `account_store`
-- `get_connection`
-- `close_pool`
-- `warmup_connection`
-- `init_db` (deprecated compatibility helper)
-- `run_startup_migrations_if_enabled`
-- `load_app_credentials`
-- `load_account_tokens`
-- `save_account_tokens`
-- `delete_account_tokens_for_records`
+| Symbol | Source module | Purpose |
+|---|---|---|
+| `mailbox_store` | `repositories/` | Singleton `PgMailboxStore` instance |
+| `account_store` | `repositories/` | Singleton `PgAccountStore` instance |
+| `get_connection` | `connection.py` | Transactional context manager (auto-commit/rollback) |
+| `close_pool` | `connection.py` | Shutdown: close all pooled connections |
+| `warmup_connection` | `lifecycle.py` | Startup: validate DB reachability (`SELECT 1`) |
+| `init_db` | `lifecycle.py` | Deprecated — calls `warmup_connection()` |
+| `run_startup_migrations_if_enabled` | `lifecycle.py` | Conditional Alembic `upgrade head` at startup |
+| `load_app_credentials` | `security/` | Provider OAuth app credentials from JSON file |
+| `load_account_tokens` | `security/` | Read + decrypt account tokens with context validation |
+| `save_account_tokens` | `security/` | Encrypt + write account tokens with context validation |
+| `delete_account_tokens_for_records` | `security/` | Batch delete tokens by account IDs |
 
 ## Migration Workflow (Alembic)
 
