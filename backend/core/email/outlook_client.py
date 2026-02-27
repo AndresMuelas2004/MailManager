@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 import urllib.error
 import urllib.parse
@@ -364,9 +365,14 @@ class OutlookClient(EmailClient):
             else:
                 sent_at = datetime.now(timezone.utc)
 
+            message_id = msg.get("id", "")
+            raw_mime_url = f"{GRAPH_BASE_URL}/me/messages/{message_id}/$value"
+            raw_bytes = self._graph_raw_request(raw_mime_url)
+            raw_rfc822_b64url = base64.urlsafe_b64encode(raw_bytes).decode("utf-8") or None
+
             unread_emails.append(
                 EmailMessage(
-                    message_id=msg.get("id", ""),
+                    message_id=message_id,
                     thread_id=msg.get("conversationId"),
                     subject=msg.get("subject", ""),
                     sender=sender,
@@ -375,6 +381,7 @@ class OutlookClient(EmailClient):
                     sent_at=sent_at,
                     is_unread=True,
                     provider="outlook",
+                    raw_rfc822_b64url=raw_rfc822_b64url,
                 )
             )
 
@@ -518,6 +525,32 @@ class OutlookClient(EmailClient):
                     return {}
                 raw = response.read().decode("utf-8")
                 return json.loads(raw) if raw else {}
+        except urllib.error.HTTPError as exc:
+            error_body = exc.read().decode("utf-8", errors="replace")
+            detail = error_body
+            try:
+                error_json = json.loads(error_body) if error_body else {}
+                if isinstance(error_json, dict):
+                    err_code = error_json.get("error", {})
+                    if isinstance(err_code, dict):
+                        detail = f"{err_code.get('code', 'error')}: {err_code.get('message', '')}"
+            except (json.JSONDecodeError, TypeError, ValueError):
+                pass
+            raise EmailExternalAPIError(f"Outlook failed Graph API call: {detail}") from exc
+        except urllib.error.URLError as exc:
+            raise EmailExternalAPIError(f"Outlook failed to reach Graph API: {exc.reason}") from exc
+        except Exception as exc:
+            raise EmailExternalAPIError(
+                f"Outlook failed Graph API request ({type(exc).__name__}): {exc}"
+            ) from exc
+
+    def _graph_raw_request(self, url: str) -> bytes:
+        """Make an authenticated GET request and return the raw response bytes."""
+        headers = {"Authorization": f"Bearer {self._access_token}"}
+        req = urllib.request.Request(url, headers=headers, method="GET")
+        try:
+            with urllib.request.urlopen(req, timeout=30) as response:
+                return response.read()
         except urllib.error.HTTPError as exc:
             error_body = exc.read().decode("utf-8", errors="replace")
             detail = error_body
