@@ -9,10 +9,10 @@ from typing import Any
 import psycopg2.errors
 import psycopg2.extras
 
-from api.database import connection
-from api.database.contracts import SessionStore
-from api.database.queries import auth
-from api.errors.exceptions import ApiError, DatabaseQueryError
+from database import connection
+from database.contracts import SessionStore
+from database.queries import auth
+from database.errors.exceptions import DatabaseError, QueryError
 
 
 def _row_to_dict(row: dict[str, Any]) -> dict[str, Any]:
@@ -39,12 +39,12 @@ class PgSessionStore(SessionStore):
                 with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
                     cur.execute(auth.INSERT_SESSION, session)
                     row = cur.fetchone()
-        except ApiError:
+        except DatabaseError:
             raise
         except psycopg2.Error as exc:
-            raise DatabaseQueryError("Failed to create session.") from exc
+            raise QueryError("Failed to create session.") from exc
         except Exception as exc:
-            raise DatabaseQueryError(
+            raise QueryError(
                 f"Unexpected session create error ({type(exc).__name__}): {exc}"
             ) from exc
         return _row_to_dict(row)
@@ -57,12 +57,12 @@ class PgSessionStore(SessionStore):
                     row = cur.fetchone()
         except psycopg2.errors.InvalidTextRepresentation:
             return None
-        except ApiError:
+        except DatabaseError:
             raise
         except psycopg2.Error as exc:
-            raise DatabaseQueryError("Failed to get session.") from exc
+            raise QueryError("Failed to get session.") from exc
         except Exception as exc:
-            raise DatabaseQueryError(
+            raise QueryError(
                 f"Unexpected session get error ({type(exc).__name__}): {exc}"
             ) from exc
         if row is None:
@@ -76,12 +76,12 @@ class PgSessionStore(SessionStore):
                     cur.execute(auth.DELETE_SESSION, {"session_id": session_id})
         except psycopg2.errors.InvalidTextRepresentation:
             return
-        except ApiError:
+        except DatabaseError:
             raise
         except psycopg2.Error as exc:
-            raise DatabaseQueryError("Failed to delete session.") from exc
+            raise QueryError("Failed to delete session.") from exc
         except Exception as exc:
-            raise DatabaseQueryError(
+            raise QueryError(
                 f"Unexpected session delete error ({type(exc).__name__}): {exc}"
             ) from exc
 
@@ -90,12 +90,12 @@ class PgSessionStore(SessionStore):
             with connection.get_connection() as conn:
                 with conn.cursor() as cur:
                     cur.execute(auth.DELETE_EXPIRED_SESSIONS)
-        except ApiError:
+        except DatabaseError:
             raise
         except psycopg2.Error as exc:
-            raise DatabaseQueryError("Failed to delete expired sessions.") from exc
+            raise QueryError("Failed to delete expired sessions.") from exc
         except Exception as exc:
-            raise DatabaseQueryError(
+            raise QueryError(
                 f"Unexpected session delete_expired error ({type(exc).__name__}): {exc}"
             ) from exc
 

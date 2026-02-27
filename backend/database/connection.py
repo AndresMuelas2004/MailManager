@@ -10,8 +10,8 @@ from collections.abc import Iterator
 import psycopg2
 from psycopg2 import pool
 
-from api.database.settings import get_database_settings
-from api.errors.exceptions import DatabaseConnectionError
+from database.settings import get_database_settings
+from database.errors.exceptions import ConnectionPoolError
 
 
 _pool: pool.ThreadedConnectionPool | None = None
@@ -30,11 +30,11 @@ def _get_pool() -> pool.ThreadedConnectionPool:
                 application_name=cfg.application_name,
             )
         except psycopg2.Error as exc:
-            raise DatabaseConnectionError(
+            raise ConnectionPoolError(
                 "Failed to create database connection pool."
             ) from exc
         except Exception as exc:
-            raise DatabaseConnectionError(
+            raise ConnectionPoolError(
                 f"Unexpected connection pool error ({type(exc).__name__}): {exc}"
             ) from exc
     return _pool
@@ -49,11 +49,11 @@ def get_connection() -> Iterator:
     try:
         conn = p.getconn()
     except psycopg2.Error as exc:
-        raise DatabaseConnectionError(
+        raise ConnectionPoolError(
             "Failed to get connection from pool."
         ) from exc
     except Exception as exc:
-        raise DatabaseConnectionError(
+        raise ConnectionPoolError(
             f"Unexpected pool error ({type(exc).__name__}): {exc}"
         ) from exc
     try:

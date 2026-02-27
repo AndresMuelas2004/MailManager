@@ -36,13 +36,13 @@ except ModuleNotFoundError:  # pragma: no cover - optional local dependency
                 loaded = True
         return loaded
 
-from api.database import close_pool, run_startup_migrations_if_enabled, warmup_connection
+from database import close_pool, run_startup_migrations_if_enabled, warmup_connection
 from api.errors.handlers import register_error_handlers
-from api.routers.accounts import router as accounts_router
-from api.routers.auth import router as auth_router
-from api.routers.emails import router as emails_router
-from api.routers.health import router as health_router
-from api.routers.mailboxes import router as mailboxes_router
+from api.routers.accounts_routers import router as accounts_router
+from api.routers.auth_routers import router as auth_router
+from api.routers.emails_routers import router as emails_router
+from api.routers.health_routers import router as health_router
+from api.routers.mailboxes_routers import router as mailboxes_router
 
 load_dotenv(Path(__file__).resolve().parents[1] / ".env", override=False)
 
@@ -61,9 +61,10 @@ def create_app() -> FastAPI:
     Build the FastAPI application with modular routers and error handlers.
     """
     app = FastAPI(title="MailApp API", lifespan=lifespan)
+    allowed_origins = os.environ.get("CORS_ALLOWED_ORIGINS", "http://localhost:5173")
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["http://localhost:5173"],
+        allow_origins=[o.strip() for o in allowed_origins.split(",")],
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],

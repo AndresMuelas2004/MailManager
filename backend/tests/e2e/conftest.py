@@ -14,13 +14,13 @@ import pytest
 from fastapi.testclient import TestClient
 
 from api.app import create_app
-from api.database import connection as connection_module
-from api.database.migrations.runner import ensure_schema_at_head
-from api.database.repositories import account_repository as account_repo_module
-from api.database.repositories import mailbox_repository as mailbox_repo_module
-from api.database.repositories import session_repository as session_repo_module
-from api.database.repositories import user_repository as user_repo_module
-_ALEMBIC_INI_PATH = Path(__file__).resolve().parents[2] / "api" / "database" / "alembic.ini"
+from database import connection as connection_module
+from database.migrations.runner import ensure_schema_at_head
+from database.repositories import account_repository as account_repo_module
+from database.repositories import mailbox_repository as mailbox_repo_module
+from database.repositories import session_repository as session_repo_module
+from database.repositories import user_repository as user_repo_module
+_ALEMBIC_INI_PATH = Path(__file__).resolve().parents[2] / "database" / "alembic.ini"
 
 try:
     from alembic import command

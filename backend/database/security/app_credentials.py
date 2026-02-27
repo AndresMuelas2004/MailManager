@@ -8,8 +8,8 @@ import json
 from pathlib import Path
 from typing import Any
 
-from api.database.settings import get_provider_credentials_path
-from api.errors.exceptions import AccountMisconfigured, CredentialFileError
+from database.settings import get_provider_credentials_path
+from database.errors.exceptions import CredentialReadError, UnknownProviderError
 
 
 def load_app_credentials(provider: str) -> dict[str, Any]:
@@ -19,7 +19,7 @@ def load_app_credentials(provider: str) -> dict[str, Any]:
     normalized_provider = (provider or "").strip().lower()
     credentials_path = get_provider_credentials_path(normalized_provider)
     if credentials_path is None:
-        raise AccountMisconfigured(f"Unknown provider '{provider}'.")
+        raise UnknownProviderError(f"Unknown provider '{provider}'.")
 
     config_path = Path(credentials_path)
     try:
@@ -28,12 +28,12 @@ def load_app_credentials(provider: str) -> dict[str, Any]:
             return {}
         data = json.loads(raw)
     except (OSError, json.JSONDecodeError) as exc:
-        raise CredentialFileError(
+        raise CredentialReadError(
             "Failed to read config storage file.", {"path": str(config_path)}
         ) from exc
 
     if not isinstance(data, dict):
-        raise CredentialFileError(
+        raise CredentialReadError(
             "Config storage file is corrupted.", {"path": str(config_path)}
         )
 

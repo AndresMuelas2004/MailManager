@@ -4,6 +4,7 @@ Shared helpers used across service modules.
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from typing import Any, Iterable
 
 from pydantic import SecretStr
@@ -12,18 +13,21 @@ from core.email.email_manager import EmailManager
 from core.email.errors import (
     CoreError,
     EmailAccountNotFoundError,
+    EmailAccountRecordError,
     EmailAuthError,
     EmailConfigError,
+    EmailDuplicateAccountLabelError,
     EmailExternalAPIError,
+    EmailInvalidCredentialsDataError,
+    EmailInvalidExpiryError,
+    EmailInvalidTokenDataError,
     EmailMissingAppCredentialsError,
     EmailMissingRefreshTokenError,
     EmailMissingTokenError,
     EmailNotAuthenticatedError,
+    EmailProviderConfigError,
     EmailRecipientsMissingError,
     EmailRefreshFailedError,
-    EmailAccountRecordError,
-    EmailProviderConfigError,
-    EmailDuplicateAccountLabelError,
 )
 
 from api.errors.exceptions import (
@@ -32,13 +36,34 @@ from api.errors.exceptions import (
     AccountNotConnected,
     AccountNotFound,
     ApiError,
-    EmailSendError,
+    AppCredentialsInvalid,
+    AppCredentialsMissing,
+    CredentialFileError,
+    DatabaseConnectionError,
+    DatabaseMigrationError,
+    DatabaseQueryError,
     EnvVarError,
     ExternalAPIError,
     Forbidden,
     MailboxNotFound,
+    RecipientsMissing,
+    TokenDecryptionError,
+    TokenIntegrityError,
 )
-from api.database import account_store, load_app_credentials, mailbox_store
+from database import (
+    account_store,
+    ConnectionPoolError,
+    CredentialReadError,
+    DatabaseError,
+    load_app_credentials,
+    mailbox_store,
+    MigrationError,
+    QueryError,
+    SettingsError,
+    TokenDecryptError,
+    TokenValidationError,
+    UnknownProviderError,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -52,14 +77,34 @@ _CORE_TO_API_MAP: list[tuple[type[CoreError], type[ApiError]]] = [
     (EmailRefreshFailedError, AccountNotConnected),
     (EmailNotAuthenticatedError, AccountNotConnected),
     (EmailAuthError, AccountNotConnected),
+    (EmailInvalidExpiryError, AccountMisconfigured),
+    (EmailInvalidCredentialsDataError, AppCredentialsInvalid),
+    (EmailInvalidTokenDataError, AccountMisconfigured),
     (EmailAccountRecordError, AccountMisconfigured),
     (EmailProviderConfigError, AccountMisconfigured),
-    (EmailMissingAppCredentialsError, AccountMisconfigured),
+    (EmailMissingAppCredentialsError, AppCredentialsMissing),
     (EmailDuplicateAccountLabelError, AccountMisconfigured),
     (EmailConfigError, AccountMisconfigured),
-    (EmailRecipientsMissingError, EmailSendError),
+    (EmailRecipientsMissingError, RecipientsMissing),
     (EmailExternalAPIError, ExternalAPIError),
     (CoreError, ApiError),
+]
+
+
+# ---------------------------------------------------------------------------
+# Database → API error mapping (most specific first; evaluated with isinstance)
+# ---------------------------------------------------------------------------
+
+_DB_TO_API_MAP: list[tuple[type[DatabaseError], type[ApiError]]] = [
+    (ConnectionPoolError, DatabaseConnectionError),
+    (QueryError, DatabaseQueryError),
+    (MigrationError, DatabaseMigrationError),
+    (SettingsError, EnvVarError),
+    (TokenDecryptError, TokenDecryptionError),
+    (TokenValidationError, TokenIntegrityError),
+    (CredentialReadError, CredentialFileError),
+    (UnknownProviderError, AccountMisconfigured),
+    (DatabaseError, ApiError),
 ]
 
 
@@ -88,6 +133,46 @@ def translate_core_error(
     return fallback(str(exc) or "Unexpected error.", context or {})
 
 
+def translate_database_error(
+    exc: Exception,
+    *,
+    fallback: type[ApiError] = ApiError,
+    context: dict[str, Any] | None = None,
+) -> ApiError:
+    """
+    Translate a DatabaseError into the corresponding ApiError using the mapping.
+
+    If *exc* is a DatabaseError subclass the first matching entry in
+    ``_DB_TO_API_MAP`` is used.  Otherwise *fallback* is instantiated.
+    """
+    if isinstance(exc, DatabaseError):
+        for db_type, api_type in _DB_TO_API_MAP:
+            if isinstance(exc, db_type):
+                detail = exc.detail if hasattr(exc, "detail") else {}
+                if context:
+                    detail = {**detail, **(context or {})}
+                detail["db_code"] = exc.code
+                return api_type(exc.message, detail)
+        # Unreachable when DatabaseError is in the map, but safe fallback.
+        return fallback(str(exc), {**(context or {}), "db_code": exc.code})
+    return fallback(str(exc) or "Unexpected database error.", context or {})
+
+
+@contextmanager
+def catch_database_errors(
+    *,
+    fallback: type[ApiError] = ApiError,
+    context: dict[str, Any] | None = None,
+):
+    """
+    Context manager that catches ``DatabaseError`` and re-raises as ``ApiError``.
+    """
+    try:
+        yield
+    except DatabaseError as exc:
+        raise translate_database_error(exc, fallback=fallback, context=context) from exc
+
+
 def translate_connect_error(
     exc: Exception,
     *,
@@ -114,7 +199,8 @@ def ensure_mailbox_access(mailbox_id: str, user_id: str) -> dict[str, Any]:
 
     Returns the mailbox record so callers can reuse it without a second fetch.
     """
-    record = mailbox_store.get(mailbox_id)
+    with catch_database_errors():
+        record = mailbox_store.get(mailbox_id)
     if record is None:
         raise MailboxNotFound(f"Mailbox '{mailbox_id}' not found.")
     if record.get("owner_user_id") != user_id:
@@ -192,7 +278,8 @@ def load_wrapped_app_credentials(provider: str) -> dict[str, Any]:
     """
     Load app credentials for *provider* and wrap the client_secret as SecretStr.
     """
-    credentials = load_app_credentials(provider)
+    with catch_database_errors():
+        credentials = load_app_credentials(provider)
     payload = dict(credentials) if isinstance(credentials, dict) else {}
     if "client_secret" in payload:
         payload["client_secret"] = _wrap_secret(payload.get("client_secret"))
@@ -205,7 +292,8 @@ def load_wrapped_account_tokens(
     """
     Load account tokens for *provider* and wrap access/refresh tokens as SecretStr.
     """
-    token_data = account_store.get_tokens(mailbox_id, account_id, provider)
+    with catch_database_errors():
+        token_data = account_store.get_tokens(mailbox_id, account_id, provider)
     payload = dict(token_data) if isinstance(token_data, dict) else {}
     if "access_token" in payload:
         payload["access_token"] = _wrap_secret(payload.get("access_token"))

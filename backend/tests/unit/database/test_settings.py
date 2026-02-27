@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from api.database import settings
-from api.errors.exceptions import EnvVarError
+from database import settings
+from database.errors.exceptions import SettingsError
 
 
 def test_get_database_settings_uses_defaults(monkeypatch):
@@ -26,7 +26,7 @@ def test_get_database_settings_validates_pool_range(monkeypatch):
     monkeypatch.setenv("DB_POOL_MIN_CONN", "12")
     monkeypatch.setenv("DB_POOL_MAX_CONN", "5")
 
-    with pytest.raises(EnvVarError):
+    with pytest.raises(SettingsError):
         settings.get_database_settings()
 
 
@@ -38,6 +38,5 @@ def test_token_plaintext_fallback_parses_boolean(monkeypatch):
 def test_token_plaintext_fallback_rejects_invalid_boolean(monkeypatch):
     monkeypatch.setenv("TOKEN_PLAINTEXT_FALLBACK_ENABLED", "sometimes")
 
-    with pytest.raises(EnvVarError):
+    with pytest.raises(SettingsError):
         settings.is_token_plaintext_fallback_enabled()
-

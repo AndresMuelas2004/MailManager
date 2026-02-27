@@ -71,6 +71,18 @@ class AccountMisconfigured(ApiError):
     code = "account_misconfigured"
 
 
+class AppCredentialsInvalid(ApiError):
+    code = "app_credentials_invalid"
+
+
+class AppCredentialsMissing(ApiError):
+    code = "app_credentials_missing"
+
+
+class RecipientsMissing(ApiError):
+    code = "recipients_missing"
+
+
 class EnvVarError(ApiError):
     code = "env_var_error"
 

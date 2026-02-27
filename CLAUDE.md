@@ -57,13 +57,13 @@ The layered architecture below is **mandatory**. Every change must preserve it. 
 Routers (FastAPI)
   → Routers helpers (api/routers/routers_helpers.py)  — e.g. require_session → user_id
   → Services (api/services/)
-    → Auth layer (auth/)  — Google OIDC verification, auth settings
-    → Database (api/database/)
+    → Auth layer (auth/)      — Google OIDC verification, auth settings
+    → Database (database/)    — PostgreSQL persistence (independent layer)
     → Core (core/)
       → EmailManager (core/email/email_manager.py)
         → EmailClients (GmailClient, OutlookClient)
 ```
-Only Services can talk with manager, Database, or Auth. Auth (`auth/`) is a framework-agnostic layer parallel to `core/email/` — it has no imports from `api/`. Database cannot communicate with core.
+Only Services can talk with manager, Database, or Auth. `core/`, `database/`, and `auth/` are three symmetric, framework-agnostic layers under `backend/` — none of them import from `api/`. Database cannot communicate with core.
 
 ### Layer Rules
 
@@ -71,7 +71,7 @@ Only Services can talk with manager, Database, or Auth. Auth (`auth/`) is a fram
 - **Router helpers** (`api/routers/routers_helpers.py`) — shared FastAPI `Depends` callables used across all routers. `require_session` validates the session cookie via `auth_service` and returns `user_id`. All routes use `Depends(require_session)` except `/health` and the auth endpoints (`/auth/google`, `/auth/logout`) which handle session management directly.
 - **Services** (`api/services/`) — orchestration, validation, error mapping. Always call `ensure_mailbox_access(mailbox_id, user_id)` before any mailbox-scoped action. Build provider clients exclusively via `build_manager_for_accounts()` — never instantiate `EmailClient` subclasses directly in services or routers. `auth_service` handles Google OIDC login (delegating token verification to `auth/`), session/cookie management, and user lookup.
 - **Auth** (`auth/`) — framework-agnostic authentication layer, parallel to `core/email/`. Contains `auth/settings.py` (auth environment settings, raises `ValueError`) and `auth/google_auth/google.py` (`verify_google_token` — pure Google OIDC verification). This layer has **no imports from `api/`**. Services catch `ValueError` from auth and re-raise as `EnvVarError` or `Unauthorized`.
-- **Database** (`api/database/`) — PostgreSQL persistence layer. The interfaces `MailboxStore` / `AccountStore` / `UserStore` / `SessionStore` in `contracts.py` are stable contracts. `repositories/` implements them with SQL queries from `queries/`. `security/app_credentials.py` loads provider app credentials from file-based env vars and `security/token_crypto.py` provides Fernet encrypt/decrypt utilities. All public symbols are re-exported from the package `__init__.py` so consumers import from `api.database`. See `backend/api/database/DATABASE.md` for a detailed description of each file.
+- **Database** (`database/`) — framework-agnostic PostgreSQL persistence layer, parallel to `core/email/` and `auth/`. Has **no imports from `api/`**. Uses its own error hierarchy (`database/errors/exceptions.py`: `DatabaseError` base → `ConnectionPoolError`, `QueryError`, `MigrationError`, `SettingsError`, `TokenDecryptError`, `TokenValidationError`, `CredentialReadError`, `UnknownProviderError`). Services translate `DatabaseError` into `ApiError` via `catch_database_errors` / `translate_database_error` (same pattern as `translate_core_error`). The interfaces `MailboxStore` / `AccountStore` / `UserStore` / `SessionStore` in `contracts.py` are stable contracts. `repositories/` implements them with SQL queries from `queries/`. `security/app_credentials.py` loads provider app credentials from file-based env vars and `security/token_crypto.py` provides Fernet encrypt/decrypt utilities. All public symbols are re-exported from the package `__init__.py` so consumers import from `database`. See `backend/database/DATABASE.md` for a detailed description of each file.
 - **Core** (`core/email/`) — provider-specific logic, multi-account orchestration, and future AI features. `EmailManager` coordinates `EmailClient` instances (`GmailClient`, `OutlookClient`). Core knows nothing about the API layer.
 
 ### Authentication
@@ -86,15 +86,17 @@ Only Services can talk with manager, Database, or Auth. Auth (`auth/`) is a fram
 - For any action scoped to a mailbox, call `ensure_mailbox_access(mailbox_id, user_id)` first.
 - Build provider clients with `build_manager_for_accounts()`; never instantiate `EmailClient` subclasses directly in services or routers.
 - Only raise `ApiError` subclasses from services/routers; `api/errors/handlers.py` maps them to HTTP status codes.
+- Wrap all database calls in services with `catch_database_errors(*, fallback, context)` — a context manager that catches `DatabaseError` and translates it to the corresponding `ApiError` via `translate_database_error` and `_DB_TO_API_MAP` (in `services_helpers.py`). This mirrors the `translate_core_error` / `_CORE_TO_API_MAP` pattern for core errors.
 - Schemas in `api/schemas/*` are the input/output contract for routers.
 - Wrap secrets with the `load_wrapped_*` helpers; unwrap with `unwrap_secret()` before persisting.
 
-### Error Hierarchy — Two Separate Trees
+### Error Hierarchy — Three Separate Trees
 
-- **API layer** (`api/errors/exceptions.py`): `ApiError` base → `MailboxNotFound`, `AccountNotFound`, `UserNotFound`, `AccountMisconfigured`, `Unauthorized`, `Forbidden`, `DatabaseConnectionError`, `DatabaseQueryError`, `DatabaseMigrationError`, `TokenDecryptionError`, `TokenIntegrityError`, `CredentialFileError`, etc. Mapped to HTTP status codes in `api/errors/handlers.py` via `_STATUS_MAP`. Unknown providers are handled via `AccountMisconfigured` / `EmailProviderConfigError`. See `backend/api/database/DATABASE.md` § Error Handling for the full database exception table, capture technique, and per-module mapping.
-- **Core layer** (`core/email/errors.py`): `CoreError` base → `EmailError` → `EmailAuthError`, `EmailAccountNotFoundError`, etc. Services catch these and re-raise as `ApiError` subclasses. See `backend/core/email/CLIENT_GUIDE.md` § 7 for the full core error table, capture technique, and provider-specific patterns.
+- **API layer** (`api/errors/exceptions.py`): `ApiError` base → `MailboxNotFound`, `AccountNotFound`, `UserNotFound`, `AccountMisconfigured`, `AppCredentialsMissing`, `RecipientsMissing`, `Unauthorized`, `Forbidden`, `DatabaseConnectionError`, `DatabaseQueryError`, `DatabaseMigrationError`, `TokenDecryptionError`, `TokenIntegrityError`, `CredentialFileError`, etc. Mapped to HTTP status codes in `api/errors/handlers.py` via `_STATUS_MAP`. These are the HTTP-facing errors — services are the only layer that raises them.
+- **Database layer** (`database/errors/exceptions.py`): `DatabaseError` base → `ConnectionPoolError`, `QueryError`, `MigrationError`, `SettingsError`, `TokenDecryptError`, `TokenValidationError`, `CredentialReadError`, `UnknownProviderError`. Services translate these into `ApiError` subclasses via `_DB_TO_API_MAP` and `catch_database_errors` context manager in `services_helpers.py`. See `backend/database/DATABASE.md` § Error Handling for the full exception table, capture technique, and per-module mapping.
+- **Core layer** (`core/email/errors.py`): `CoreError` base → `EmailError` → `EmailAuthError`, `EmailAccountNotFoundError`, etc. Services catch these and re-raise as `ApiError` subclasses via `_CORE_TO_API_MAP` and `translate_core_error`. See `backend/core/email/CLIENT_GUIDE.md` § 7 for the full core error table, capture technique, and provider-specific patterns.
 
-**Hard rules**: only raise `ApiError` subclasses explicitly from `api/database/` and `api/services/` — never from routers, which must stay logic-free. Core must never import API exceptions. API must never raise `CoreError` directly to the client. Prefer explicit error handling with meaningful messages consistent with `ApiError` patterns. (FastAPI's request validation errors — HTTP 422 — are raised automatically by Pydantic schema parsing and are framework-managed; no explicit raise is needed or expected for them.)
+**Hard rules**: only raise `ApiError` subclasses from `api/services/` — never from routers (which must stay logic-free), never from `database/` or `core/`. Core must never import API or database exceptions. Database must never import API or core exceptions. API must never raise `CoreError` or `DatabaseError` directly to the client. Prefer explicit error handling with meaningful messages consistent with each layer's error patterns. (FastAPI's request validation errors — HTTP 422 — are raised automatically by Pydantic schema parsing and are framework-managed; no explicit raise is needed or expected for them.)
 
 ### Email Core Flows and Authentication
 
@@ -114,8 +116,8 @@ Only Services can talk with manager, Database, or Auth. Auth (`auth/`) is a fram
 
 ### Database Details
 
-- Persistence uses PostgreSQL via `psycopg2`. Connection pool is managed in `api/database/connection.py` with lazy initialisation; `warmup_connection()` is called at application startup via FastAPI lifespan.
-- Tables: `users`, `mailboxes`, `accounts`, `sessions` — defined in `api/database/schema.sql` (DDL is idempotent with `CREATE TABLE IF NOT EXISTS`). Token columns live directly in the `accounts` table.
+- Persistence uses PostgreSQL via `psycopg2`. Connection pool is managed in `database/connection.py` with lazy initialisation; `warmup_connection()` is called at application startup via FastAPI lifespan.
+- Tables: `users`, `mailboxes`, `accounts`, `sessions` — defined in `database/schema.sql` (DDL is idempotent with `CREATE TABLE IF NOT EXISTS`). Token columns live directly in the `accounts` table.
 - Foreign keys use `ON DELETE CASCADE`: deleting a user cascades to their mailboxes → accounts; deleting a user also cascades to their sessions.
 - `created_at` timestamps are generated by PostgreSQL (`DEFAULT now()`), not by Python code.
 - `account_store` (`PgAccountStore`) handles account CRUD and token persistence via `get_tokens()` and `upsert_tokens()`. `load_app_credentials` reads provider app credentials from file-based env var paths.
@@ -128,8 +130,9 @@ Only Services can talk with manager, Database, or Auth. Auth (`auth/`) is a fram
 - `AUTH_COOKIE_SECURE` — set `true` for HTTPS-only session cookies (default `false`).
 - `MIA_GMAIL_CREDENTIALS_PATH` — path to Gmail OAuth client JSON (supports `installed` or `web` blocks).
 - `MIA_OUTLOOK_CREDENTIALS_PATH` — path to Outlook app credentials JSON (flat dict with `client_id`, `client_secret`, `tenant`, `redirect_uri`, `scopes`, and optionally `provider`).
+- `CORS_ALLOWED_ORIGINS` — comma-separated list of allowed CORS origins (default `http://localhost:5173`).
 - `VITE_API_BASE_URL` — (frontend, optional) overrides the default backend URL (`http://localhost:8000`).
-- Missing any required env var must raise `EnvVarError` (in `api/`) or `ValueError` (in `auth/`; services translate to `EnvVarError`). Auth-related env vars (`GOOGLE_CLIENT_ID`, `AUTH_SESSION_LIFETIME_DAYS`, `AUTH_COOKIE_SECURE`) are read by `auth/settings.py`.
+- Missing any required env var must raise `EnvVarError` (in `api/`), `SettingsError` (in `database/`; services translate to `EnvVarError`), or `ValueError` (in `auth/`; services translate to `EnvVarError`). Auth-related env vars (`GOOGLE_CLIENT_ID`, `AUTH_SESSION_LIFETIME_DAYS`, `AUTH_COOKIE_SECURE`) are read by `auth/settings.py`. Database-related env vars are read by `database/settings.py`.
 - The backend loads `backend/.env` via `python-dotenv` (`override=False`) so OS/Docker env vars take precedence. Template: `backend/.env.example`. Frontend template: `frontend/.env.example`.
 
 ### Secrets Handling
@@ -147,7 +150,7 @@ Wrap secrets with `load_wrapped_app_credentials(provider)` / `load_wrapped_accou
 
 - `src/api/` — HTTP client (`client/http.ts`), typed endpoints (`endpoints/`), DTOs (`types/dto.ts`).
 - `src/features/`, `src/pages/`, `src/components/` — feature-based React organization.
-- CORS is configured to allow `http://localhost:5173`.
+- CORS is configured via `CORS_ALLOWED_ORIGINS` env var (defaults to `http://localhost:5173`).
 
 ### Docker
 

@@ -1,0 +1,39 @@
+"""
+Database package public surface.
+"""
+
+from database.connection import close_pool
+from database.errors import (
+    ConnectionPoolError,
+    CredentialReadError,
+    DatabaseError,
+    MigrationError,
+    QueryError,
+    SettingsError,
+    TokenDecryptError,
+    TokenValidationError,
+    UnknownProviderError,
+)
+from database.lifecycle import run_startup_migrations_if_enabled, warmup_connection
+from database.repositories import account_store, mailbox_store, session_store, user_store
+from database.security import load_app_credentials
+
+__all__ = [
+    "account_store",
+    "close_pool",
+    "ConnectionPoolError",
+    "CredentialReadError",
+    "DatabaseError",
+    "load_app_credentials",
+    "mailbox_store",
+    "MigrationError",
+    "QueryError",
+    "run_startup_migrations_if_enabled",
+    "session_store",
+    "SettingsError",
+    "TokenDecryptError",
+    "TokenValidationError",
+    "UnknownProviderError",
+    "user_store",
+    "warmup_connection",
+]

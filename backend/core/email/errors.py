@@ -43,6 +43,21 @@ class EmailProviderConfigError(EmailConfigError):
     default_message = "Provider configuration is invalid."
 
 
+class EmailInvalidExpiryError(EmailConfigError):
+    code = "email_invalid_expiry"
+    default_message = "Invalid or unparseable expiry value."
+
+
+class EmailInvalidCredentialsDataError(EmailConfigError):
+    code = "email_invalid_credentials_data"
+    default_message = "App credentials data is structurally invalid."
+
+
+class EmailInvalidTokenDataError(EmailConfigError):
+    code = "email_invalid_token_data"
+    default_message = "Token data is structurally invalid."
+
+
 class EmailMissingAppCredentialsError(EmailConfigError):
     code = "email_missing_app_credentials"
     default_message = "Missing app credentials."

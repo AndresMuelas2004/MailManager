@@ -8,7 +8,7 @@ from dataclasses import dataclass
 import os
 from pathlib import Path
 
-from api.errors.exceptions import EnvVarError
+from database.errors.exceptions import SettingsError
 
 
 _TRUE_VALUES = {"1", "true", "yes", "on"}
@@ -49,7 +49,7 @@ def _read_bool(name: str, default: bool) -> bool:
         return True
     if normalized in _FALSE_VALUES:
         return False
-    raise EnvVarError(
+    raise SettingsError(
         f"{name} has an invalid boolean value.",
         {"value": raw, "accepted": sorted(_TRUE_VALUES | _FALSE_VALUES)},
     )
@@ -62,9 +62,9 @@ def _read_int(name: str, default: int, *, minimum: int = 1) -> int:
     try:
         value = int(raw.strip())
     except ValueError as exc:
-        raise EnvVarError(f"{name} must be an integer.", {"value": raw}) from exc
+        raise SettingsError(f"{name} must be an integer.", {"value": raw}) from exc
     if value < minimum:
-        raise EnvVarError(f"{name} must be >= {minimum}.", {"value": value})
+        raise SettingsError(f"{name} must be >= {minimum}.", {"value": value})
     return value
 
 
@@ -74,7 +74,7 @@ def get_database_url() -> str:
     """
     url = os.getenv("DATABASE_URL", "").strip()
     if not url:
-        raise EnvVarError("DATABASE_URL is not set.")
+        raise SettingsError("DATABASE_URL is not set.")
     return url
 
 
@@ -85,7 +85,7 @@ def get_database_settings() -> DatabaseSettings:
     pool_min = _read_int("DB_POOL_MIN_CONN", _DEFAULT_DB_POOL_MIN, minimum=1)
     pool_max = _read_int("DB_POOL_MAX_CONN", _DEFAULT_DB_POOL_MAX, minimum=1)
     if pool_min > pool_max:
-        raise EnvVarError(
+        raise SettingsError(
             "DB pool settings are invalid: DB_POOL_MIN_CONN cannot be greater than DB_POOL_MAX_CONN.",
             {"DB_POOL_MIN_CONN": pool_min, "DB_POOL_MAX_CONN": pool_max},
         )
@@ -133,7 +133,7 @@ def get_token_encryption_key(*, required: bool = True) -> str | None:
     if key:
         return key
     if required:
-        raise EnvVarError("TOKEN_ENCRYPTION_KEY is not set.")
+        raise SettingsError("TOKEN_ENCRYPTION_KEY is not set.")
     return None
 
 
@@ -168,7 +168,7 @@ def get_provider_credentials_path(provider: str) -> str | None:
         return None
     path = os.getenv(env_var, "").strip()
     if not path:
-        raise EnvVarError(f"{env_var} is not set.")
+        raise SettingsError(f"{env_var} is not set.")
     return path
 
 
@@ -187,4 +187,3 @@ def get_alembic_ini_path() -> Path:
     if raw:
         return Path(raw)
     return Path(__file__).resolve().parent / "alembic.ini"
-

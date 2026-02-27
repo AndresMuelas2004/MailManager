@@ -6,9 +6,9 @@ import psycopg2
 import psycopg2.errors
 import pytest
 
-from api.database.repositories import session_repository as session_module
-from api.errors.exceptions import DatabaseConnectionError, DatabaseQueryError
-from tests.unit.api.database.conftest import FakeCursor, patch_connection, patch_connection_error
+from database.repositories import session_repository as session_module
+from database.errors.exceptions import ConnectionPoolError, QueryError
+from tests.shared.database_fakes import FakeCursor, patch_connection, patch_connection_error
 
 
 def _fake_row(
@@ -37,30 +37,30 @@ def test_create_happy_path(monkeypatch):
     assert isinstance(result["expires_at"], str)
 
 
-def test_create_raises_database_query_error_on_psycopg2(monkeypatch):
+def test_create_raises_query_error_on_psycopg2(monkeypatch):
     cursor = FakeCursor(execute_side_effect=psycopg2.OperationalError("fail"))
     patch_connection(monkeypatch, session_module, [cursor])
 
-    with pytest.raises(DatabaseQueryError, match="Failed to create session"):
+    with pytest.raises(QueryError, match="Failed to create session"):
         session_module.session_store.create(
             {"session_id": "sess1", "user_id": "u1", "expires_at": "2025-02-01"}
         )
 
 
-def test_create_raises_database_query_error_on_generic(monkeypatch):
+def test_create_raises_query_error_on_generic(monkeypatch):
     cursor = FakeCursor(execute_side_effect=RuntimeError("boom"))
     patch_connection(monkeypatch, session_module, [cursor])
 
-    with pytest.raises(DatabaseQueryError, match="RuntimeError"):
+    with pytest.raises(QueryError, match="RuntimeError"):
         session_module.session_store.create(
             {"session_id": "sess1", "user_id": "u1", "expires_at": "2025-02-01"}
         )
 
 
-def test_create_propagates_api_error(monkeypatch):
-    patch_connection_error(monkeypatch, session_module, DatabaseConnectionError("pool down"))
+def test_create_propagates_connection_pool_error(monkeypatch):
+    patch_connection_error(monkeypatch, session_module, ConnectionPoolError("pool down"))
 
-    with pytest.raises(DatabaseConnectionError, match="pool down"):
+    with pytest.raises(ConnectionPoolError, match="pool down"):
         session_module.session_store.create(
             {"session_id": "sess1", "user_id": "u1", "expires_at": "2025-02-01"}
         )
@@ -92,19 +92,19 @@ def test_get_returns_none_on_invalid_text(monkeypatch):
     assert session_module.session_store.get("not-a-uuid") is None
 
 
-def test_get_raises_database_query_error_on_psycopg2(monkeypatch):
+def test_get_raises_query_error_on_psycopg2(monkeypatch):
     cursor = FakeCursor(execute_side_effect=psycopg2.OperationalError("fail"))
     patch_connection(monkeypatch, session_module, [cursor])
 
-    with pytest.raises(DatabaseQueryError, match="Failed to get session"):
+    with pytest.raises(QueryError, match="Failed to get session"):
         session_module.session_store.get("sess1")
 
 
-def test_get_raises_database_query_error_on_generic(monkeypatch):
+def test_get_raises_query_error_on_generic(monkeypatch):
     cursor = FakeCursor(execute_side_effect=RuntimeError("boom"))
     patch_connection(monkeypatch, session_module, [cursor])
 
-    with pytest.raises(DatabaseQueryError, match="RuntimeError"):
+    with pytest.raises(QueryError, match="RuntimeError"):
         session_module.session_store.get("sess1")
 
 
@@ -126,19 +126,19 @@ def test_delete_noop_on_invalid_text(monkeypatch):
     session_module.session_store.delete("not-a-uuid")
 
 
-def test_delete_raises_database_query_error_on_psycopg2(monkeypatch):
+def test_delete_raises_query_error_on_psycopg2(monkeypatch):
     cursor = FakeCursor(execute_side_effect=psycopg2.OperationalError("fail"))
     patch_connection(monkeypatch, session_module, [cursor])
 
-    with pytest.raises(DatabaseQueryError, match="Failed to delete session"):
+    with pytest.raises(QueryError, match="Failed to delete session"):
         session_module.session_store.delete("sess1")
 
 
-def test_delete_raises_database_query_error_on_generic(monkeypatch):
+def test_delete_raises_query_error_on_generic(monkeypatch):
     cursor = FakeCursor(execute_side_effect=RuntimeError("unexpected"))
     patch_connection(monkeypatch, session_module, [cursor])
 
-    with pytest.raises(DatabaseQueryError, match="RuntimeError"):
+    with pytest.raises(QueryError, match="RuntimeError"):
         session_module.session_store.delete("sess1")
 
 
@@ -153,17 +153,17 @@ def test_delete_expired_happy_path(monkeypatch):
     assert len(cursor.executed) == 1
 
 
-def test_delete_expired_raises_database_query_error_on_psycopg2(monkeypatch):
+def test_delete_expired_raises_query_error_on_psycopg2(monkeypatch):
     cursor = FakeCursor(execute_side_effect=psycopg2.OperationalError("fail"))
     patch_connection(monkeypatch, session_module, [cursor])
 
-    with pytest.raises(DatabaseQueryError, match="Failed to delete expired sessions"):
+    with pytest.raises(QueryError, match="Failed to delete expired sessions"):
         session_module.session_store.delete_expired()
 
 
-def test_delete_expired_raises_database_query_error_on_generic(monkeypatch):
+def test_delete_expired_raises_query_error_on_generic(monkeypatch):
     cursor = FakeCursor(execute_side_effect=RuntimeError("boom"))
     patch_connection(monkeypatch, session_module, [cursor])
 
-    with pytest.raises(DatabaseQueryError, match="RuntimeError"):
+    with pytest.raises(QueryError, match="RuntimeError"):
         session_module.session_store.delete_expired()

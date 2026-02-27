@@ -9,10 +9,10 @@ from typing import Any
 import psycopg2.errors
 import psycopg2.extras
 
-from api.database import connection
-from api.database.contracts import UserStore
-from api.database.queries import auth
-from api.errors.exceptions import ApiError, DatabaseQueryError
+from database import connection
+from database.contracts import UserStore
+from database.queries import auth
+from database.errors.exceptions import DatabaseError, QueryError
 
 
 def _row_to_dict(row: dict[str, Any]) -> dict[str, Any]:
@@ -35,12 +35,12 @@ class PgUserStore(UserStore):
                 with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
                     cur.execute(auth.UPSERT_USER, user)
                     row = cur.fetchone()
-        except ApiError:
+        except DatabaseError:
             raise
         except psycopg2.Error as exc:
-            raise DatabaseQueryError("Failed to upsert user.") from exc
+            raise QueryError("Failed to upsert user.") from exc
         except Exception as exc:
-            raise DatabaseQueryError(
+            raise QueryError(
                 f"Unexpected user upsert error ({type(exc).__name__}): {exc}"
             ) from exc
         return _row_to_dict(row)
@@ -53,12 +53,12 @@ class PgUserStore(UserStore):
                     row = cur.fetchone()
         except psycopg2.errors.InvalidTextRepresentation:
             return None
-        except ApiError:
+        except DatabaseError:
             raise
         except psycopg2.Error as exc:
-            raise DatabaseQueryError("Failed to get user.") from exc
+            raise QueryError("Failed to get user.") from exc
         except Exception as exc:
-            raise DatabaseQueryError(
+            raise QueryError(
                 f"Unexpected user get error ({type(exc).__name__}): {exc}"
             ) from exc
         if row is None:
@@ -71,12 +71,12 @@ class PgUserStore(UserStore):
                 with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
                     cur.execute(auth.GET_USER_BY_GOOGLE_SUB, {"google_sub": google_sub})
                     row = cur.fetchone()
-        except ApiError:
+        except DatabaseError:
             raise
         except psycopg2.Error as exc:
-            raise DatabaseQueryError("Failed to get user by google_sub.") from exc
+            raise QueryError("Failed to get user by google_sub.") from exc
         except Exception as exc:
-            raise DatabaseQueryError(
+            raise QueryError(
                 f"Unexpected user get_by_google_sub error ({type(exc).__name__}): {exc}"
             ) from exc
         if row is None:
@@ -91,12 +91,12 @@ class PgUserStore(UserStore):
                     return cur.rowcount > 0
         except psycopg2.errors.InvalidTextRepresentation:
             return False
-        except ApiError:
+        except DatabaseError:
             raise
         except psycopg2.Error as exc:
-            raise DatabaseQueryError("Failed to delete user.") from exc
+            raise QueryError("Failed to delete user.") from exc
         except Exception as exc:
-            raise DatabaseQueryError(
+            raise QueryError(
                 f"Unexpected user delete error ({type(exc).__name__}): {exc}"
             ) from exc
 

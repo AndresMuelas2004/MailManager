@@ -12,7 +12,7 @@ BACKEND_PATH = Path(__file__).resolve().parents[3]
 if str(BACKEND_PATH) not in sys.path:
     sys.path.insert(0, str(BACKEND_PATH))
 
-from api.database.settings import get_database_url
+from database.settings import get_database_url
 
 
 config = context.config
@@ -64,4 +64,3 @@ if context.is_offline_mode():
     run_migrations_offline()
 else:
     run_migrations_online()
-

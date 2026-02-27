@@ -4,8 +4,8 @@ import json
 
 import pytest
 
-from api.database.security.app_credentials import load_app_credentials
-from api.errors.exceptions import AccountMisconfigured, CredentialFileError
+from database.security.app_credentials import load_app_credentials
+from database.errors.exceptions import CredentialReadError, UnknownProviderError
 
 
 def test_gmail_installed_key(monkeypatch, tmp_path):
@@ -38,31 +38,31 @@ def test_outlook_flat_dict(monkeypatch, tmp_path):
     assert result == creds
 
 
-def test_missing_file_raises_credential_file_error(monkeypatch):
+def test_missing_file_raises_credential_read_error(monkeypatch):
     monkeypatch.setenv("MIA_GMAIL_CREDENTIALS_PATH", "/nonexistent/path.json")
 
-    with pytest.raises(CredentialFileError, match="Failed to read config storage file"):
+    with pytest.raises(CredentialReadError, match="Failed to read config storage file"):
         load_app_credentials("gmail")
 
 
-def test_invalid_json_raises_credential_file_error(monkeypatch, tmp_path):
+def test_invalid_json_raises_credential_read_error(monkeypatch, tmp_path):
     path = tmp_path / "bad.json"
     path.write_text("{not valid json", encoding="utf-8")
     monkeypatch.setenv("MIA_GMAIL_CREDENTIALS_PATH", str(path))
 
-    with pytest.raises(CredentialFileError, match="Failed to read config storage file"):
+    with pytest.raises(CredentialReadError, match="Failed to read config storage file"):
         load_app_credentials("gmail")
 
 
-def test_non_dict_data_raises_credential_file_error(monkeypatch, tmp_path):
+def test_non_dict_data_raises_credential_read_error(monkeypatch, tmp_path):
     path = tmp_path / "list.json"
     path.write_text(json.dumps([1, 2, 3]), encoding="utf-8")
     monkeypatch.setenv("MIA_GMAIL_CREDENTIALS_PATH", str(path))
 
-    with pytest.raises(CredentialFileError, match="Config storage file is corrupted"):
+    with pytest.raises(CredentialReadError, match="Config storage file is corrupted"):
         load_app_credentials("gmail")
 
 
-def test_unknown_provider_raises_account_misconfigured(monkeypatch):
-    with pytest.raises(AccountMisconfigured, match="Unknown provider"):
+def test_unknown_provider_raises_unknown_provider_error(monkeypatch):
+    with pytest.raises(UnknownProviderError, match="Unknown provider"):
         load_app_credentials("yahoo")

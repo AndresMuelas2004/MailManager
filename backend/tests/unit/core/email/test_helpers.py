@@ -60,11 +60,17 @@ class TestParseExpiry:
     def test_empty_string_returns_none(self):
         assert parse_expiry("") is None
 
-    def test_invalid_string_returns_none(self):
-        assert parse_expiry("not-a-date") is None
+    def test_invalid_string_raises_email_invalid_expiry_error(self):
+        from core.email.errors import EmailInvalidExpiryError
 
-    def test_unsupported_type_returns_none(self):
-        assert parse_expiry([1, 2, 3]) is None
+        with pytest.raises(EmailInvalidExpiryError, match="Invalid expiry ISO string"):
+            parse_expiry("not-a-date")
+
+    def test_unsupported_type_raises_email_invalid_expiry_error(self):
+        from core.email.errors import EmailInvalidExpiryError
+
+        with pytest.raises(EmailInvalidExpiryError, match="Unsupported expiry type"):
+            parse_expiry([1, 2, 3])
 
 
 # ── unwrap_app_credentials ─────────────────────────────────────────

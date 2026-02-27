@@ -6,9 +6,9 @@ import psycopg2
 import psycopg2.errors
 import pytest
 
-from api.database.repositories import mailbox_repository as mailbox_module
-from api.errors.exceptions import DatabaseConnectionError, DatabaseQueryError
-from tests.unit.api.database.conftest import FakeCursor, patch_connection, patch_connection_error
+from database.repositories import mailbox_repository as mailbox_module
+from database.errors.exceptions import ConnectionPoolError, QueryError
+from tests.shared.database_fakes import FakeCursor, patch_connection, patch_connection_error
 
 
 def _fake_row(
@@ -39,26 +39,26 @@ def test_create_happy_path(monkeypatch):
     assert isinstance(result["created_at"], str)
 
 
-def test_create_raises_database_query_error_on_psycopg2(monkeypatch):
+def test_create_raises_query_error_on_psycopg2(monkeypatch):
     cursor = FakeCursor(execute_side_effect=psycopg2.OperationalError("connection lost"))
     patch_connection(monkeypatch, mailbox_module, [cursor])
 
-    with pytest.raises(DatabaseQueryError, match="Failed to create mailbox"):
+    with pytest.raises(QueryError, match="Failed to create mailbox"):
         mailbox_module.mailbox_store.create({"mailbox_id": "mb1", "display_name": "x", "owner_user_id": "u"})
 
 
-def test_create_raises_database_query_error_on_generic_exception(monkeypatch):
+def test_create_raises_query_error_on_generic_exception(monkeypatch):
     cursor = FakeCursor(execute_side_effect=RuntimeError("unexpected"))
     patch_connection(monkeypatch, mailbox_module, [cursor])
 
-    with pytest.raises(DatabaseQueryError, match="RuntimeError"):
+    with pytest.raises(QueryError, match="RuntimeError"):
         mailbox_module.mailbox_store.create({"mailbox_id": "mb1", "display_name": "x", "owner_user_id": "u"})
 
 
-def test_create_propagates_api_error(monkeypatch):
-    patch_connection_error(monkeypatch, mailbox_module, DatabaseConnectionError("pool down"))
+def test_create_propagates_connection_pool_error(monkeypatch):
+    patch_connection_error(monkeypatch, mailbox_module, ConnectionPoolError("pool down"))
 
-    with pytest.raises(DatabaseConnectionError, match="pool down"):
+    with pytest.raises(ConnectionPoolError, match="pool down"):
         mailbox_module.mailbox_store.create({"mailbox_id": "mb1", "display_name": "x", "owner_user_id": "u"})
 
 
@@ -75,19 +75,19 @@ def test_list_by_owner_happy_path(monkeypatch):
     assert result[1]["mailbox_id"] == "mb2"
 
 
-def test_list_by_owner_raises_database_query_error_on_psycopg2(monkeypatch):
+def test_list_by_owner_raises_query_error_on_psycopg2(monkeypatch):
     cursor = FakeCursor(execute_side_effect=psycopg2.OperationalError("fail"))
     patch_connection(monkeypatch, mailbox_module, [cursor])
 
-    with pytest.raises(DatabaseQueryError, match="Failed to list mailboxes"):
+    with pytest.raises(QueryError, match="Failed to list mailboxes"):
         mailbox_module.mailbox_store.list_by_owner("user1")
 
 
-def test_list_by_owner_raises_database_query_error_on_generic(monkeypatch):
+def test_list_by_owner_raises_query_error_on_generic(monkeypatch):
     cursor = FakeCursor(execute_side_effect=RuntimeError("boom"))
     patch_connection(monkeypatch, mailbox_module, [cursor])
 
-    with pytest.raises(DatabaseQueryError, match="RuntimeError"):
+    with pytest.raises(QueryError, match="RuntimeError"):
         mailbox_module.mailbox_store.list_by_owner("user1")
 
 
@@ -116,18 +116,18 @@ def test_get_returns_none_on_invalid_text_representation(monkeypatch):
     assert mailbox_module.mailbox_store.get("not-a-uuid") is None
 
 
-def test_get_raises_database_query_error_on_psycopg2(monkeypatch):
+def test_get_raises_query_error_on_psycopg2(monkeypatch):
     cursor = FakeCursor(execute_side_effect=psycopg2.OperationalError("fail"))
     patch_connection(monkeypatch, mailbox_module, [cursor])
 
-    with pytest.raises(DatabaseQueryError, match="Failed to get mailbox"):
+    with pytest.raises(QueryError, match="Failed to get mailbox"):
         mailbox_module.mailbox_store.get("mb1")
 
 
-def test_get_propagates_api_error(monkeypatch):
-    patch_connection_error(monkeypatch, mailbox_module, DatabaseConnectionError("no pool"))
+def test_get_propagates_connection_pool_error(monkeypatch):
+    patch_connection_error(monkeypatch, mailbox_module, ConnectionPoolError("no pool"))
 
-    with pytest.raises(DatabaseConnectionError, match="no pool"):
+    with pytest.raises(ConnectionPoolError, match="no pool"):
         mailbox_module.mailbox_store.get("mb1")
 
 
@@ -149,17 +149,17 @@ def test_delete_noop_on_invalid_text_representation(monkeypatch):
     mailbox_module.mailbox_store.delete("not-a-uuid")
 
 
-def test_delete_raises_database_query_error_on_psycopg2(monkeypatch):
+def test_delete_raises_query_error_on_psycopg2(monkeypatch):
     cursor = FakeCursor(execute_side_effect=psycopg2.OperationalError("fail"))
     patch_connection(monkeypatch, mailbox_module, [cursor])
 
-    with pytest.raises(DatabaseQueryError, match="Failed to delete mailbox"):
+    with pytest.raises(QueryError, match="Failed to delete mailbox"):
         mailbox_module.mailbox_store.delete("mb1")
 
 
-def test_delete_raises_database_query_error_on_generic(monkeypatch):
+def test_delete_raises_query_error_on_generic(monkeypatch):
     cursor = FakeCursor(execute_side_effect=RuntimeError("unexpected"))
     patch_connection(monkeypatch, mailbox_module, [cursor])
 
-    with pytest.raises(DatabaseQueryError, match="RuntimeError"):
+    with pytest.raises(QueryError, match="RuntimeError"):
         mailbox_module.mailbox_store.delete("mb1")

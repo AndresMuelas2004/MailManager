@@ -6,9 +6,9 @@ import psycopg2
 import psycopg2.errors
 import pytest
 
-from api.database.repositories import user_repository as user_module
-from api.errors.exceptions import DatabaseConnectionError, DatabaseQueryError
-from tests.unit.api.database.conftest import FakeCursor, patch_connection, patch_connection_error
+from database.repositories import user_repository as user_module
+from database.errors.exceptions import ConnectionPoolError, QueryError
+from tests.shared.database_fakes import FakeCursor, patch_connection, patch_connection_error
 
 
 def _fake_row(
@@ -42,30 +42,30 @@ def test_upsert_happy_path(monkeypatch):
     assert isinstance(result["created_at"], str)
 
 
-def test_upsert_raises_database_query_error_on_psycopg2(monkeypatch):
+def test_upsert_raises_query_error_on_psycopg2(monkeypatch):
     cursor = FakeCursor(execute_side_effect=psycopg2.OperationalError("fail"))
     patch_connection(monkeypatch, user_module, [cursor])
 
-    with pytest.raises(DatabaseQueryError, match="Failed to upsert user"):
+    with pytest.raises(QueryError, match="Failed to upsert user"):
         user_module.user_store.upsert(
             {"user_id": "u1", "google_sub": "gs", "email": "a@b.com", "name": "N", "avatar_url": None}
         )
 
 
-def test_upsert_raises_database_query_error_on_generic(monkeypatch):
+def test_upsert_raises_query_error_on_generic(monkeypatch):
     cursor = FakeCursor(execute_side_effect=RuntimeError("boom"))
     patch_connection(monkeypatch, user_module, [cursor])
 
-    with pytest.raises(DatabaseQueryError, match="RuntimeError"):
+    with pytest.raises(QueryError, match="RuntimeError"):
         user_module.user_store.upsert(
             {"user_id": "u1", "google_sub": "gs", "email": "a@b.com", "name": "N", "avatar_url": None}
         )
 
 
-def test_upsert_propagates_api_error(monkeypatch):
-    patch_connection_error(monkeypatch, user_module, DatabaseConnectionError("pool down"))
+def test_upsert_propagates_connection_pool_error(monkeypatch):
+    patch_connection_error(monkeypatch, user_module, ConnectionPoolError("pool down"))
 
-    with pytest.raises(DatabaseConnectionError, match="pool down"):
+    with pytest.raises(ConnectionPoolError, match="pool down"):
         user_module.user_store.upsert(
             {"user_id": "u1", "google_sub": "gs", "email": "a@b.com", "name": "N", "avatar_url": None}
         )
@@ -97,11 +97,11 @@ def test_get_by_id_returns_none_on_invalid_text(monkeypatch):
     assert user_module.user_store.get_by_id("not-a-uuid") is None
 
 
-def test_get_by_id_raises_database_query_error_on_psycopg2(monkeypatch):
+def test_get_by_id_raises_query_error_on_psycopg2(monkeypatch):
     cursor = FakeCursor(execute_side_effect=psycopg2.OperationalError("fail"))
     patch_connection(monkeypatch, user_module, [cursor])
 
-    with pytest.raises(DatabaseQueryError, match="Failed to get user"):
+    with pytest.raises(QueryError, match="Failed to get user"):
         user_module.user_store.get_by_id("u1")
 
 
@@ -123,19 +123,19 @@ def test_get_by_google_sub_returns_none_when_not_found(monkeypatch):
     assert user_module.user_store.get_by_google_sub("gs") is None
 
 
-def test_get_by_google_sub_raises_database_query_error_on_psycopg2(monkeypatch):
+def test_get_by_google_sub_raises_query_error_on_psycopg2(monkeypatch):
     cursor = FakeCursor(execute_side_effect=psycopg2.OperationalError("fail"))
     patch_connection(monkeypatch, user_module, [cursor])
 
-    with pytest.raises(DatabaseQueryError, match="Failed to get user by google_sub"):
+    with pytest.raises(QueryError, match="Failed to get user by google_sub"):
         user_module.user_store.get_by_google_sub("gs")
 
 
-def test_get_by_google_sub_raises_database_query_error_on_generic(monkeypatch):
+def test_get_by_google_sub_raises_query_error_on_generic(monkeypatch):
     cursor = FakeCursor(execute_side_effect=RuntimeError("boom"))
     patch_connection(monkeypatch, user_module, [cursor])
 
-    with pytest.raises(DatabaseQueryError, match="RuntimeError"):
+    with pytest.raises(QueryError, match="RuntimeError"):
         user_module.user_store.get_by_google_sub("gs")
 
 
@@ -163,17 +163,17 @@ def test_delete_returns_false_on_invalid_text(monkeypatch):
     assert user_module.user_store.delete("not-a-uuid") is False
 
 
-def test_delete_raises_database_query_error_on_psycopg2(monkeypatch):
+def test_delete_raises_query_error_on_psycopg2(monkeypatch):
     cursor = FakeCursor(execute_side_effect=psycopg2.OperationalError("fail"))
     patch_connection(monkeypatch, user_module, [cursor])
 
-    with pytest.raises(DatabaseQueryError, match="Failed to delete user"):
+    with pytest.raises(QueryError, match="Failed to delete user"):
         user_module.user_store.delete("u1")
 
 
-def test_delete_raises_database_query_error_on_generic(monkeypatch):
+def test_delete_raises_query_error_on_generic(monkeypatch):
     cursor = FakeCursor(execute_side_effect=RuntimeError("unexpected"))
     patch_connection(monkeypatch, user_module, [cursor])
 
-    with pytest.raises(DatabaseQueryError, match="RuntimeError"):
+    with pytest.raises(QueryError, match="RuntimeError"):
         user_module.user_store.delete("u1")

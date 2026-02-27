@@ -3,8 +3,8 @@ from __future__ import annotations
 import psycopg2
 import pytest
 
-from api.database import connection as connection_module
-from api.errors.exceptions import DatabaseConnectionError
+from database import connection as connection_module
+from database.errors.exceptions import ConnectionPoolError
 
 
 def test_psycopg2_error_on_pool_creation(monkeypatch):
@@ -16,7 +16,7 @@ def test_psycopg2_error_on_pool_creation(monkeypatch):
         _raise_factory(psycopg2.OperationalError("connection refused")),
     )
 
-    with pytest.raises(DatabaseConnectionError, match="Failed to create database connection pool"):
+    with pytest.raises(ConnectionPoolError, match="Failed to create database connection pool"):
         connection_module._get_pool()
 
 
@@ -29,7 +29,7 @@ def test_generic_error_on_pool_creation(monkeypatch):
         _raise_factory(RuntimeError("something unexpected")),
     )
 
-    with pytest.raises(DatabaseConnectionError, match="RuntimeError"):
+    with pytest.raises(ConnectionPoolError, match="RuntimeError"):
         connection_module._get_pool()
 
 

@@ -12,21 +12,21 @@ except ModuleNotFoundError:  # pragma: no cover - depends on runtime environment
     class InvalidToken(Exception):
         pass
 
-from api.database.settings import (
+from database.settings import (
     get_token_encryption_key,
     get_token_encryption_key_id,
     is_token_plaintext_fallback_enabled as _is_plaintext_fallback,
 )
-from api.errors.exceptions import EnvVarError, TokenDecryptionError
+from database.errors.exceptions import SettingsError, TokenDecryptError
 
 
 def _build_fernet(key: str) -> Fernet:
     if Fernet is None:
-        raise EnvVarError("cryptography is required for Fernet token encryption.")
+        raise SettingsError("cryptography is required for Fernet token encryption.")
     try:
         return Fernet(key.encode("utf-8"))
     except Exception as exc:
-        raise EnvVarError("TOKEN_ENCRYPTION_KEY is invalid for Fernet.") from exc
+        raise SettingsError("TOKEN_ENCRYPTION_KEY is invalid for Fernet.") from exc
 
 
 def get_fernet(*, required: bool = True) -> Fernet | None:
@@ -74,5 +74,5 @@ def decrypt_token(value: str | None) -> str | None:
     try:
         decrypted = fernet.decrypt(value.encode("utf-8"))
     except InvalidToken as exc:
-        raise TokenDecryptionError("Failed to decrypt account token.") from exc
+        raise TokenDecryptError("Failed to decrypt account token.") from exc
     return decrypted.decode("utf-8")

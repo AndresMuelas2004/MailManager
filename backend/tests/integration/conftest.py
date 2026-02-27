@@ -9,18 +9,18 @@ import psycopg2.extras
 import pytest
 from pydantic import SecretStr
 
-from api.database import connection as connection_module
-from api.database.migrations.runner import ensure_schema_at_head
-from api.database.repositories import account_repository as account_repo_module
-from api.database.repositories import mailbox_repository as mailbox_repo_module
-from api.database.repositories import session_repository as session_repo_module
-from api.database.repositories import user_repository as user_repo_module
+from database import connection as connection_module
+from database.migrations.runner import ensure_schema_at_head
+from database.repositories import account_repository as account_repo_module
+from database.repositories import mailbox_repository as mailbox_repo_module
+from database.repositories import session_repository as session_repo_module
+from database.repositories import user_repository as user_repo_module
 from api.routers.routers_helpers import require_session
 from api.services import accounts_service, emails_service, services_helpers
 from core.email.email_manager import EmailManager
 from tests.shared.email_fakes import FakeEmailClient
 
-_ALEMBIC_INI_PATH = Path(__file__).resolve().parents[2] / "api" / "database" / "alembic.ini"
+_ALEMBIC_INI_PATH = Path(__file__).resolve().parents[2] / "database" / "alembic.ini"
 
 TEST_USER_ID = "00000000-0000-4000-a000-000000000001"
 TEST_USER_GOOGLE_SUB = "google-sub-test-user"

@@ -9,10 +9,10 @@ from typing import Any
 import psycopg2.errors
 import psycopg2.extras
 
-from api.database import connection
-from api.database.contracts import MailboxStore
-from api.database.queries import mailboxes
-from api.errors.exceptions import ApiError, DatabaseQueryError
+from database import connection
+from database.contracts import MailboxStore
+from database.queries import mailboxes
+from database.errors.exceptions import DatabaseError, QueryError
 
 
 def _row_to_dict(row: dict[str, Any]) -> dict[str, Any]:
@@ -36,12 +36,12 @@ class PgMailboxStore(MailboxStore):
                 with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
                     cur.execute(mailboxes.INSERT_MAILBOX, mailbox)
                     row = cur.fetchone()
-        except ApiError:
+        except DatabaseError:
             raise
         except psycopg2.Error as exc:
-            raise DatabaseQueryError("Failed to create mailbox.") from exc
+            raise QueryError("Failed to create mailbox.") from exc
         except Exception as exc:
-            raise DatabaseQueryError(
+            raise QueryError(
                 f"Unexpected mailbox create error ({type(exc).__name__}): {exc}"
             ) from exc
         return _row_to_dict(row)
@@ -55,12 +55,12 @@ class PgMailboxStore(MailboxStore):
                         {"owner_user_id": owner_user_id},
                     )
                     rows = cur.fetchall()
-        except ApiError:
+        except DatabaseError:
             raise
         except psycopg2.Error as exc:
-            raise DatabaseQueryError("Failed to list mailboxes by owner.") from exc
+            raise QueryError("Failed to list mailboxes by owner.") from exc
         except Exception as exc:
-            raise DatabaseQueryError(
+            raise QueryError(
                 f"Unexpected mailbox list error ({type(exc).__name__}): {exc}"
             ) from exc
         return [_row_to_dict(row) for row in rows]
@@ -73,12 +73,12 @@ class PgMailboxStore(MailboxStore):
                     row = cur.fetchone()
         except psycopg2.errors.InvalidTextRepresentation:
             return None
-        except ApiError:
+        except DatabaseError:
             raise
         except psycopg2.Error as exc:
-            raise DatabaseQueryError("Failed to get mailbox.") from exc
+            raise QueryError("Failed to get mailbox.") from exc
         except Exception as exc:
-            raise DatabaseQueryError(
+            raise QueryError(
                 f"Unexpected mailbox get error ({type(exc).__name__}): {exc}"
             ) from exc
         if row is None:
@@ -92,12 +92,12 @@ class PgMailboxStore(MailboxStore):
                     cur.execute(mailboxes.DELETE_MAILBOX, {"mailbox_id": mailbox_id})
         except psycopg2.errors.InvalidTextRepresentation:
             return
-        except ApiError:
+        except DatabaseError:
             raise
         except psycopg2.Error as exc:
-            raise DatabaseQueryError("Failed to delete mailbox.") from exc
+            raise QueryError("Failed to delete mailbox.") from exc
         except Exception as exc:
-            raise DatabaseQueryError(
+            raise QueryError(
                 f"Unexpected mailbox delete error ({type(exc).__name__}): {exc}"
             ) from exc
 

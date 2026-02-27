@@ -6,15 +6,15 @@ import psycopg2
 import psycopg2.errors
 import pytest
 
-from api.database.repositories import account_repository as account_module
-from api.database.security import token_crypto
-from api.errors.exceptions import (
-    DatabaseConnectionError,
-    DatabaseQueryError,
-    EnvVarError,
-    TokenIntegrityError,
+from database.repositories import account_repository as account_module
+from database.security import token_crypto
+from database.errors.exceptions import (
+    ConnectionPoolError,
+    QueryError,
+    SettingsError,
+    TokenValidationError,
 )
-from tests.unit.api.database.conftest import FakeCursor, patch_connection, patch_connection_error
+from tests.shared.database_fakes import FakeCursor, patch_connection, patch_connection_error
 
 Fernet = pytest.importorskip("cryptography.fernet").Fernet
 
@@ -56,26 +56,26 @@ def test_list_by_mailbox_returns_empty_on_invalid_text(monkeypatch):
     assert account_module.account_store.list_by_mailbox("not-a-uuid") == []
 
 
-def test_list_by_mailbox_raises_database_query_error_on_psycopg2(monkeypatch):
+def test_list_by_mailbox_raises_query_error_on_psycopg2(monkeypatch):
     cursor = FakeCursor(execute_side_effect=psycopg2.OperationalError("fail"))
     patch_connection(monkeypatch, account_module, [cursor])
 
-    with pytest.raises(DatabaseQueryError, match="Failed to list accounts"):
+    with pytest.raises(QueryError, match="Failed to list accounts"):
         account_module.account_store.list_by_mailbox("mb1")
 
 
-def test_list_by_mailbox_raises_database_query_error_on_generic(monkeypatch):
+def test_list_by_mailbox_raises_query_error_on_generic(monkeypatch):
     cursor = FakeCursor(execute_side_effect=RuntimeError("boom"))
     patch_connection(monkeypatch, account_module, [cursor])
 
-    with pytest.raises(DatabaseQueryError, match="RuntimeError"):
+    with pytest.raises(QueryError, match="RuntimeError"):
         account_module.account_store.list_by_mailbox("mb1")
 
 
-def test_list_by_mailbox_propagates_api_error(monkeypatch):
-    patch_connection_error(monkeypatch, account_module, DatabaseConnectionError("pool down"))
+def test_list_by_mailbox_propagates_connection_pool_error(monkeypatch):
+    patch_connection_error(monkeypatch, account_module, ConnectionPoolError("pool down"))
 
-    with pytest.raises(DatabaseConnectionError, match="pool down"):
+    with pytest.raises(ConnectionPoolError, match="pool down"):
         account_module.account_store.list_by_mailbox("mb1")
 
 
@@ -105,11 +105,11 @@ def test_get_returns_none_on_invalid_text(monkeypatch):
     assert account_module.account_store.get("mb1", "not-a-uuid") is None
 
 
-def test_get_raises_database_query_error_on_psycopg2(monkeypatch):
+def test_get_raises_query_error_on_psycopg2(monkeypatch):
     cursor = FakeCursor(execute_side_effect=psycopg2.OperationalError("fail"))
     patch_connection(monkeypatch, account_module, [cursor])
 
-    with pytest.raises(DatabaseQueryError, match="Failed to get account"):
+    with pytest.raises(QueryError, match="Failed to get account"):
         account_module.account_store.get("mb1", "acc1")
 
 
@@ -150,21 +150,21 @@ def test_upsert_serializes_config_dict(monkeypatch):
     assert '"nested"' in params["config"]
 
 
-def test_upsert_raises_database_query_error_on_psycopg2(monkeypatch):
+def test_upsert_raises_query_error_on_psycopg2(monkeypatch):
     cursor = FakeCursor(execute_side_effect=psycopg2.OperationalError("fail"))
     patch_connection(monkeypatch, account_module, [cursor])
 
-    with pytest.raises(DatabaseQueryError, match="Failed to upsert account"):
+    with pytest.raises(QueryError, match="Failed to upsert account"):
         account_module.account_store.upsert(
             {"account_id": "acc1", "mailbox_id": "mb1", "provider": "gmail", "display_label": "x"}
         )
 
 
-def test_upsert_raises_database_query_error_on_generic(monkeypatch):
+def test_upsert_raises_query_error_on_generic(monkeypatch):
     cursor = FakeCursor(execute_side_effect=RuntimeError("boom"))
     patch_connection(monkeypatch, account_module, [cursor])
 
-    with pytest.raises(DatabaseQueryError, match="RuntimeError"):
+    with pytest.raises(QueryError, match="RuntimeError"):
         account_module.account_store.upsert(
             {"account_id": "acc1", "mailbox_id": "mb1", "provider": "gmail", "display_label": "x"}
         )
@@ -188,19 +188,19 @@ def test_delete_noop_on_invalid_text(monkeypatch):
     account_module.account_store.delete("mb1", "not-a-uuid")
 
 
-def test_delete_raises_database_query_error_on_psycopg2(monkeypatch):
+def test_delete_raises_query_error_on_psycopg2(monkeypatch):
     cursor = FakeCursor(execute_side_effect=psycopg2.OperationalError("fail"))
     patch_connection(monkeypatch, account_module, [cursor])
 
-    with pytest.raises(DatabaseQueryError, match="Failed to delete account"):
+    with pytest.raises(QueryError, match="Failed to delete account"):
         account_module.account_store.delete("mb1", "acc1")
 
 
-def test_delete_raises_database_query_error_on_generic(monkeypatch):
+def test_delete_raises_query_error_on_generic(monkeypatch):
     cursor = FakeCursor(execute_side_effect=RuntimeError("unexpected"))
     patch_connection(monkeypatch, account_module, [cursor])
 
-    with pytest.raises(DatabaseQueryError, match="RuntimeError"):
+    with pytest.raises(QueryError, match="RuntimeError"):
         account_module.account_store.delete("mb1", "acc1")
 
 
@@ -293,35 +293,35 @@ def test_get_tokens_uses_encrypted_columns(monkeypatch):
     assert payload["refresh_token"] == "enc-refresh"
 
 
-def test_get_tokens_raises_database_query_error_on_psycopg2_failure(monkeypatch):
+def test_get_tokens_raises_query_error_on_psycopg2_failure(monkeypatch):
     monkeypatch.setenv("TOKEN_ENCRYPTION_KEY", Fernet.generate_key().decode("utf-8"))
 
     cursor = FakeCursor(execute_side_effect=psycopg2.OperationalError("connection lost"))
     patch_connection(monkeypatch, account_module, [cursor])
 
-    with pytest.raises(DatabaseQueryError, match="Failed to read token"):
+    with pytest.raises(QueryError, match="Failed to read token"):
         account_module.account_store.get_tokens("mb1", "acc1", "gmail")
 
 
-def test_get_tokens_propagates_api_error_from_connection(monkeypatch):
+def test_get_tokens_propagates_connection_pool_error(monkeypatch):
     monkeypatch.setenv("TOKEN_ENCRYPTION_KEY", Fernet.generate_key().decode("utf-8"))
     patch_connection_error(
         monkeypatch,
         account_module,
-        DatabaseConnectionError("pool exhausted"),
+        ConnectionPoolError("pool exhausted"),
     )
 
-    with pytest.raises(DatabaseConnectionError, match="pool exhausted"):
+    with pytest.raises(ConnectionPoolError, match="pool exhausted"):
         account_module.account_store.get_tokens("mb1", "acc1", "gmail")
 
 
-def test_get_tokens_raises_database_query_error_on_unexpected_exception(monkeypatch):
+def test_get_tokens_raises_query_error_on_unexpected_exception(monkeypatch):
     monkeypatch.setenv("TOKEN_ENCRYPTION_KEY", Fernet.generate_key().decode("utf-8"))
 
     cursor = FakeCursor(execute_side_effect=RuntimeError("weird"))
     patch_connection(monkeypatch, account_module, [cursor])
 
-    with pytest.raises(DatabaseQueryError, match="RuntimeError"):
+    with pytest.raises(QueryError, match="RuntimeError"):
         account_module.account_store.get_tokens("mb1", "acc1", "gmail")
 
 
@@ -335,7 +335,7 @@ def test_get_tokens_returns_none_when_no_row(monkeypatch):
     assert result is None
 
 
-def test_get_tokens_malformed_key_raises_env_var_error(monkeypatch):
+def test_get_tokens_malformed_key_raises_settings_error(monkeypatch):
     monkeypatch.setenv("TOKEN_ENCRYPTION_KEY", "not-a-valid-fernet-key")
     monkeypatch.setenv("TOKEN_PLAINTEXT_FALLBACK_ENABLED", "true")
 
@@ -355,7 +355,7 @@ def test_get_tokens_malformed_key_raises_env_var_error(monkeypatch):
     )
     patch_connection(monkeypatch, account_module, [select_cursor])
 
-    with pytest.raises(EnvVarError, match="TOKEN_ENCRYPTION_KEY"):
+    with pytest.raises(SettingsError, match="TOKEN_ENCRYPTION_KEY"):
         account_module.account_store.get_tokens("mb1", "acc1", "gmail")
 
 
@@ -400,7 +400,7 @@ def test_upsert_tokens_requires_context_match(monkeypatch):
     save_cursor = FakeCursor(rowcounts=[0])
     patch_connection(monkeypatch, account_module, [save_cursor])
 
-    with pytest.raises(TokenIntegrityError):
+    with pytest.raises(TokenValidationError):
         account_module.account_store.upsert_tokens(
             mailbox_id="mb1",
             account_id="acc1",
@@ -414,10 +414,10 @@ def test_upsert_tokens_requires_context_match(monkeypatch):
         )
 
 
-def test_upsert_tokens_raises_token_integrity_error_on_invalid_payload(monkeypatch):
+def test_upsert_tokens_raises_token_validation_error_on_invalid_payload(monkeypatch):
     monkeypatch.setenv("TOKEN_ENCRYPTION_KEY", Fernet.generate_key().decode("utf-8"))
 
-    with pytest.raises(TokenIntegrityError, match="Token payload is invalid"):
+    with pytest.raises(TokenValidationError, match="Token payload is invalid"):
         account_module.account_store.upsert_tokens(
             mailbox_id="mb1",
             account_id="acc1",
@@ -426,8 +426,8 @@ def test_upsert_tokens_raises_token_integrity_error_on_invalid_payload(monkeypat
         )
 
 
-def test_upsert_tokens_raises_token_integrity_error_on_empty_provider(monkeypatch):
-    with pytest.raises(TokenIntegrityError, match="Provider is required"):
+def test_upsert_tokens_raises_token_validation_error_on_empty_provider(monkeypatch):
+    with pytest.raises(TokenValidationError, match="Provider is required"):
         account_module.account_store.upsert_tokens(
             mailbox_id="mb1",
             account_id="acc1",
@@ -436,14 +436,14 @@ def test_upsert_tokens_raises_token_integrity_error_on_empty_provider(monkeypatc
         )
 
 
-def test_upsert_tokens_raises_database_query_error_on_psycopg2_failure(monkeypatch):
+def test_upsert_tokens_raises_query_error_on_psycopg2_failure(monkeypatch):
     monkeypatch.setenv("TOKEN_ENCRYPTION_KEY", Fernet.generate_key().decode("utf-8"))
     monkeypatch.setenv("TOKEN_ENCRYPTION_KEY_ID", "v1")
 
     cursor = FakeCursor(execute_side_effect=psycopg2.OperationalError("connection lost"))
     patch_connection(monkeypatch, account_module, [cursor])
 
-    with pytest.raises(DatabaseQueryError, match="Failed to save token"):
+    with pytest.raises(QueryError, match="Failed to save token"):
         account_module.account_store.upsert_tokens(
             mailbox_id="mb1",
             account_id="acc1",

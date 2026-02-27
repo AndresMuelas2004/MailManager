@@ -11,15 +11,15 @@ from typing import Any
 import psycopg2.errors
 import psycopg2.extras
 
-from api.database import connection
-from api.database.contracts import AccountStore
-from api.database.queries import accounts
-from api.database.security import token_crypto
-from api.errors.exceptions import (
-    ApiError,
-    DatabaseQueryError,
-    EnvVarError,
-    TokenIntegrityError,
+from database import connection
+from database.contracts import AccountStore
+from database.queries import accounts
+from database.security import token_crypto
+from database.errors.exceptions import (
+    DatabaseError,
+    QueryError,
+    SettingsError,
+    TokenValidationError,
 )
 
 logger = logging.getLogger(__name__)
@@ -43,7 +43,7 @@ def _row_to_dict(row: dict[str, Any]) -> dict[str, Any]:
 def _normalize_provider(provider: str) -> str:
     normalized = (provider or "").strip().lower()
     if not normalized:
-        raise TokenIntegrityError("Provider is required to load account tokens.")
+        raise TokenValidationError("Provider is required to load account tokens.")
     return normalized
 
 
@@ -61,7 +61,7 @@ def _token_payload_from_row(row: dict[str, Any]) -> tuple[dict[str, Any], bool] 
 
     Returns ``None`` when no usable token exists (no encrypted columns and
     plaintext fallback disabled).  A malformed ``TOKEN_ENCRYPTION_KEY`` raises
-    ``EnvVarError`` immediately — it never silently falls back to plaintext.
+    ``SettingsError`` immediately — it never silently falls back to plaintext.
     """
     encrypted_access = row.get("access_token_encrypted")
     encrypted_refresh = row.get("refresh_token_encrypted")
@@ -105,7 +105,7 @@ def _backfill_plaintext_tokens(
     """
     try:
         fernet = token_crypto.get_fernet(required=False)
-    except EnvVarError:
+    except SettingsError:
         return
     if fernet is None:
         return
@@ -152,12 +152,12 @@ class PgAccountStore(AccountStore):
                     rows = cur.fetchall()
         except psycopg2.errors.InvalidTextRepresentation:
             return []
-        except ApiError:
+        except DatabaseError:
             raise
         except psycopg2.Error as exc:
-            raise DatabaseQueryError("Failed to list accounts.") from exc
+            raise QueryError("Failed to list accounts.") from exc
         except Exception as exc:
-            raise DatabaseQueryError(
+            raise QueryError(
                 f"Unexpected account list error ({type(exc).__name__}): {exc}"
             ) from exc
         return [_row_to_dict(row) for row in rows]
@@ -170,12 +170,12 @@ class PgAccountStore(AccountStore):
                     row = cur.fetchone()
         except psycopg2.errors.InvalidTextRepresentation:
             return None
-        except ApiError:
+        except DatabaseError:
             raise
         except psycopg2.Error as exc:
-            raise DatabaseQueryError("Failed to get account.") from exc
+            raise QueryError("Failed to get account.") from exc
         except Exception as exc:
-            raise DatabaseQueryError(
+            raise QueryError(
                 f"Unexpected account get error ({type(exc).__name__}): {exc}"
             ) from exc
         if row is None:
@@ -194,12 +194,12 @@ class PgAccountStore(AccountStore):
                 with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
                     cur.execute(accounts.UPSERT_ACCOUNT, params)
                     row = cur.fetchone()
-        except ApiError:
+        except DatabaseError:
             raise
         except psycopg2.Error as exc:
-            raise DatabaseQueryError("Failed to upsert account.") from exc
+            raise QueryError("Failed to upsert account.") from exc
         except Exception as exc:
-            raise DatabaseQueryError(
+            raise QueryError(
                 f"Unexpected account upsert error ({type(exc).__name__}): {exc}"
             ) from exc
         return _row_to_dict(row)
@@ -211,12 +211,12 @@ class PgAccountStore(AccountStore):
                     cur.execute(accounts.DELETE_ACCOUNT, {"mailbox_id": mailbox_id, "account_id": account_id})
         except psycopg2.errors.InvalidTextRepresentation:
             return
-        except ApiError:
+        except DatabaseError:
             raise
         except psycopg2.Error as exc:
-            raise DatabaseQueryError("Failed to delete account.") from exc
+            raise QueryError("Failed to delete account.") from exc
         except Exception as exc:
-            raise DatabaseQueryError(
+            raise QueryError(
                 f"Unexpected account delete error ({type(exc).__name__}): {exc}"
             ) from exc
 
@@ -234,12 +234,12 @@ class PgAccountStore(AccountStore):
                         {"account_id": account_id, "mailbox_id": mailbox_id, "provider": normalized_provider},
                     )
                     row = cur.fetchone()
-        except ApiError:
+        except DatabaseError:
             raise
         except psycopg2.Error as exc:
-            raise DatabaseQueryError("Failed to read token from database.") from exc
+            raise QueryError("Failed to read token from database.") from exc
         except Exception as exc:
-            raise DatabaseQueryError(
+            raise QueryError(
                 f"Unexpected token get error ({type(exc).__name__}): {exc}"
             ) from exc
 
@@ -263,7 +263,7 @@ class PgAccountStore(AccountStore):
         token_data: dict[str, Any],
     ) -> None:
         if not isinstance(token_data, dict):
-            raise TokenIntegrityError(
+            raise TokenValidationError(
                 "Token payload is invalid.",
                 {"mailbox_id": mailbox_id, "account_id": account_id},
             )
@@ -288,7 +288,7 @@ class PgAccountStore(AccountStore):
         elif token_crypto.is_plaintext_fallback_enabled():
             use_encryption = False
         else:
-            raise EnvVarError(
+            raise SettingsError(
                 "TOKEN_ENCRYPTION_KEY is required when plaintext fallback is disabled."
             )
 
@@ -321,7 +321,7 @@ class PgAccountStore(AccountStore):
                 with conn.cursor() as cur:
                     cur.execute(query, params)
                     if cur.rowcount == 0:
-                        raise TokenIntegrityError(
+                        raise TokenValidationError(
                             "Token context validation failed.",
                             {
                                 "mailbox_id": mailbox_id,
@@ -329,12 +329,12 @@ class PgAccountStore(AccountStore):
                                 "provider": normalized_provider,
                             },
                         )
-        except ApiError:
+        except DatabaseError:
             raise
         except psycopg2.Error as exc:
-            raise DatabaseQueryError("Failed to save token to database.") from exc
+            raise QueryError("Failed to save token to database.") from exc
         except Exception as exc:
-            raise DatabaseQueryError(
+            raise QueryError(
                 f"Unexpected token upsert error ({type(exc).__name__}): {exc}"
             ) from exc
 

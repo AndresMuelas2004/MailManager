@@ -8,7 +8,7 @@ from typing import Any
 
 import psycopg2
 
-from api.errors.exceptions import DatabaseMigrationError
+from database.errors.exceptions import MigrationError
 
 
 _DDL_STATEMENTS = [
@@ -92,10 +92,10 @@ def ensure_schema_at_head(dsn: str) -> None:
             with conn.cursor() as cur:
                 _apply_statements(cur)
     except psycopg2.Error as exc:
-        raise DatabaseMigrationError(
+        raise MigrationError(
             "Failed to apply fallback database migrations."
         ) from exc
     except Exception as exc:
-        raise DatabaseMigrationError(
+        raise MigrationError(
             f"Unexpected migration error ({type(exc).__name__}): {exc}"
         ) from exc
