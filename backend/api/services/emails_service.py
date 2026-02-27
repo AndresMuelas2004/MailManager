@@ -16,7 +16,7 @@ from core.email.errors import CoreError
 from api.schemas.email import EmailOut, EmailSendRequest
 from api.services.services_helpers import (
     build_manager_for_accounts,
-    ensure_mailbox_exists,
+    ensure_mailbox_access,
     is_auth_error,
     load_wrapped_account_tokens,
     load_wrapped_app_credentials,
@@ -24,7 +24,7 @@ from api.services.services_helpers import (
     translate_core_error,
     unwrap_secret,
 )
-from api.database import account_store, save_account_tokens
+from api.database import account_store
 
 
 def _persist_refreshed_tokens(
@@ -39,11 +39,11 @@ def _persist_refreshed_tokens(
         payload = dict(token_payload or {})
         payload["access_token"] = unwrap_secret(payload.get("access_token"))
         payload["refresh_token"] = unwrap_secret(payload.get("refresh_token"))
-        save_account_tokens(mailbox_id, account_id, provider, payload)
+        account_store.upsert_tokens(mailbox_id, account_id, provider, payload)
 
 
-def get_unread(mailbox_id: str) -> list[EmailOut]:
-    ensure_mailbox_exists(mailbox_id)
+def get_unread(mailbox_id: str, user_id: str) -> list[EmailOut]:
+    ensure_mailbox_access(mailbox_id, user_id)
     accounts = account_store.list_by_mailbox(mailbox_id)
     auth_payloads = {}
     label_lookup: dict[str, tuple[str, str, str]] = {}
@@ -98,8 +98,9 @@ def get_unread(mailbox_id: str) -> list[EmailOut]:
 
     return [EmailOut.from_core(email) for email in unread]
 
-def send_email(mailbox_id: str, payload: EmailSendRequest) -> dict[str, str]:
-    ensure_mailbox_exists(mailbox_id)
+
+def send_email(mailbox_id: str, payload: EmailSendRequest, user_id: str) -> dict[str, str]:
+    ensure_mailbox_access(mailbox_id, user_id)
     account = account_store.get(mailbox_id, payload.account_id)
     if account is None:
         raise AccountNotFound(f"Account '{payload.account_id}' not found.")

@@ -29,3 +29,66 @@ DELETE_ACCOUNT = """
     WHERE mailbox_id = %(mailbox_id)s AND account_id = %(account_id)s
 """
 
+# ---------------------------------------------------------------------------
+# Token operations (columns live in accounts since migration 0005)
+# ---------------------------------------------------------------------------
+
+SELECT_TOKENS_BY_CONTEXT = """
+    SELECT
+        account_id,
+        access_token,
+        refresh_token,
+        access_token_encrypted,
+        refresh_token_encrypted,
+        encryption_key_id,
+        expiry,
+        scopes
+    FROM accounts
+    WHERE account_id = %(account_id)s
+      AND mailbox_id = %(mailbox_id)s
+      AND provider = %(provider)s
+"""
+
+UPSERT_TOKENS_ENCRYPTED = """
+    UPDATE accounts
+       SET access_token = NULL,
+           refresh_token = NULL,
+           access_token_encrypted = %(access_token_encrypted)s,
+           refresh_token_encrypted = %(refresh_token_encrypted)s,
+           encryption_key_id = %(encryption_key_id)s,
+           expiry = %(expiry)s,
+           scopes = %(scopes)s,
+           tokens_updated_at = now()
+     WHERE account_id = %(account_id)s
+       AND mailbox_id = %(mailbox_id)s
+       AND provider = %(provider)s
+"""
+
+UPSERT_TOKENS_PLAINTEXT = """
+    UPDATE accounts
+       SET access_token = %(access_token)s,
+           refresh_token = %(refresh_token)s,
+           access_token_encrypted = NULL,
+           refresh_token_encrypted = NULL,
+           encryption_key_id = NULL,
+           expiry = %(expiry)s,
+           scopes = %(scopes)s,
+           tokens_updated_at = now()
+     WHERE account_id = %(account_id)s
+       AND mailbox_id = %(mailbox_id)s
+       AND provider = %(provider)s
+"""
+
+BACKFILL_LEGACY_TOKENS = """
+    UPDATE accounts
+       SET access_token = NULL,
+           refresh_token = NULL,
+           access_token_encrypted = %(access_token_encrypted)s,
+           refresh_token_encrypted = %(refresh_token_encrypted)s,
+           encryption_key_id = %(encryption_key_id)s,
+           tokens_updated_at = now()
+     WHERE account_id = %(account_id)s
+       AND mailbox_id = %(mailbox_id)s
+       AND provider = %(provider)s
+"""
+

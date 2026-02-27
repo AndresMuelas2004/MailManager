@@ -22,4 +22,5 @@ class MailboxOut(BaseModel):
 
     mailbox_id: str
     display_name: str | None = None
+    owner_user_id: str
     created_at: str

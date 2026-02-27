@@ -18,12 +18,12 @@ from api.schemas.account import (
 )
 from api.services.services_helpers import (
     build_manager_for_accounts,
-    ensure_mailbox_exists,
+    ensure_mailbox_access,
     load_wrapped_app_credentials,
     translate_connect_error,
     unwrap_secret,
 )
-from api.database import account_store, save_account_tokens
+from api.database import account_store
 
 
 def _resolve_display_label(record: dict) -> str:
@@ -41,14 +41,14 @@ def _build_response(record: dict) -> AccountOut:
     return AccountOut(**payload)
 
 
-def list_accounts(mailbox_id: str) -> list[AccountOut]:
-    ensure_mailbox_exists(mailbox_id)
+def list_accounts(mailbox_id: str, user_id: str) -> list[AccountOut]:
+    ensure_mailbox_access(mailbox_id, user_id)
     accounts = account_store.list_by_mailbox(mailbox_id)
     return [_build_response(account) for account in accounts]
 
 
-def create_account(mailbox_id: str, payload: AccountCreate) -> AccountOut:
-    ensure_mailbox_exists(mailbox_id)
+def create_account(mailbox_id: str, payload: AccountCreate, user_id: str) -> AccountOut:
+    ensure_mailbox_access(mailbox_id, user_id)
     account_id = str(uuid4())
     record = {
         "account_id": account_id,
@@ -61,16 +61,16 @@ def create_account(mailbox_id: str, payload: AccountCreate) -> AccountOut:
     return _build_response(created)
 
 
-def get_account(mailbox_id: str, account_id: str) -> AccountOut:
-    ensure_mailbox_exists(mailbox_id)
+def get_account(mailbox_id: str, account_id: str, user_id: str) -> AccountOut:
+    ensure_mailbox_access(mailbox_id, user_id)
     record = account_store.get(mailbox_id, account_id)
     if record is None:
         raise AccountNotFound(f"Account '{account_id}' not found.")
     return _build_response(record)
 
 
-def update_account(mailbox_id: str, account_id: str, payload: AccountUpdate) -> AccountOut:
-    ensure_mailbox_exists(mailbox_id)
+def update_account(mailbox_id: str, account_id: str, payload: AccountUpdate, user_id: str) -> AccountOut:
+    ensure_mailbox_access(mailbox_id, user_id)
     record = account_store.get(mailbox_id, account_id)
     if record is None:
         raise AccountNotFound(f"Account '{account_id}' not found.")
@@ -84,8 +84,8 @@ def update_account(mailbox_id: str, account_id: str, payload: AccountUpdate) -> 
     return _build_response(updated)
 
 
-def delete_account(mailbox_id: str, account_id: str) -> dict[str, str]:
-    ensure_mailbox_exists(mailbox_id)
+def delete_account(mailbox_id: str, account_id: str, user_id: str) -> dict[str, str]:
+    ensure_mailbox_access(mailbox_id, user_id)
     record = account_store.get(mailbox_id, account_id)
     if record is None:
         raise AccountNotFound(f"Account '{account_id}' not found.")
@@ -94,8 +94,8 @@ def delete_account(mailbox_id: str, account_id: str) -> dict[str, str]:
     return {"status": "deleted"}
 
 
-def connect_account(mailbox_id: str, account_id: str) -> AccountConnectResponse:
-    ensure_mailbox_exists(mailbox_id)
+def connect_account(mailbox_id: str, account_id: str, user_id: str) -> AccountConnectResponse:
+    ensure_mailbox_access(mailbox_id, user_id)
     record = account_store.get(mailbox_id, account_id)
     if record is None:
         raise AccountNotFound(f"Account '{account_id}' not found.")
@@ -118,7 +118,7 @@ def connect_account(mailbox_id: str, account_id: str) -> AccountConnectResponse:
     token_payload = dict(wrapped_tokens or {})
     token_payload["access_token"] = unwrap_secret(token_payload.get("access_token"))
     token_payload["refresh_token"] = unwrap_secret(token_payload.get("refresh_token"))
-    save_account_tokens(mailbox_id, account_id, provider, token_payload)
+    account_store.upsert_tokens(mailbox_id, account_id, provider, token_payload)
 
     return AccountConnectResponse(
         connected=True,

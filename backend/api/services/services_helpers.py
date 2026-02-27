@@ -35,9 +35,10 @@ from api.errors.exceptions import (
     EmailSendError,
     EnvVarError,
     ExternalAPIError,
+    Forbidden,
     MailboxNotFound,
 )
-from api.database import load_account_tokens, load_app_credentials, mailbox_store
+from api.database import account_store, load_app_credentials, mailbox_store
 
 
 # ---------------------------------------------------------------------------
@@ -107,13 +108,18 @@ def translate_connect_error(
     return translate_core_error(exc, fallback=AccountConnectAuthError, context=context)
 
 
-def ensure_mailbox_exists(mailbox_id: str) -> None:
+def ensure_mailbox_access(mailbox_id: str, user_id: str) -> dict[str, Any]:
     """
-    Ensure the mailbox exists before executing any mailbox-scoped action.
+    Ensure the mailbox exists and the authenticated user owns it.
+
+    Returns the mailbox record so callers can reuse it without a second fetch.
     """
-    # Central guard for mailbox-scoped service operations.
-    if mailbox_store.get(mailbox_id) is None:
+    record = mailbox_store.get(mailbox_id)
+    if record is None:
         raise MailboxNotFound(f"Mailbox '{mailbox_id}' not found.")
+    if record.get("owner_user_id") != user_id:
+        raise Forbidden("You do not have access to this mailbox.")
+    return record
 
 
 def build_manager_for_accounts(accounts: Iterable[dict[str, Any]]) -> EmailManager:
@@ -199,7 +205,7 @@ def load_wrapped_account_tokens(
     """
     Load account tokens for *provider* and wrap access/refresh tokens as SecretStr.
     """
-    token_data = load_account_tokens(mailbox_id, account_id, provider)
+    token_data = account_store.get_tokens(mailbox_id, account_id, provider)
     payload = dict(token_data) if isinstance(token_data, dict) else {}
     if "access_token" in payload:
         payload["access_token"] = _wrap_secret(payload.get("access_token"))

@@ -13,7 +13,7 @@ from api.database.settings import (
     get_alembic_ini_path,
     is_startup_auto_migrate_enabled,
 )
-from api.errors.exceptions import DatabaseError
+from api.errors.exceptions import ApiError, DatabaseConnectionError, DatabaseMigrationError
 
 
 def run_startup_migrations_if_enabled() -> bool:
@@ -32,8 +32,12 @@ def run_startup_migrations_if_enabled() -> bool:
 
         cfg = Config(str(get_alembic_ini_path()))
         command.upgrade(cfg, "head")
-    except Exception as exc:  # pragma: no cover - startup error path
-        raise DatabaseError("Failed to run startup database migrations.") from exc
+    except ApiError:
+        raise
+    except Exception as exc:
+        raise DatabaseMigrationError(
+            "Failed to run startup database migrations."
+        ) from exc
     return True
 
 
@@ -45,15 +49,13 @@ def warmup_connection() -> None:
         with get_connection() as conn:
             with conn.cursor() as cur:
                 cur.execute("SELECT 1")
+    except ApiError:
+        raise
     except psycopg2.Error as exc:
-        raise DatabaseError("Failed to warm up database connection.") from exc
-
-
-def init_db() -> None:
-    """
-    Deprecated compatibility helper. Kept for backward compatibility.
-
-    Database schema evolution should happen through Alembic migrations,
-    not through application startup.
-    """
-    warmup_connection()
+        raise DatabaseConnectionError(
+            "Failed to warm up database connection."
+        ) from exc
+    except Exception as exc:
+        raise DatabaseConnectionError(
+            f"Unexpected warmup error ({type(exc).__name__}): {exc}"
+        ) from exc

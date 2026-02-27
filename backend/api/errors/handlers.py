@@ -19,19 +19,30 @@ from api.errors.exceptions import (
     AccountNotConnected,
     AccountNotFound,
     ApiError,
+    CredentialFileError,
+    DatabaseConnectionError,
+    DatabaseMigrationError,
+    DatabaseQueryError,
     EmailFetchError,
     EmailSendError,
     EnvVarError,
     ExternalAPIError,
-    DatabaseError,
+    Forbidden,
     MailboxNotFound,
+    TokenDecryptionError,
+    TokenIntegrityError,
+    Unauthorized,
+    UserNotFound,
 )
 from api.schemas.error import ErrorResponse
 
 
 _STATUS_MAP: dict[type[ApiError], int] = {
+    Unauthorized: status.HTTP_401_UNAUTHORIZED,
+    Forbidden: status.HTTP_403_FORBIDDEN,
     MailboxNotFound: status.HTTP_404_NOT_FOUND,
     AccountNotFound: status.HTTP_404_NOT_FOUND,
+    UserNotFound: status.HTTP_404_NOT_FOUND,
     AccountMisconfigured: status.HTTP_400_BAD_REQUEST,
     AccountConnectAuthError: status.HTTP_401_UNAUTHORIZED,
     AccountNotConnected: status.HTTP_409_CONFLICT,
@@ -39,7 +50,12 @@ _STATUS_MAP: dict[type[ApiError], int] = {
     EmailSendError: status.HTTP_502_BAD_GATEWAY,
     ExternalAPIError: status.HTTP_502_BAD_GATEWAY,
     EnvVarError: status.HTTP_500_INTERNAL_SERVER_ERROR,
-    DatabaseError: status.HTTP_503_SERVICE_UNAVAILABLE,
+    CredentialFileError: status.HTTP_500_INTERNAL_SERVER_ERROR,
+    DatabaseConnectionError: status.HTTP_503_SERVICE_UNAVAILABLE,
+    DatabaseMigrationError: status.HTTP_500_INTERNAL_SERVER_ERROR,
+    DatabaseQueryError: status.HTTP_503_SERVICE_UNAVAILABLE,
+    TokenDecryptionError: status.HTTP_500_INTERNAL_SERVER_ERROR,
+    TokenIntegrityError: status.HTTP_500_INTERNAL_SERVER_ERROR,
 }
 
 

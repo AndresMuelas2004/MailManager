@@ -14,21 +14,22 @@ api/database/
 ├── settings.py                  # Centralized env var reading and validation
 ├── connection.py                # ThreadedConnectionPool + transactional context manager
 ├── lifecycle.py                 # App startup helpers (warmup, optional auto-migrate)
-├── contracts.py                 # Abstract interfaces (MailboxStore, AccountStore)
+├── contracts.py                 # Abstract interfaces (MailboxStore, AccountStore, UserStore, SessionStore)
 │
 ├── queries/                     # Raw SQL constants only — no Python logic
-│   ├── mailboxes.py             #   CRUD for mailboxes table
-│   ├── accounts.py              #   CRUD for accounts table
-│   └── tokens.py                #   SELECT/UPSERT/BACKFILL/DELETE for tokens table
+│   ├── mailboxes.py             #   CRUD for mailboxes table (incl. owner_user_id)
+│   ├── accounts.py              #   CRUD for accounts table + token SELECT/UPSERT/BACKFILL
+│   └── auth.py                  #   UPSERT/SELECT/DELETE for users and sessions tables
 │
 ├── repositories/                # Concrete implementations of contracts
 │   ├── mailbox_repository.py    #   PgMailboxStore (implements MailboxStore)
-│   └── account_repository.py    #   PgAccountStore (implements AccountStore)
+│   ├── account_repository.py    #   PgAccountStore (implements AccountStore) — includes token persistence with encryption
+│   ├── user_repository.py       #   PgUserStore (implements UserStore)
+│   └── session_repository.py    #   PgSessionStore (implements SessionStore)
 │
-├── security/                    # Credentials and token encryption
-│   ├── app_credentials.py       #   Loads provider OAuth app credentials from JSON files
-│   ├── token_crypto.py          #   Fernet encrypt/decrypt helpers
-│   └── token_store.py           #   Token persistence with context validation and legacy fallback
+├── security/                    # Credentials and token encryption utilities
+│   ├── app_credentials.py       #   Loads provider OAuth app credentials from JSON files (paths from settings)
+│   └── token_crypto.py          #   Fernet encrypt/decrypt helpers + plaintext fallback flag
 │
 ├── migrations/                  # Schema evolution
 │   ├── env.py                   #   Alembic runtime config
@@ -41,23 +42,92 @@ api/database/
 ### Internal data flow
 
 ```
-repositories/ & security/token_store.py
+repositories/
   → import queries from queries/
   → import connection from connection.py
-    → connection.py reads pool config from settings.py
-      → settings.py reads env vars (DATABASE_URL, pool tuning, encryption keys)
+  → import contracts from contracts.py
+  → account_repository also imports security/token_crypto
+
+security/
+  → app_credentials imports settings.py (provider credential paths)
+  → token_crypto imports settings.py (encryption keys, plaintext fallback)
+
+connection.py
+  → imports settings.py (pool config)
+
+settings.py
+  → reads os.environ (the only module that does)
 ```
 
-Repositories and token_store are the only modules that execute SQL. They combine a query from `queries/` with a connection from `connection.py`, and raise `DatabaseError` on failure.
+Repositories are the only modules that execute SQL. They combine a query from `queries/` with a connection from `connection.py`, and raise specific `ApiError` subclasses on failure (`DatabaseQueryError` for SQL failures, `TokenIntegrityError` for token validation issues, etc.).
 
 ### Layer boundaries
 
 - **`settings.py`** is the only module that reads `os.environ`.
 - **`connection.py`** is the only module that manages the connection pool.
 - **`queries/`** contains only SQL string constants — zero imports, zero logic.
-- **`repositories/`** and **`security/token_store.py`** are the only modules that execute SQL.
+- **`repositories/`** (including token operations in `account_repository.py`) are the only modules that execute SQL.
 - **`contracts.py`** defines abstract interfaces that decouple services from concrete implementations.
 - **`__init__.py`** re-exports everything — external code never imports submodules directly.
+
+## Error Handling
+
+The database layer uses specific `ApiError` subclasses instead of a generic catch-all. Each exception communicates exactly what failed.
+
+### Exception classes
+
+| Exception | `code` | HTTP | When |
+|---|---|---|---|
+| `DatabaseConnectionError` | `database_connection_error` | 503 | Pool creation, warmup |
+| `DatabaseQueryError` | `database_query_error` | 503 | Any SQL execution failure (CRUD) |
+| `DatabaseMigrationError` | `database_migration_error` | 500 | Schema migration failures |
+| `TokenDecryptionError` | `token_decryption_error` | 500 | Fernet `InvalidToken` |
+| `TokenIntegrityError` | `token_integrity_error` | 500 | Token validation/context mismatches |
+| `CredentialFileError` | `credential_file_error` | 500 | Credential file unreadable/corrupted |
+
+All inherit flat from `ApiError` (no intermediate base). Defined in `api/errors/exceptions.py`.
+
+### Capture technique
+
+Every `try` block in the database layer follows this ordered pattern:
+
+```python
+try:
+    # ... operation ...
+except psycopg2.errors.InvalidTextRepresentation:   # 1. Specific psycopg2 first
+    return None
+except ApiError:                                     # 2. Never double-wrap
+    raise
+except psycopg2.Error as exc:                        # 3. Domain-specific catch
+    raise DatabaseQueryError("Failed to ...") from exc
+except Exception as exc:                             # 4. Generic fallback last
+    raise DatabaseQueryError(
+        f"Unexpected ... error ({type(exc).__name__}): {exc}"
+    ) from exc
+```
+
+Rules:
+
+1. **Specific psycopg2 errors first** (step 1) — only where applicable (e.g. `InvalidTextRepresentation` for invalid UUID → graceful `None`/`[]`).
+2. **Never double-wrap `ApiError`** (step 2) — `get_connection()` internally calls `_get_pool()` which can raise `DatabaseConnectionError`. Without this guard, the generic `except Exception` would wrap it again.
+3. **Domain-specific catch** (step 3) — all `psycopg2.Error` subclasses map to the appropriate exception (`DatabaseQueryError` for repositories, `DatabaseConnectionError` for pool, `DatabaseMigrationError` for migrations).
+4. **Generic fallback last** (step 4) — ensures no exception escapes untyped. Message includes `type(exc).__name__` for debuggability.
+5. **Preserve the cause chain** — always `raise ... from exc`.
+
+### Where each exception is raised
+
+- **`connection.py`** → `DatabaseConnectionError` (pool creation, pool exhaustion via `getconn()`)
+- **`lifecycle.py`** → `DatabaseConnectionError` (warmup), `DatabaseMigrationError` (migrations)
+- **`migrations/runner.py`** → `DatabaseMigrationError`
+- **`repositories/*.py`** → `DatabaseQueryError` (SQL failures), `TokenIntegrityError` (token validation in `account_repository.py`)
+- **`security/token_crypto.py`** → `TokenDecryptionError`, `EnvVarError` (malformed `TOKEN_ENCRYPTION_KEY` — fails loud, never falls back to plaintext)
+- **`security/app_credentials.py`** → `CredentialFileError`
+
+### `AccountStore` token behavioral notes
+
+- `AccountStore.get_tokens()` returns `None` when no usable token exists (no row, no encrypted columns with plaintext fallback disabled, etc.). It never raises business-level exceptions — the service layer is responsible for mapping `None` to `AccountNotConnected`.
+- `_backfill_plaintext_tokens` is best-effort: failures are logged as warnings and never propagate. The backfill retries on the next read.
+- A malformed `TOKEN_ENCRYPTION_KEY` raises `EnvVarError` immediately via `get_fernet()` — it is never silently treated as "key absent".
 
 ## Design Principles
 
@@ -75,15 +145,29 @@ All external code imports from the package root. The `__init__.py` facade re-exp
 |---|---|---|
 | `mailbox_store` | `repositories/` | Singleton `PgMailboxStore` instance |
 | `account_store` | `repositories/` | Singleton `PgAccountStore` instance |
-| `get_connection` | `connection.py` | Transactional context manager (auto-commit/rollback) |
+| `user_store` | `repositories/` | Singleton `PgUserStore` instance |
+| `session_store` | `repositories/` | Singleton `PgSessionStore` instance |
 | `close_pool` | `connection.py` | Shutdown: close all pooled connections |
 | `warmup_connection` | `lifecycle.py` | Startup: validate DB reachability (`SELECT 1`) |
-| `init_db` | `lifecycle.py` | Deprecated — calls `warmup_connection()` |
 | `run_startup_migrations_if_enabled` | `lifecycle.py` | Conditional Alembic `upgrade head` at startup |
 | `load_app_credentials` | `security/` | Provider OAuth app credentials from JSON file |
-| `load_account_tokens` | `security/` | Read + decrypt account tokens with context validation |
-| `save_account_tokens` | `security/` | Encrypt + write account tokens with context validation |
-| `delete_account_tokens_for_records` | `security/` | Batch delete tokens by account IDs |
+
+## Contracts
+
+| Contract | Methods | Implementation |
+|---|---|---|
+| `MailboxStore` | `create`, `list_by_owner`, `get`, `delete` | `PgMailboxStore` |
+| `AccountStore` | `list_by_mailbox`, `get`, `upsert`, `delete`, `get_tokens`, `upsert_tokens` | `PgAccountStore` |
+| `UserStore` | `upsert`, `get_by_id`, `get_by_google_sub`, `delete` | `PgUserStore` |
+| `SessionStore` | `create`, `get`, `delete` | `PgSessionStore` |
+
+## Queries
+
+| Module | Tables | Operations |
+|---|---|---|
+| `queries/mailboxes.py` | `mailboxes` | INSERT (with owner_user_id), LIST_BY_OWNER, GET, DELETE |
+| `queries/accounts.py` | `accounts` | INSERT/UPSERT, LIST_BY_MAILBOX, GET, DELETE, SELECT_TOKENS, UPSERT_TOKENS, BACKFILL_TOKENS |
+| `queries/auth.py` | `users`, `sessions` | UPSERT_USER, GET_USER_BY_ID, GET_USER_BY_GOOGLE_SUB, DELETE_USER, INSERT_SESSION, GET_VALID_SESSION, DELETE_SESSION, DELETE_EXPIRED_SESSIONS |
 
 ## Migration Workflow (Alembic)
 
@@ -107,11 +191,12 @@ Production recommendation:
 
 ## Token Security Model
 
+- Token columns (`access_token`, `refresh_token`, `access_token_encrypted`, `refresh_token_encrypted`, etc.) live directly in the `accounts` table (merged from a separate `tokens` table in migration 0005).
 - New token writes are encrypted (`access_token_encrypted`, `refresh_token_encrypted`).
 - `TOKEN_ENCRYPTION_KEY` and `TOKEN_ENCRYPTION_KEY_ID` control encryption behavior.
 - Token reads validate full account context (`account_id + mailbox_id + provider`).
 - Legacy plaintext fallback is controlled by `TOKEN_PLAINTEXT_FALLBACK_ENABLED`.
-- On legacy plaintext read, token store tries lazy backfill to encrypted columns.
+- On legacy plaintext read, account store tries lazy backfill to encrypted columns.
 
 ## Operational Env Vars
 
@@ -141,9 +226,10 @@ Token encryption:
 
 When adding a provider:
 
-1. Add provider support in app credential loading (`security/app_credentials.py`).
-2. Update provider validation constraints via a new migration.
-3. Add/adjust integration and E2E tests for connect, send, and unread flows.
+1. Register the provider env var in `settings.py` (`_PROVIDER_CREDENTIALS_ENV_VARS`).
+2. Add provider-specific JSON parsing in `security/app_credentials.py` if needed.
+3. Update provider validation constraints via a new migration.
+4. Add/adjust integration and E2E tests for connect, send, and unread flows.
 
 ## Deprecation Note
 

@@ -1,5 +1,5 @@
 """
-Centralized settings for database connectivity and token encryption.
+Centralized settings for database connectivity, token encryption, and provider credentials.
 """
 
 from __future__ import annotations
@@ -149,6 +149,27 @@ def is_token_plaintext_fallback_enabled() -> bool:
     Return whether legacy plaintext token reads are temporarily allowed.
     """
     return get_token_settings().plaintext_fallback_enabled
+
+
+_PROVIDER_CREDENTIALS_ENV_VARS: dict[str, str] = {
+    "gmail": "MIA_GMAIL_CREDENTIALS_PATH",
+    "outlook": "MIA_OUTLOOK_CREDENTIALS_PATH",
+}
+
+
+def get_provider_credentials_path(provider: str) -> str | None:
+    """
+    Return file path for provider app credentials from environment.
+
+    Returns None when the provider has no configured env var.
+    """
+    env_var = _PROVIDER_CREDENTIALS_ENV_VARS.get(provider)
+    if not env_var:
+        return None
+    path = os.getenv(env_var, "").strip()
+    if not path:
+        raise EnvVarError(f"{env_var} is not set.")
+    return path
 
 
 def is_startup_auto_migrate_enabled() -> bool:

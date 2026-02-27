@@ -39,6 +39,7 @@ except ModuleNotFoundError:  # pragma: no cover - optional local dependency
 from api.database import close_pool, run_startup_migrations_if_enabled, warmup_connection
 from api.errors.handlers import register_error_handlers
 from api.routers.accounts import router as accounts_router
+from api.routers.auth import router as auth_router
 from api.routers.emails import router as emails_router
 from api.routers.health import router as health_router
 from api.routers.mailboxes import router as mailboxes_router
@@ -69,6 +70,7 @@ def create_app() -> FastAPI:
     )
     register_error_handlers(app)
     app.include_router(health_router)
+    app.include_router(auth_router)
     app.include_router(mailboxes_router)
     app.include_router(accounts_router)
     app.include_router(emails_router)

@@ -52,7 +52,7 @@ class EmailClient(ABC):
         """
 
     @abstractmethod
-    def fetch_unread_emails(self) -> list[EmailMessage]:
+    def fetch_unread_emails(self, max_total: int = 200, page_size: int = 50) -> list[EmailMessage]:
         """
         Retrieve unread emails from the provider and return them as a list
         of normalized EmailMessage objects.

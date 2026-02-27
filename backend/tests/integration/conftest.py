@@ -1,8 +1,11 @@
+from __future__ import annotations
+
 import contextlib
 import os
 from pathlib import Path
 
 import psycopg2
+import psycopg2.extras
 import pytest
 from pydantic import SecretStr
 
@@ -10,12 +13,18 @@ from api.database import connection as connection_module
 from api.database.migrations.runner import ensure_schema_at_head
 from api.database.repositories import account_repository as account_repo_module
 from api.database.repositories import mailbox_repository as mailbox_repo_module
-from api.database.security import token_store as token_store_impl_module
+from api.database.repositories import session_repository as session_repo_module
+from api.database.repositories import user_repository as user_repo_module
+from api.routers.routers_helpers import require_session
 from api.services import accounts_service, emails_service, services_helpers
 from core.email.email_manager import EmailManager
 from tests.shared.email_fakes import FakeEmailClient
 
 _ALEMBIC_INI_PATH = Path(__file__).resolve().parents[2] / "api" / "database" / "alembic.ini"
+
+TEST_USER_ID = "00000000-0000-4000-a000-000000000001"
+TEST_USER_GOOGLE_SUB = "google-sub-test-user"
+TEST_USER_EMAIL = "testuser@example.com"
 
 
 try:
@@ -68,12 +77,11 @@ def create_test_schema():
                 """
                 SELECT
                     to_regclass('public.mailboxes') IS NOT NULL,
-                    to_regclass('public.accounts') IS NOT NULL,
-                    to_regclass('public.tokens') IS NOT NULL
+                    to_regclass('public.accounts') IS NOT NULL
                 """
             )
-            mailbox_exists, account_exists, token_exists = cur.fetchone()
-            existing_tables = bool(mailbox_exists and account_exists and token_exists)
+            mailbox_exists, account_exists = cur.fetchone()
+            existing_tables = bool(mailbox_exists and account_exists)
 
             cur.execute("SELECT to_regclass('public.alembic_version') IS NOT NULL")
             has_alembic_version = bool(cur.fetchone()[0])
@@ -107,12 +115,40 @@ def isolated_db(monkeypatch):
     monkeypatch.setattr(connection_module, "get_connection", _get_conn)
     monkeypatch.setattr(mailbox_repo_module.connection, "get_connection", _get_conn)
     monkeypatch.setattr(account_repo_module.connection, "get_connection", _get_conn)
-    monkeypatch.setattr(token_store_impl_module.connection, "get_connection", _get_conn)
+    monkeypatch.setattr(user_repo_module.connection, "get_connection", _get_conn)
+    monkeypatch.setattr(session_repo_module.connection, "get_connection", _get_conn)
 
     yield conn
 
     conn.rollback()
     conn.close()
+
+
+@pytest.fixture(autouse=True)
+def _seed_test_user(isolated_db):
+    """Seed a test user in the database so mailbox ownership works."""
+    with isolated_db.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(
+            """
+            INSERT INTO users (user_id, google_sub, email, name)
+            VALUES (%(user_id)s, %(google_sub)s, %(email)s, %(name)s)
+            ON CONFLICT (google_sub) DO UPDATE SET email = EXCLUDED.email
+            """,
+            {
+                "user_id": TEST_USER_ID,
+                "google_sub": TEST_USER_GOOGLE_SUB,
+                "email": TEST_USER_EMAIL,
+                "name": "Test User",
+            },
+        )
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _override_require_session(app):
+    """Override the require_session dependency for all integration tests."""
+    app.dependency_overrides[require_session] = lambda: TEST_USER_ID
+    yield
+    app.dependency_overrides.pop(require_session, None)
 
 
 def _apply_test_monkeypatches(monkeypatch, build_manager_fn):
@@ -145,8 +181,9 @@ def _apply_test_monkeypatches(monkeypatch, build_manager_fn):
         lambda _mb, _acc, _prov: _fake_account_tokens,
     )
 
-    monkeypatch.setattr(accounts_service, "save_account_tokens", lambda *_a, **_kw: None)
-    monkeypatch.setattr(emails_service, "save_account_tokens", lambda *_a, **_kw: None)
+    _noop_upsert = lambda *_a, **_kw: None
+    monkeypatch.setattr(accounts_service.account_store, "upsert_tokens", _noop_upsert)
+    monkeypatch.setattr(emails_service.account_store, "upsert_tokens", _noop_upsert)
 
 
 @pytest.fixture

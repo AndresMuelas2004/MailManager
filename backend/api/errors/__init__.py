@@ -1,4 +1,4 @@
-﻿"""
+"""
 Error package exports for the API layer.
 """
 
@@ -8,12 +8,20 @@ from api.errors.exceptions import (
     AccountNotConnected,
     AccountNotFound,
     ApiError,
+    CredentialFileError,
+    DatabaseConnectionError,
+    DatabaseMigrationError,
+    DatabaseQueryError,
     EmailFetchError,
     EmailSendError,
     EnvVarError,
     ExternalAPIError,
-    DatabaseError,
+    Forbidden,
     MailboxNotFound,
+    TokenDecryptionError,
+    TokenIntegrityError,
+    Unauthorized,
+    UserNotFound,
 )
 
 __all__ = [
@@ -22,10 +30,18 @@ __all__ = [
     "AccountNotConnected",
     "AccountNotFound",
     "ApiError",
+    "CredentialFileError",
+    "DatabaseConnectionError",
+    "DatabaseMigrationError",
+    "DatabaseQueryError",
     "EmailFetchError",
     "EmailSendError",
     "EnvVarError",
     "ExternalAPIError",
-    "DatabaseError",
+    "Forbidden",
     "MailboxNotFound",
+    "TokenDecryptionError",
+    "TokenIntegrityError",
+    "Unauthorized",
+    "UserNotFound",
 ]

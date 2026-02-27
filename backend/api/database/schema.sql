@@ -3,35 +3,40 @@
 -- Source of truth for schema evolution: Alembic migrations.
 -- ============================================================
 
+-- ---------- USERS ----------
+
+CREATE TABLE IF NOT EXISTS users (
+    user_id    UUID         PRIMARY KEY,
+    google_sub VARCHAR(255) UNIQUE NOT NULL,
+    email      VARCHAR(320) NOT NULL,
+    name       VARCHAR(200),
+    avatar_url TEXT,
+    created_at TIMESTAMPTZ  NOT NULL DEFAULT now()
+);
+
 -- ---------- MAILBOXES ----------
 
 CREATE TABLE IF NOT EXISTS mailboxes (
-    mailbox_id   UUID         PRIMARY KEY,
-    display_name VARCHAR(120) NOT NULL,
-    created_at   TIMESTAMPTZ  NOT NULL DEFAULT now()
+    mailbox_id    UUID         PRIMARY KEY,
+    display_name  VARCHAR(120) NOT NULL,
+    owner_user_id UUID         NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    created_at    TIMESTAMPTZ  NOT NULL DEFAULT now()
 );
+
+CREATE INDEX IF NOT EXISTS idx_mailboxes_owner_user_id
+    ON mailboxes(owner_user_id);
 
 -- ---------- ACCOUNTS ----------
 
 CREATE TABLE IF NOT EXISTS accounts (
-    account_id    UUID         PRIMARY KEY,
-    mailbox_id    UUID         NOT NULL
-                  REFERENCES mailboxes(mailbox_id) ON DELETE CASCADE,
-    provider      VARCHAR(20)  NOT NULL
-                  CHECK (provider IN ('gmail', 'outlook')),
-    display_label VARCHAR(120) NOT NULL,
-    config        JSONB        NOT NULL DEFAULT '{}'::jsonb,
-    created_at    TIMESTAMPTZ  NOT NULL DEFAULT now()
-);
-
-CREATE INDEX IF NOT EXISTS idx_accounts_mailbox_id
-    ON accounts(mailbox_id);
-
--- ---------- TOKENS ----------
-
-CREATE TABLE IF NOT EXISTS tokens (
-    account_id              UUID         PRIMARY KEY
-                            REFERENCES accounts(account_id) ON DELETE CASCADE,
+    account_id              UUID         PRIMARY KEY,
+    mailbox_id              UUID         NOT NULL
+                            REFERENCES mailboxes(mailbox_id) ON DELETE CASCADE,
+    provider                VARCHAR(20)  NOT NULL
+                            CHECK (provider IN ('gmail', 'outlook')),
+    display_label           VARCHAR(120) NOT NULL,
+    config                  JSONB        NOT NULL DEFAULT '{}'::jsonb,
+    created_at              TIMESTAMPTZ  NOT NULL DEFAULT now(),
     access_token            TEXT,
     refresh_token           TEXT,
     access_token_encrypted  TEXT,
@@ -39,5 +44,24 @@ CREATE TABLE IF NOT EXISTS tokens (
     encryption_key_id       VARCHAR(64),
     expiry                  TIMESTAMPTZ,
     scopes                  TEXT[],
-    updated_at              TIMESTAMPTZ  NOT NULL DEFAULT now()
+    tokens_updated_at       TIMESTAMPTZ
 );
+
+CREATE INDEX IF NOT EXISTS idx_accounts_mailbox_id
+    ON accounts(mailbox_id);
+
+-- ---------- SESSIONS ----------
+
+CREATE TABLE IF NOT EXISTS sessions (
+    session_id UUID        PRIMARY KEY,
+    user_id    UUID        NOT NULL
+               REFERENCES users(user_id) ON DELETE CASCADE,
+    expires_at TIMESTAMPTZ NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_sessions_user_id
+    ON sessions(user_id);
+
+CREATE INDEX IF NOT EXISTS idx_sessions_expires_at
+    ON sessions(expires_at);

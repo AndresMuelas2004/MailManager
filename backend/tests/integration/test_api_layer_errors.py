@@ -13,7 +13,7 @@ _MAILBOX_URL = "/mailboxes"
 
 
 # ==================================================================
-# MailboxNotFound (404) — ensure_mailbox_exists / direct service guard
+# MailboxNotFound (404) — ensure_mailbox_access / direct service guard
 # ==================================================================
 
 def test_get_mailbox_not_found(test_client):

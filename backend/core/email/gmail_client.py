@@ -90,7 +90,12 @@ class GmailClient(EmailClient):
             raise EmailMissingAppCredentialsError("Gmail interactive auth requires app credentials.")
 
         client_config = self._build_client_config(credentials_payload)
-        flow = InstalledAppFlow.from_client_config(client_config, GMAIL_SCOPES)
+        try:
+            flow = InstalledAppFlow.from_client_config(client_config, GMAIL_SCOPES)
+        except Exception as exc:
+            raise EmailMissingAppCredentialsError(
+                f"Gmail failed to build OAuth flow from app credentials: {exc}"
+            ) from exc
         try:
             creds = flow.run_local_server(port=0)
         except OSError as exc:
@@ -169,7 +174,12 @@ class GmailClient(EmailClient):
         elif creds.expired and not creds.refresh_token:
             raise EmailMissingRefreshTokenError("Gmail token expired and refresh_token is missing.")
 
-        self.service = build("gmail", "v1", credentials=creds)
+        try:
+            self.service = build("gmail", "v1", credentials=creds)
+        except Exception as exc:
+            raise EmailExternalAPIError(
+                f"Gmail failed to initialize API service ({type(exc).__name__}): {exc}"
+            ) from exc
         if refreshed:
             token_record = {
                 "access_token": creds.token,

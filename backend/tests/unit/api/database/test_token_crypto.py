@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 from api.database.security import token_crypto
-from api.errors.exceptions import EnvVarError
+from api.errors.exceptions import EnvVarError, TokenDecryptionError
 
 Fernet = pytest.importorskip("cryptography.fernet").Fernet
 
@@ -29,3 +29,10 @@ def test_invalid_key_raises_env_error(monkeypatch):
 
     with pytest.raises(EnvVarError):
         token_crypto.get_fernet(required=True)
+
+
+def test_decrypt_raises_token_decryption_error_on_invalid_data(monkeypatch):
+    monkeypatch.setenv("TOKEN_ENCRYPTION_KEY", Fernet.generate_key().decode("utf-8"))
+
+    with pytest.raises(TokenDecryptionError, match="Failed to decrypt account token"):
+        token_crypto.decrypt_token("not-valid-encrypted-data")

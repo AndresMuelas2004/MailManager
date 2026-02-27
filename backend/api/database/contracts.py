@@ -18,7 +18,7 @@ class MailboxStore(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def list(self) -> list[dict[str, Any]]:
+    def list_by_owner(self, owner_user_id: str) -> list[dict[str, Any]]:
         raise NotImplementedError
 
     @abstractmethod
@@ -51,3 +51,54 @@ class AccountStore(ABC):
     def delete(self, mailbox_id: str, account_id: str) -> None:
         raise NotImplementedError
 
+    @abstractmethod
+    def get_tokens(self, mailbox_id: str, account_id: str, provider: str) -> dict[str, Any] | None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def upsert_tokens(self, mailbox_id: str, account_id: str, provider: str, token_data: dict[str, Any]) -> None:
+        raise NotImplementedError
+
+
+class UserStore(ABC):
+    """
+    Contract for user persistence.
+    """
+
+    @abstractmethod
+    def upsert(self, user: dict[str, Any]) -> dict[str, Any]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_by_id(self, user_id: str) -> dict[str, Any] | None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_by_google_sub(self, google_sub: str) -> dict[str, Any] | None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def delete(self, user_id: str) -> bool:
+        raise NotImplementedError
+
+
+class SessionStore(ABC):
+    """
+    Contract for session persistence.
+    """
+
+    @abstractmethod
+    def create(self, session: dict[str, Any]) -> dict[str, Any]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def get(self, session_id: str) -> dict[str, Any] | None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def delete(self, session_id: str) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def delete_expired(self) -> None:
+        raise NotImplementedError

@@ -31,16 +31,28 @@ class AccountNotFound(ApiError):
     code = "account_not_found"
 
 
-class DatabaseError(ApiError):
-    code = "database_error"
-
-
 class AccountConnectAuthError(ApiError):
     code = "account_connect_auth_error"
 
 
 class AccountNotConnected(ApiError):
     code = "account_not_connected"
+
+
+class CredentialFileError(ApiError):
+    code = "credential_file_error"
+
+
+class DatabaseConnectionError(ApiError):
+    code = "database_connection_error"
+
+
+class DatabaseMigrationError(ApiError):
+    code = "database_migration_error"
+
+
+class DatabaseQueryError(ApiError):
+    code = "database_query_error"
 
 
 class EmailFetchError(ApiError):
@@ -61,3 +73,23 @@ class AccountMisconfigured(ApiError):
 
 class EnvVarError(ApiError):
     code = "env_var_error"
+
+
+class Unauthorized(ApiError):
+    code = "unauthorized"
+
+
+class Forbidden(ApiError):
+    code = "forbidden"
+
+
+class TokenDecryptionError(ApiError):
+    code = "token_decryption_error"
+
+
+class TokenIntegrityError(ApiError):
+    code = "token_integrity_error"
+
+
+class UserNotFound(ApiError):
+    code = "user_not_found"

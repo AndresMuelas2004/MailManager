@@ -11,7 +11,7 @@ import psycopg2
 from psycopg2 import pool
 
 from api.database.settings import get_database_settings
-from api.errors.exceptions import DatabaseError
+from api.errors.exceptions import DatabaseConnectionError
 
 
 _pool: pool.ThreadedConnectionPool | None = None
@@ -30,7 +30,13 @@ def _get_pool() -> pool.ThreadedConnectionPool:
                 application_name=cfg.application_name,
             )
         except psycopg2.Error as exc:
-            raise DatabaseError("Failed to create database connection pool.") from exc
+            raise DatabaseConnectionError(
+                "Failed to create database connection pool."
+            ) from exc
+        except Exception as exc:
+            raise DatabaseConnectionError(
+                f"Unexpected connection pool error ({type(exc).__name__}): {exc}"
+            ) from exc
     return _pool
 
 
@@ -40,7 +46,16 @@ def get_connection() -> Iterator:
     Yield one pooled connection and wrap operation in a transaction.
     """
     p = _get_pool()
-    conn = p.getconn()
+    try:
+        conn = p.getconn()
+    except psycopg2.Error as exc:
+        raise DatabaseConnectionError(
+            "Failed to get connection from pool."
+        ) from exc
+    except Exception as exc:
+        raise DatabaseConnectionError(
+            f"Unexpected pool error ({type(exc).__name__}): {exc}"
+        ) from exc
     try:
         yield conn
         conn.commit()
@@ -59,4 +74,3 @@ def close_pool() -> None:
     if _pool is not None:
         _pool.closeall()
         _pool = None
-
