@@ -10,7 +10,7 @@ from api.errors.exceptions import (
     AccountConnectAuthError,
     AccountNotFound,
 )
-from core.email.errors import CoreError
+from core.email import CoreError
 from api.schemas.account import (
     AccountConnectResponse,
     AccountCreate,

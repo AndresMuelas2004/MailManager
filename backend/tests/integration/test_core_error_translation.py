@@ -12,7 +12,7 @@ import pytest
 
 from api.errors.exceptions import AccountMisconfigured
 from api.services import accounts_service, emails_service, services_helpers
-from core.email.errors import (
+from core.email import (
     EmailAuthError,
     EmailExternalAPIError,
     EmailProviderConfigError,

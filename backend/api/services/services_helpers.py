@@ -17,8 +17,7 @@ from auth import (
     AuthTokenNetworkError,
     AuthTokenProviderError,
 )
-from core.email.email_manager import EmailManager
-from core.email.errors import (
+from core.email import (
     CoreError,
     EmailAccountNotFoundError,
     EmailAccountRecordError,
@@ -29,6 +28,7 @@ from core.email.errors import (
     EmailInvalidCredentialsDataError,
     EmailInvalidExpiryError,
     EmailInvalidTokenDataError,
+    EmailManager,
     EmailMissingAppCredentialsError,
     EmailMissingRefreshTokenError,
     EmailMissingTokenError,

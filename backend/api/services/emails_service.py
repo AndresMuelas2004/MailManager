@@ -12,7 +12,7 @@ from api.errors.exceptions import (
     EmailFetchError,
     EmailSendError,
 )
-from core.email.errors import CoreError
+from core.email import CoreError
 from api.schemas.email import EmailOut, EmailSendRequest
 from api.services.services_helpers import (
     build_manager_for_accounts,

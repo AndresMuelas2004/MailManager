@@ -17,7 +17,7 @@ from database.repositories import session_repository as session_repo_module
 from database.repositories import user_repository as user_repo_module
 from api.routers.routers_helpers import require_session
 from api.services import accounts_service, emails_service, services_helpers
-from core.email.email_manager import EmailManager
+from core.email import EmailManager
 from tests.shared.email_fakes import FakeEmailClient
 
 _ALEMBIC_INI_PATH = Path(__file__).resolve().parents[2] / "database" / "alembic.ini"

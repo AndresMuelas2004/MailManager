@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from core.email.email_client import EmailClient, EmailMessage
+from core.email import EmailClient, EmailMessage
 
 
 DEFAULT_SENT_AT = datetime(2024, 1, 1, 12, 0, 0)

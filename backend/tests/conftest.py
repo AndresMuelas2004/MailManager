@@ -10,7 +10,7 @@ if str(BACKEND_PATH) not in sys.path:
     sys.path.insert(0, str(BACKEND_PATH))
 
 from api.app import create_app
-from core.email.email_manager import EmailManager
+from core.email import EmailManager
 from tests.shared.email_fakes import FakeEmailClient, build_message
 
 

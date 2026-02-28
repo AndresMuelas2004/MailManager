@@ -152,6 +152,8 @@ Typical mappings:
 
 The API service layer translates these into `ApiError` subclasses.
 
+External consumers (services, test fixtures) should import through the package facade: `from core.email import CoreError, EmailManager, ...`
+
 ### Capture technique
 
 Every provider client follows these rules when catching exceptions:
@@ -193,6 +195,7 @@ Core layer:
 - [ ] Reuse helper functions from `helpers.py`.
 - [ ] Add provider branch in `EmailManager._build_client`.
 - [ ] Raise typed `CoreError` subclasses for all failure paths.
+- [ ] Export any new public symbols in `core/email/__init__.py`.
 
 Database and config:
 

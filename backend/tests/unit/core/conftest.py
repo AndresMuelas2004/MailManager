@@ -7,7 +7,7 @@ BACKEND_PATH = Path(__file__).resolve().parents[3]
 if str(BACKEND_PATH) not in sys.path:
     sys.path.insert(0, str(BACKEND_PATH))
 
-from core.email.email_manager import EmailManager
+from core.email import EmailManager
 from tests.shared.email_fakes import FakeEmailClient, build_message
 
 
