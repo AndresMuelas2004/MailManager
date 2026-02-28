@@ -160,7 +160,18 @@ Every provider client follows these rules when catching exceptions:
 2. **Catch provider-specific exceptions first.** Each `try` block lists the concrete exception types the provider SDK can throw (e.g. `HttpError`, `TransportError`, `RefreshError` for Gmail; `HTTPError`, `URLError` for Outlook) before any generic handler.
 3. **Generic fallback last.** A final `except Exception as exc` with message `"<Provider> unexpected <operation> error ({type}): {exc}"` ensures no exception escapes untyped.
 4. **Preserve the cause chain.** Always `raise ... from exc` so the original traceback remains available for debugging.
-5. **Never double-wrap typed errors.** If code inside the `try` block can raise a `CoreError` subclass — either explicitly (`raise EmailExternalAPIError(...)`) or via a helper that raises one (e.g. `_token_request()`) — add a targeted `except` for that type **before** the generic handler to re-raise it directly. Without this guard, the `except Exception` fallback would catch the already-typed error and wrap it inside a new one. When the guard is not a plain re-raise but converts to a different error type, it becomes a reclassification (see rule 6). **If nothing inside the `try` can produce a `CoreError`, the guard is unnecessary** — only external library calls remain, and those will never raise core exceptions.
+5. **Never double-wrap typed errors.** This rule applies when code inside the `try` block can raise a `CoreError` subclass — either via an explicit `raise` statement (e.g. `raise EmailExternalAPIError(...)`) or through a helper function that raises one (e.g. `_token_request()` raises `EmailRefreshFailedError`). In that case, add a targeted `except CoreError: raise` (or the specific subclass) **before** the generic `except Exception` handler to re-raise it directly. Without this guard, the generic fallback would catch the already-typed error and wrap it inside a new one. When the guard is not a plain re-raise but converts to a different error type, it becomes a reclassification (see rule 6). **If nothing inside the `try` can produce a `CoreError`, the guard is unnecessary** — only external library calls remain, and those will never raise core exceptions. Example:
+   ```python
+   try:
+       self._token_request(...)       # Can raise EmailRefreshFailedError (a CoreError)
+       result = provider_sdk.call()
+   except CoreError:                  # Guard: re-raise before generic catch
+       raise
+   except HttpError as exc:
+       raise EmailExternalAPIError(...) from exc
+   except Exception as exc:
+       raise EmailExternalAPIError(...) from exc
+   ```
 6. **Reclassify when the functional meaning changes.** An external API failure during token refresh becomes `EmailRefreshFailedError`, not `EmailExternalAPIError`, because the operation that failed is authentication refresh.
 7. **Best-effort parsing with soft fallback.** When processing response data (headers, dates, error bodies), tolerate malformed values with a fallback instead of aborting the entire operation.
 

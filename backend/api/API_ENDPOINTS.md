@@ -72,5 +72,8 @@ All routes except `/health`, `POST /auth/google`, and `POST /auth/logout` requir
 | `database_query_error` | `503` |
 | `token_decryption_error` | `500` |
 | `token_integrity_error` | `500` |
+| `app_credentials_invalid` | `500` |
+| `app_credentials_missing` | `500` |
+| `recipients_missing` | `400` |
 
 Validation errors (Pydantic): `422`. Unhandled exceptions: `500` with `code = "api_error"`.

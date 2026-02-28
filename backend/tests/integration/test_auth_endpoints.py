@@ -9,6 +9,8 @@ from uuid import uuid4
 
 import pytest
 
+from auth import AuthTokenInvalidError
+
 from api.routers.routers_helpers import require_session
 from api.services import auth_service
 from tests.integration.conftest import TEST_USER_ID
@@ -47,7 +49,7 @@ def test_google_login_success(test_client_base, isolated_db, monkeypatch, app):
 def test_google_login_invalid_token(test_client_base, isolated_db, monkeypatch, app):
     """Invalid token raises Unauthorized -> 401."""
     def _raise(*_a, **_kw):
-        raise ValueError("Invalid token")
+        raise AuthTokenInvalidError("Invalid token")
 
     monkeypatch.setattr(auth_service, "verify_google_token", _raise)
     monkeypatch.setenv("GOOGLE_CLIENT_ID", "test-client-id")

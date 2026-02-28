@@ -368,7 +368,7 @@ class OutlookClient(EmailClient):
             message_id = msg.get("id", "")
             raw_mime_url = f"{GRAPH_BASE_URL}/me/messages/{message_id}/$value"
             raw_bytes = self._graph_raw_request(raw_mime_url)
-            raw_rfc822_b64url = base64.urlsafe_b64encode(raw_bytes).decode("utf-8") or None
+            raw_rfc822_b64url = base64.urlsafe_b64encode(raw_bytes).decode("utf-8")
 
             unread_emails.append(
                 EmailMessage(

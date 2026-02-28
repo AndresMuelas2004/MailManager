@@ -1,8 +1,8 @@
 """
-Auth package public surface.
+Auth error hierarchy re-exports.
 """
 
-from auth.errors import (
+from auth.errors.errors import (
     AuthError,
     AuthSettingsError,
     AuthTokenError,
@@ -10,17 +10,12 @@ from auth.errors import (
     AuthTokenNetworkError,
     AuthTokenProviderError,
 )
-from auth.google_auth.google import verify_google_token
-from auth.settings import AuthSettings, get_auth_settings
 
 __all__ = [
     "AuthError",
-    "AuthSettings",
     "AuthSettingsError",
     "AuthTokenError",
     "AuthTokenInvalidError",
     "AuthTokenNetworkError",
     "AuthTokenProviderError",
-    "get_auth_settings",
-    "verify_google_token",
 ]

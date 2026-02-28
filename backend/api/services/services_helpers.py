@@ -9,6 +9,14 @@ from typing import Any, Iterable
 
 from pydantic import SecretStr
 
+from auth import (
+    AuthError,
+    AuthSettingsError,
+    AuthTokenError,
+    AuthTokenInvalidError,
+    AuthTokenNetworkError,
+    AuthTokenProviderError,
+)
 from core.email.email_manager import EmailManager
 from core.email.errors import (
     CoreError,
@@ -49,6 +57,7 @@ from api.errors.exceptions import (
     RecipientsMissing,
     TokenDecryptionError,
     TokenIntegrityError,
+    Unauthorized,
 )
 from database import (
     account_store,
@@ -106,6 +115,45 @@ _DB_TO_API_MAP: list[tuple[type[DatabaseError], type[ApiError]]] = [
     (UnknownProviderError, AccountMisconfigured),
     (DatabaseError, ApiError),
 ]
+
+
+# ---------------------------------------------------------------------------
+# Auth → API error mapping (most specific first; evaluated with isinstance)
+# ---------------------------------------------------------------------------
+
+_AUTH_TO_API_MAP: list[tuple[type[AuthError], type[ApiError]]] = [
+    (AuthSettingsError, EnvVarError),
+    (AuthTokenNetworkError, ExternalAPIError),
+    (AuthTokenInvalidError, Unauthorized),
+    (AuthTokenProviderError, Unauthorized),
+    (AuthTokenError, Unauthorized),
+    (AuthError, ApiError),
+]
+
+
+def translate_auth_error(
+    exc: Exception,
+    *,
+    fallback: type[ApiError] = ApiError,
+    context: dict[str, Any] | None = None,
+) -> ApiError:
+    """
+    Translate an AuthError into the corresponding ApiError using the mapping.
+
+    If *exc* is an AuthError subclass the first matching entry in
+    ``_AUTH_TO_API_MAP`` is used.  Otherwise *fallback* is instantiated.
+    """
+    if isinstance(exc, AuthError):
+        for auth_type, api_type in _AUTH_TO_API_MAP:
+            if isinstance(exc, auth_type):
+                detail = exc.detail if hasattr(exc, "detail") else {}
+                if context:
+                    detail = {**detail, **(context or {})}
+                detail["auth_code"] = exc.code
+                return api_type(exc.message, detail)
+        # Unreachable when AuthError is in the map, but safe fallback.
+        return fallback(str(exc), {**(context or {}), "auth_code": exc.code})
+    return fallback(str(exc) or "Unexpected auth error.", context or {})
 
 
 def translate_core_error(

@@ -11,7 +11,9 @@ from uuid import uuid4
 
 import pytest
 
-from api.errors.exceptions import Unauthorized, UserNotFound
+from auth import AuthTokenInvalidError, AuthTokenNetworkError
+
+from api.errors.exceptions import ExternalAPIError, Unauthorized, UserNotFound
 from api.schemas.auth import AuthResponse, UserOut
 from api.services import auth_service
 
@@ -115,13 +117,24 @@ def test_validate_session_valid(monkeypatch):
 
 def test_google_login_invalid_token(monkeypatch, mock_response):
     def _raise(*_a, **_kw):
-        raise ValueError("bad token")
+        raise AuthTokenInvalidError("bad token")
 
     monkeypatch.setattr(auth_service, "verify_google_token", _raise)
     monkeypatch.setenv("GOOGLE_CLIENT_ID", "cid")
 
-    with pytest.raises(Unauthorized, match="Invalid Google token"):
+    with pytest.raises(Unauthorized, match="bad token"):
         auth_service.google_login("bad-token", mock_response)
+
+
+def test_google_login_network_error(monkeypatch, mock_response):
+    def _raise(*_a, **_kw):
+        raise AuthTokenNetworkError("connection refused")
+
+    monkeypatch.setattr(auth_service, "verify_google_token", _raise)
+    monkeypatch.setenv("GOOGLE_CLIENT_ID", "cid")
+
+    with pytest.raises(ExternalAPIError, match="connection refused"):
+        auth_service.google_login("some-token", mock_response)
 
 
 def test_google_login_missing_email(monkeypatch, mock_response):

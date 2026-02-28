@@ -7,6 +7,7 @@ from __future__ import annotations
 import pytest
 
 from auth import settings
+from auth import AuthSettingsError
 
 
 def test_get_auth_settings_defaults(monkeypatch):
@@ -24,7 +25,7 @@ def test_get_auth_settings_defaults(monkeypatch):
 def test_get_auth_settings_missing_client_id(monkeypatch):
     monkeypatch.delenv("GOOGLE_CLIENT_ID", raising=False)
 
-    with pytest.raises(ValueError, match="GOOGLE_CLIENT_ID"):
+    with pytest.raises(AuthSettingsError, match="GOOGLE_CLIENT_ID"):
         settings.get_auth_settings()
 
 
@@ -44,7 +45,7 @@ def test_get_auth_settings_invalid_session_lifetime(monkeypatch):
     monkeypatch.setenv("GOOGLE_CLIENT_ID", "cid")
     monkeypatch.setenv("AUTH_SESSION_LIFETIME_DAYS", "not-a-number")
 
-    with pytest.raises(ValueError, match="AUTH_SESSION_LIFETIME_DAYS"):
+    with pytest.raises(AuthSettingsError, match="AUTH_SESSION_LIFETIME_DAYS"):
         settings.get_auth_settings()
 
 
@@ -52,5 +53,5 @@ def test_get_auth_settings_invalid_cookie_secure(monkeypatch):
     monkeypatch.setenv("GOOGLE_CLIENT_ID", "cid")
     monkeypatch.setenv("AUTH_COOKIE_SECURE", "maybe")
 
-    with pytest.raises(ValueError, match="AUTH_COOKIE_SECURE"):
+    with pytest.raises(AuthSettingsError, match="AUTH_COOKIE_SECURE"):
         settings.get_auth_settings()

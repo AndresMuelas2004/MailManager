@@ -118,7 +118,7 @@ except Exception as exc:                             # 4. Generic fallback last
 Rules:
 
 1. **Specific psycopg2 errors first** (step 1) — only where applicable (e.g. `InvalidTextRepresentation` for invalid UUID → graceful `None`/`[]`).
-2. **Never double-wrap `DatabaseError`** (step 2) — `get_connection()` internally calls `_get_pool()` which can raise `ConnectionPoolError`. Without this guard, the generic `except Exception` would wrap it again.
+2. **Never double-wrap `DatabaseError`** (step 2) — this guard is only needed when code inside the `try` block can raise a `DatabaseError` subclass, either explicitly or via an internal helper (e.g. `get_connection()` calls `_get_pool()` which can raise `ConnectionPoolError`). The `except DatabaseError: raise` re-raises it before the generic `except Exception` can catch and wrap it a second time. **If nothing inside the `try` can produce a `DatabaseError`, this guard is unnecessary.**
 3. **Domain-specific catch** (step 3) — all `psycopg2.Error` subclasses map to the appropriate exception (`QueryError` for repositories, `ConnectionPoolError` for pool, `MigrationError` for migrations).
 4. **Generic fallback last** (step 4) — ensures no exception escapes untyped. Message includes `type(exc).__name__` for debuggability.
 5. **Preserve the cause chain** — always `raise ... from exc`.

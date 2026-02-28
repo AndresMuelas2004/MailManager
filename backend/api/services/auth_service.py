@@ -10,23 +10,28 @@ from uuid import uuid4
 
 from fastapi import Response
 
-from auth.google_auth.google import verify_google_token
-from auth.settings import AuthSettings, get_auth_settings
+from auth import (
+    AuthSettings,
+    AuthSettingsError,
+    AuthTokenError,
+    get_auth_settings,
+    verify_google_token,
+)
 
 from database import session_store, user_store
-from api.errors.exceptions import EnvVarError, Unauthorized, UserNotFound
+from api.errors.exceptions import Unauthorized, UserNotFound
 from api.schemas.auth import AuthResponse, UserOut
-from api.services.services_helpers import catch_database_errors
+from api.services.services_helpers import catch_database_errors, translate_auth_error
 
 logger = logging.getLogger(__name__)
 
 
 def _load_auth_settings() -> AuthSettings:
-    """Load auth settings, translating ``ValueError`` to ``EnvVarError``."""
+    """Load auth settings, translating ``AuthSettingsError`` to ``EnvVarError``."""
     try:
         return get_auth_settings()
-    except ValueError as exc:
-        raise EnvVarError(str(exc)) from exc
+    except AuthSettingsError as exc:
+        raise translate_auth_error(exc) from exc
 
 
 def _set_session_cookie(response: Response, session_id: str, settings: AuthSettings) -> None:
@@ -61,9 +66,9 @@ def google_login(raw_id_token: str, response: Response) -> AuthResponse:
     settings = _load_auth_settings()
     try:
         id_info = verify_google_token(raw_id_token, settings.google_client_id)
-    except ValueError as exc:
+    except AuthTokenError as exc:
         logger.debug("Google token verification failed: %s", exc)
-        raise Unauthorized("Invalid Google token.") from exc
+        raise translate_auth_error(exc) from exc
 
     google_sub = id_info.get("sub")
     if not google_sub:
@@ -146,7 +151,7 @@ def _cleanup_expired_sessions() -> None:
     try:
         session_store.delete_expired()
     except Exception:
-        logger.debug("Expired session cleanup failed.", exc_info=True)
+        logger.warning("Expired session cleanup failed.", exc_info=True)
 
 
 def get_current_user(user_id: str) -> UserOut:

@@ -5,10 +5,9 @@ Pydantic schemas for email API contracts.
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Any
 
 from pydantic import BaseModel, Field
-
-from core.email.email_client import EmailMessage
 
 
 class EmailOut(BaseModel):
@@ -28,7 +27,7 @@ class EmailOut(BaseModel):
     raw_rfc822_b64url: str | None = None
 
     @classmethod
-    def from_core(cls, message: EmailMessage) -> EmailOut:
+    def from_core(cls, message: Any) -> EmailOut:
         return cls(
             message_id=message.message_id,
             subject=message.subject,

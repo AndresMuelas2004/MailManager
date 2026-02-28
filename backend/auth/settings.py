@@ -7,6 +7,8 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 
+from auth.errors.errors import AuthSettingsError
+
 
 _TRUE_VALUES = {"1", "true", "yes", "on"}
 _FALSE_VALUES = {"0", "false", "no", "off"}
@@ -24,7 +26,7 @@ def _read_bool(name: str, default: bool) -> bool:
         return True
     if normalized in _FALSE_VALUES:
         return False
-    raise ValueError(
+    raise AuthSettingsError(
         f"{name} has an invalid boolean value: {raw!r} "
         f"(accepted: {sorted(_TRUE_VALUES | _FALSE_VALUES)})"
     )
@@ -37,9 +39,9 @@ def _read_int(name: str, default: int, *, minimum: int = 1) -> int:
     try:
         value = int(raw.strip())
     except ValueError:
-        raise ValueError(f"{name} must be an integer, got {raw!r}.") from None
+        raise AuthSettingsError(f"{name} must be an integer, got {raw!r}.") from None
     if value < minimum:
-        raise ValueError(f"{name} must be >= {minimum}, got {value}.")
+        raise AuthSettingsError(f"{name} must be >= {minimum}, got {value}.")
     return value
 
 
@@ -56,7 +58,7 @@ def get_auth_settings() -> AuthSettings:
     """
     client_id = os.getenv("GOOGLE_CLIENT_ID", "").strip()
     if not client_id:
-        raise ValueError("GOOGLE_CLIENT_ID is not set.")
+        raise AuthSettingsError("GOOGLE_CLIENT_ID is not set.")
     return AuthSettings(
         google_client_id=client_id,
         session_lifetime_days=_read_int(
