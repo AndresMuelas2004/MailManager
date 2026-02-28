@@ -11,9 +11,9 @@ from uuid import uuid4
 
 import pytest
 
-from auth import AuthTokenInvalidError, AuthTokenNetworkError
+from auth import AuthError, AuthTokenInvalidError, AuthTokenNetworkError
 
-from api.errors.exceptions import ExternalAPIError, Unauthorized, UserNotFound
+from api.errors.exceptions import ApiError, EnvVarError, ExternalAPIError, Unauthorized, UserNotFound
 from api.schemas.auth import AuthResponse, UserOut
 from api.services import auth_service
 
@@ -239,3 +239,42 @@ def test_delete_account_not_found(monkeypatch, mock_response):
     monkeypatch.setattr(auth_service, "user_store", store)
     with pytest.raises(UserNotFound, match="User not found"):
         auth_service.delete_account("nonexistent", mock_response)
+
+
+# ------------------------------------------------------------------
+# Error handling hardening — except Exception fallbacks
+# ------------------------------------------------------------------
+
+def test_google_login_settings_unexpected_error(monkeypatch, mock_response):
+    """_load_auth_settings except Exception → EnvVarError."""
+    def _raise():
+        raise RuntimeError("config file missing")
+
+    monkeypatch.setattr(auth_service, "get_auth_settings", _raise)
+
+    with pytest.raises(EnvVarError, match="RuntimeError"):
+        auth_service.google_login("some-token", mock_response)
+
+
+def test_google_login_verify_unexpected_error(monkeypatch, mock_response):
+    """verify_google_token except Exception → Unauthorized."""
+    def _raise(*_a, **_kw):
+        raise RuntimeError("TLS handshake failed")
+
+    monkeypatch.setattr(auth_service, "verify_google_token", _raise)
+    monkeypatch.setenv("GOOGLE_CLIENT_ID", "cid")
+
+    with pytest.raises(Unauthorized, match="Token verification failed"):
+        auth_service.google_login("some-token", mock_response)
+
+
+def test_google_login_auth_base_error(monkeypatch, mock_response):
+    """AuthError base class from verify → translated via _AUTH_TO_API_MAP → ApiError."""
+    def _raise(*_a, **_kw):
+        raise AuthError("generic auth failure")
+
+    monkeypatch.setattr(auth_service, "verify_google_token", _raise)
+    monkeypatch.setenv("GOOGLE_CLIENT_ID", "cid")
+
+    with pytest.raises(ApiError, match="generic auth failure"):
+        auth_service.google_login("some-token", mock_response)

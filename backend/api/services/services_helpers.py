@@ -219,6 +219,11 @@ def catch_database_errors(
         yield
     except DatabaseError as exc:
         raise translate_database_error(exc, fallback=fallback, context=context) from exc
+    except Exception as exc:
+        raise fallback(
+            f"Unexpected database operation error ({type(exc).__name__}): {exc}",
+            context or {},
+        ) from exc
 
 
 def translate_connect_error(
@@ -266,6 +271,10 @@ def build_manager_for_accounts(accounts: Iterable[dict[str, Any]]) -> EmailManag
             manager.add_account_record(account)
         except CoreError as exc:
             raise translate_core_error(exc, fallback=AccountMisconfigured) from exc
+        except Exception as exc:
+            raise AccountMisconfigured(
+                f"Failed to register account in manager ({type(exc).__name__}): {exc}"
+            ) from exc
     return manager
 
 

@@ -205,22 +205,31 @@ The mapping is evaluated with `isinstance` — most specific first. The `auth_co
 
 ### Usage in `auth_service.py`
 
+Both catch sites use the base `AuthError` class and include an `except Exception` fallback, following the API capture technique (see `API_GUIDE.md` § 7):
+
 ```python
 # Settings errors
 def _load_auth_settings() -> AuthSettings:
     try:
         return get_auth_settings()
-    except AuthSettingsError as exc:
+    except AuthError as exc:
         raise translate_auth_error(exc) from exc
+    except Exception as exc:
+        raise EnvVarError(
+            f"Failed to load auth settings ({type(exc).__name__}): {exc}"
+        ) from exc
 
 # Token verification errors
 def google_login(raw_id_token, response):
     settings = _load_auth_settings()
     try:
         id_info = verify_google_token(raw_id_token, settings.google_client_id)
-    except AuthTokenError as exc:
+    except AuthError as exc:
         logger.debug("Google token verification failed: %s", exc)
         raise translate_auth_error(exc) from exc
+    except Exception as exc:
+        logger.debug("Google token verification unexpected error: %s", exc)
+        raise Unauthorized("Token verification failed.") from exc
 ```
 
 No `catch_auth_errors()` context manager exists — there are only two catch sites, not enough to justify one.

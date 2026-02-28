@@ -11,15 +11,14 @@ from uuid import uuid4
 from fastapi import Response
 
 from auth import (
+    AuthError,
     AuthSettings,
-    AuthSettingsError,
-    AuthTokenError,
     get_auth_settings,
     verify_google_token,
 )
 
 from database import session_store, user_store
-from api.errors.exceptions import Unauthorized, UserNotFound
+from api.errors.exceptions import EnvVarError, Unauthorized, UserNotFound
 from api.schemas.auth import AuthResponse, UserOut
 from api.services.services_helpers import catch_database_errors, translate_auth_error
 
@@ -27,11 +26,15 @@ logger = logging.getLogger(__name__)
 
 
 def _load_auth_settings() -> AuthSettings:
-    """Load auth settings, translating ``AuthSettingsError`` to ``EnvVarError``."""
+    """Load auth settings, translating auth errors to API errors."""
     try:
         return get_auth_settings()
-    except AuthSettingsError as exc:
+    except AuthError as exc:
         raise translate_auth_error(exc) from exc
+    except Exception as exc:
+        raise EnvVarError(
+            f"Failed to load auth settings ({type(exc).__name__}): {exc}"
+        ) from exc
 
 
 def _set_session_cookie(response: Response, session_id: str, settings: AuthSettings) -> None:
@@ -66,9 +69,14 @@ def google_login(raw_id_token: str, response: Response) -> AuthResponse:
     settings = _load_auth_settings()
     try:
         id_info = verify_google_token(raw_id_token, settings.google_client_id)
-    except AuthTokenError as exc:
+    except AuthError as exc:
         logger.debug("Google token verification failed: %s", exc)
         raise translate_auth_error(exc) from exc
+    except Exception as exc:
+        logger.debug("Google token verification unexpected error: %s", exc)
+        raise Unauthorized(
+            "Token verification failed."
+        ) from exc
 
     google_sub = id_info.get("sub")
     if not google_sub:

@@ -119,6 +119,18 @@ def test_send_failure(failing_test_client, setup_mailbox_and_account):
 # build_manager_for_accounts - CoreError -> translate_core_error -> 400
 # ==================================================================
 
+@pytest.mark.parametrize(
+    "failing_test_client",
+    [{"auth_exc": RuntimeError("Provider crash.")}],
+    indirect=True,
+)
+def test_connect_unexpected_exception(failing_test_client, setup_mailbox_and_account):
+    """RuntimeError during connect -> except Exception -> AccountConnectAuthError (401)."""
+    mid, aid = setup_mailbox_and_account(failing_test_client)
+    resp = failing_test_client.post(f"{_MAILBOX_URL}/{mid}/accounts/{aid}/connect")
+    assert resp.status_code == 401
+
+
 def test_connect_account_misconfigured(test_client, setup_mailbox_and_account, monkeypatch):
     """EmailProviderConfigError in add_account_record -> AccountMisconfigured (400).
 
