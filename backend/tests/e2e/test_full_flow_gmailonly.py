@@ -1,11 +1,11 @@
 """
-E2E full-flow tests - real Gmail and Outlook APIs, no fakes.
+E2E full-flow tests - Gmail-only variant, no Outlook.
 
 The flow is split into one test per endpoint so pytest output shows
 exactly which endpoint failed first. After the first failure, the
 remaining flow tests are skipped to avoid cascade errors.
 
-Run with: python -m pytest backend/tests/e2e/test_full_flow.py -v -s
+Run with: python -m pytest backend/tests/e2e/test_full_flow_gmailonly.py -v -s
 """
 
 from __future__ import annotations
@@ -70,7 +70,7 @@ def test_02_get_auth_me(e2e_client, flow_state, run_flow_step):
 
 
 # ------------------------------------------------------------------
-# Mailboxes, accounts, emails — original flow renumbered 03–15
+# Mailboxes, accounts, emails — Gmail-only flow
 # ------------------------------------------------------------------
 
 def test_03_post_mailboxes_create_mailbox(e2e_client, flow_state, run_flow_step):
@@ -82,7 +82,7 @@ def test_03_post_mailboxes_create_mailbox(e2e_client, flow_state, run_flow_step)
     run_flow_step(_step)
 
 
-def test_04_post_accounts_create_gmail_and_outlook(
+def test_04_post_accounts_create_gmail(
     e2e_client, flow_state, run_flow_step
 ):
     def _step():
@@ -95,17 +95,10 @@ def test_04_post_accounts_create_gmail_and_outlook(
         _assert_ok(response)
         flow_state["gmail_id"] = response.json()["account_id"]
 
-        response = e2e_client.post(
-            accounts_base,
-            json={"provider": "outlook", "display_label": "prueba 2"},
-        )
-        _assert_ok(response)
-        flow_state["outlook_id"] = response.json()["account_id"]
-
     run_flow_step(_step)
 
 
-def test_05_post_connect_connect_gmail_and_outlook(
+def test_05_post_connect_connect_gmail(
     e2e_client, flow_state, run_flow_step
 ):
     def _step():
@@ -113,14 +106,8 @@ def test_05_post_connect_connect_gmail_and_outlook(
             f"/mailboxes/{flow_state['mid']}/accounts/{flow_state['gmail_id']}/connect"
         )
         assert response.status_code == 200, (
-            "Gmail connect failed. Outlook connect was not attempted.\n"
-            f"Response: {response.text}"
+            f"Gmail connect failed. Response: {response.text}"
         )
-
-        response = e2e_client.post(
-            f"/mailboxes/{flow_state['mid']}/accounts/{flow_state['outlook_id']}/connect"
-        )
-        assert response.status_code == 200, f"Outlook connect failed. Response: {response.text}"
 
     run_flow_step(_step)
 
@@ -136,7 +123,7 @@ def test_06_patch_account_update_gmail_label(e2e_client, flow_state, run_flow_st
     run_flow_step(_step)
 
 
-def test_07_post_emails_send_from_gmail_and_outlook(
+def test_07_post_emails_send_from_gmail(
     e2e_client, flow_state, run_flow_step
 ):
     def _step():
@@ -146,17 +133,6 @@ def test_07_post_emails_send_from_gmail_and_outlook(
                 "account_id": flow_state["gmail_id"],
                 "subject": "Prueba desde correo prueba 1 en test flujo completo E2E",
                 "body": "E2E test - gmail account",
-                "recipients": ["muelonmuelon12@gmail.com"],
-            },
-        )
-        _assert_ok(response)
-
-        response = e2e_client.post(
-            f"/mailboxes/{flow_state['mid']}/emails/send",
-            json={
-                "account_id": flow_state["outlook_id"],
-                "subject": "Prueba desde correo prueba 2 en test flujo completo E2E",
-                "body": "E2E test - outlook account",
                 "recipients": ["muelonmuelon12@gmail.com"],
             },
         )
@@ -172,19 +148,18 @@ def test_08_post_sync_email_metadata(e2e_client, flow_state, run_flow_step):
         data = response.json()
 
         assert isinstance(data["total_synced"], int)
-        assert data["total_synced"] >= 0
+        assert data["total_synced"] >= 10
 
         accounts = data["accounts"]
-        assert len(accounts) == 2, f"Expected 2 accounts, got {len(accounts)}"
+        assert len(accounts) == 1, f"Expected 1 account, got {len(accounts)}"
 
         synced_ids = {a["account_id"] for a in accounts}
         assert flow_state["gmail_id"] in synced_ids
-        assert flow_state["outlook_id"] in synced_ids
 
         for account in accounts:
             assert isinstance(account["emails_synced"], int)
-            assert account["emails_synced"] >= 0
-            assert account["provider"] in ("gmail", "outlook")
+            assert account["emails_synced"] >= 10
+            assert account["provider"] == "gmail"
             assert isinstance(account["sync_cursor"], str) or account["sync_cursor"] is None
 
     run_flow_step(_step)
@@ -222,17 +197,7 @@ def test_10_get_gmail_account_detail(e2e_client, flow_state, run_flow_step):
     run_flow_step(_step)
 
 
-def test_11_delete_outlook_account(e2e_client, flow_state, run_flow_step):
-    def _step():
-        response = e2e_client.delete(
-            f"/mailboxes/{flow_state['mid']}/accounts/{flow_state['outlook_id']}"
-        )
-        _assert_ok(response)
-
-    run_flow_step(_step)
-
-
-def test_12_get_mailboxes_list(e2e_client, run_flow_step):
+def test_11_get_mailboxes_list(e2e_client, run_flow_step):
     def _step():
         response = e2e_client.get("/mailboxes")
         _assert_ok(response)
@@ -240,7 +205,7 @@ def test_12_get_mailboxes_list(e2e_client, run_flow_step):
     run_flow_step(_step)
 
 
-def test_13_get_mailbox_detail(e2e_client, flow_state, run_flow_step):
+def test_12_get_mailbox_detail(e2e_client, flow_state, run_flow_step):
     def _step():
         response = e2e_client.get(f"/mailboxes/{flow_state['mid']}")
         _assert_ok(response)
@@ -248,7 +213,7 @@ def test_13_get_mailbox_detail(e2e_client, flow_state, run_flow_step):
     run_flow_step(_step)
 
 
-def test_14_delete_mailbox(e2e_client, flow_state, run_flow_step):
+def test_13_delete_mailbox(e2e_client, flow_state, run_flow_step):
     def _step():
         response = e2e_client.delete(f"/mailboxes/{flow_state['mid']}")
         _assert_ok(response)
@@ -256,7 +221,7 @@ def test_14_delete_mailbox(e2e_client, flow_state, run_flow_step):
     run_flow_step(_step)
 
 
-def test_15_get_deleted_mailbox_returns_404(e2e_client, flow_state, run_flow_step):
+def test_14_get_deleted_mailbox_returns_404(e2e_client, flow_state, run_flow_step):
     def _step():
         response = e2e_client.get(f"/mailboxes/{flow_state['mid']}")
         _assert_ok(response, expected=404)
@@ -268,7 +233,7 @@ def test_15_get_deleted_mailbox_returns_404(e2e_client, flow_state, run_flow_ste
 # Auth — logout, re-login, delete account
 # ------------------------------------------------------------------
 
-def test_16_post_auth_logout(e2e_client, run_flow_step):
+def test_15_post_auth_logout(e2e_client, run_flow_step):
     def _step():
         response = e2e_client.post("/auth/logout")
         _assert_ok(response)
@@ -277,7 +242,7 @@ def test_16_post_auth_logout(e2e_client, run_flow_step):
     run_flow_step(_step)
 
 
-def test_17_post_auth_google_relogin(e2e_client, flow_state, run_flow_step, google_id_token):
+def test_16_post_auth_google_relogin(e2e_client, flow_state, run_flow_step, google_id_token):
     def _step():
         response = e2e_client.post("/auth/google", json={"id_token": google_id_token})
         _assert_ok(response)
@@ -286,7 +251,7 @@ def test_17_post_auth_google_relogin(e2e_client, flow_state, run_flow_step, goog
     run_flow_step(_step)
 
 
-def test_18_delete_auth_me(e2e_client, run_flow_step):
+def test_17_delete_auth_me(e2e_client, run_flow_step):
     def _step():
         response = e2e_client.delete("/auth/me")
         _assert_ok(response)
@@ -295,7 +260,7 @@ def test_18_delete_auth_me(e2e_client, run_flow_step):
     run_flow_step(_step)
 
 
-def test_19_get_auth_me_after_delete(e2e_client, run_flow_step):
+def test_18_get_auth_me_after_delete(e2e_client, run_flow_step):
     def _step():
         response = e2e_client.get("/auth/me")
         _assert_ok(response, expected=401)
