@@ -7,21 +7,19 @@ from typing import Any
 
 
 @dataclass
-class EmailMessage:
+class EmailMetadata:
     """
-    Simple data container representing a normalized email message
-    used across the application, regardless of the provider.
+    Normalized email metadata returned by provider clients.
     """
-    message_id: str
+    provider_message_id: str
+    thread_id: str
+    from_email: str
+    from_name: str
     subject: str
-    sender: str
-    recipients: list[str]
-    body: str
-    sent_at: datetime
-    is_unread: bool
-    provider: str
-    thread_id: str | None = None
-    raw_rfc822_b64url: str | None = None
+    received_at: datetime
+    is_read: bool
+    box: str  # "ALL_MAIL" | "SPAM" | "TRASH"
+    account_id: str = ""  # Stamped by the service layer before persistence
 
 
 class EmailClient(ABC):
@@ -52,10 +50,18 @@ class EmailClient(ABC):
         """
 
     @abstractmethod
-    def fetch_unread_emails(self, max_total: int = 200, page_size: int = 50) -> list[EmailMessage]:
+    def fetch_email_metadata(
+        self,
+        sync_cursor: str | None = None,
+        max_total: int = 500,
+    ) -> tuple[list[EmailMetadata], str]:
         """
-        Retrieve unread emails from the provider and return them as a list
-        of normalized EmailMessage objects.
+        Fetch email metadata from the provider.
+
+        Returns (metadata_list, new_sync_cursor).
+        - If sync_cursor is None -> bootstrap (Camino 1).
+        - If sync_cursor is not None -> attempt incremental (Camino 2),
+          fallback to bootstrap on failure.
         """
 
     @abstractmethod

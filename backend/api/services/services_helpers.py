@@ -29,6 +29,7 @@ from core.email import (
     EmailInvalidExpiryError,
     EmailInvalidTokenDataError,
     EmailManager,
+    EmailMetadata,
     EmailMissingAppCredentialsError,
     EmailMissingRefreshTokenError,
     EmailMissingTokenError,
@@ -64,6 +65,7 @@ from database import (
     ConnectionPoolError,
     CredentialReadError,
     DatabaseError,
+    email_metadata_store,
     load_app_credentials,
     mailbox_store,
     MigrationError,
@@ -357,3 +359,43 @@ def load_wrapped_account_tokens(
     if "refresh_token" in payload:
         payload["refresh_token"] = _wrap_secret(payload.get("refresh_token"))
     return payload
+
+
+# ---------------------------------------------------------------------------
+# Email metadata persistence helpers
+# ---------------------------------------------------------------------------
+
+
+def persist_email_metadata_batch(
+    account_id: str,
+    metadata_list: list[EmailMetadata],
+) -> int:
+    """Persist email metadata to DB via batch upsert. Returns rows affected."""
+    if not metadata_list:
+        return 0
+    rows = [
+        (
+            m.provider_message_id, account_id, m.thread_id, m.from_email,
+            m.from_name, m.subject, m.received_at, m.is_read, m.box,
+        )
+        for m in metadata_list
+    ]
+    with catch_database_errors():
+        return email_metadata_store.upsert_batch(account_id, rows)
+
+
+def load_sync_cursors(
+    label_lookup: dict[str, tuple[str, str, str]],
+) -> dict[str, str | None]:
+    """Load sync_cursor for each account, keyed by account_label, is to know what path choose in the client"""
+    cursors: dict[str, str | None] = {}
+    for label, (mailbox_id, account_id, _provider) in label_lookup.items():
+        with catch_database_errors():
+            cursors[label] = account_store.get_sync_cursor(mailbox_id, account_id)
+    return cursors
+
+
+def update_sync_cursor(mailbox_id: str, account_id: str, cursor: str) -> None:
+    """Persist the new sync_cursor for an account."""
+    with catch_database_errors():
+        account_store.update_sync_cursor(mailbox_id, account_id, cursor)

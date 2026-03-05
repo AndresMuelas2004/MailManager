@@ -35,7 +35,6 @@ def test_connect_auth_failure(failing_test_client, setup_mailbox_and_account):
     """EmailAuthError during connect -> translate_connect_error -> HTTP status."""
     mid, aid = setup_mailbox_and_account(failing_test_client)
     resp = failing_test_client.post(f"{_MAILBOX_URL}/{mid}/accounts/{aid}/connect")
-    # Connect flow maps EmailAuthError to AccountConnectAuthError (401).
     assert resp.status_code == 401
 
 
@@ -48,10 +47,10 @@ def test_connect_auth_failure(failing_test_client, setup_mailbox_and_account):
     [{"auth_silent_exc": EmailAuthError("Refresh token expired.")}],
     indirect=True,
 )
-def test_unread_account_not_connected(failing_test_client, setup_mailbox_and_account):
-    """Silent auth failure before fetch -> AccountNotConnected (409)."""
+def test_sync_metadata_account_not_connected(failing_test_client, setup_mailbox_and_account):
+    """Silent auth failure before sync -> AccountNotConnected (409)."""
     mid, _ = setup_mailbox_and_account(failing_test_client)
-    resp = failing_test_client.get(f"{_MAILBOX_URL}/{mid}/emails/unread")
+    resp = failing_test_client.post(f"{_MAILBOX_URL}/{mid}/emails/sync-metadata")
     assert resp.status_code == 409
 
 
@@ -76,7 +75,7 @@ def test_send_account_not_connected(failing_test_client, setup_mailbox_and_accou
 
 
 # ==================================================================
-# fetch_all_unread_emails - per-client error -> post-fetch check (502)
+# fetch_all_email_metadata - per-client error -> post-fetch check (502)
 # ==================================================================
 
 @pytest.mark.parametrize(
@@ -84,10 +83,10 @@ def test_send_account_not_connected(failing_test_client, setup_mailbox_and_accou
     [{"fetch_exc": EmailExternalAPIError("API timeout.")}],
     indirect=True,
 )
-def test_unread_fetch_failure(failing_test_client, setup_mailbox_and_account):
+def test_sync_metadata_fetch_failure(failing_test_client, setup_mailbox_and_account):
     """Fetch failure collected in last_errors -> ExternalAPIError (502)."""
     mid, _ = setup_mailbox_and_account(failing_test_client)
-    resp = failing_test_client.get(f"{_MAILBOX_URL}/{mid}/emails/unread")
+    resp = failing_test_client.post(f"{_MAILBOX_URL}/{mid}/emails/sync-metadata")
     assert resp.status_code == 502
 
 
@@ -151,4 +150,3 @@ def test_connect_account_misconfigured(test_client, setup_mailbox_and_account, m
 
     resp = test_client.post(f"{_MAILBOX_URL}/{mid}/accounts/{aid}/connect")
     assert resp.status_code == 400
-

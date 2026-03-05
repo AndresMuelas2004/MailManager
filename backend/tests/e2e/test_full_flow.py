@@ -165,10 +165,13 @@ def test_07_post_emails_send_from_gmail_and_outlook(
     run_flow_step(_step)
 
 
-def test_08_get_unread_emails(e2e_client, flow_state, run_flow_step):
+def test_08_post_sync_email_metadata(e2e_client, flow_state, run_flow_step):
     def _step():
-        response = e2e_client.get(f"/mailboxes/{flow_state['mid']}/emails/unread")
+        response = e2e_client.post(f"/mailboxes/{flow_state['mid']}/emails/sync-metadata")
         _assert_ok(response)
+        data = response.json()
+        assert "total_synced" in data
+        assert "accounts" in data
 
     run_flow_step(_step)
 

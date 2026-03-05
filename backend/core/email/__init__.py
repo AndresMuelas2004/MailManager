@@ -2,7 +2,7 @@
 Core email package public surface.
 """
 
-from core.email.email_client import EmailClient, EmailMessage
+from core.email.email_client import EmailClient, EmailMetadata
 from core.email.email_manager import EmailManager
 from core.email.errors import (
     CoreError,
@@ -39,7 +39,7 @@ __all__ = [
     "EmailInvalidExpiryError",
     "EmailInvalidTokenDataError",
     "EmailManager",
-    "EmailMessage",
+    "EmailMetadata",
     "EmailMissingAppCredentialsError",
     "EmailMissingRefreshTokenError",
     "EmailMissingTokenError",

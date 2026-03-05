@@ -1,43 +1,40 @@
-"""Shared fake email client and message builder used by tests."""
+"""Shared fake email client and metadata builder used by tests."""
 
 from __future__ import annotations
 
 from datetime import datetime
 
-from core.email import EmailClient, EmailMessage
+from core.email import EmailClient, EmailMetadata
 
 
-DEFAULT_SENT_AT = datetime(2024, 1, 1, 12, 0, 0)
+DEFAULT_RECEIVED_AT = datetime(2024, 1, 1, 12, 0, 0)
+DEFAULT_SYNC_CURSOR = "fake_cursor_12345"
 
 
-def build_message(
-    message_id: str = "m1",
+def build_metadata(
+    provider_message_id: str = "m1",
+    thread_id: str = "t1",
+    from_email: str = "sender@example.com",
+    from_name: str = "Sender",
     subject: str = "subject",
-    sender: str = "sender@example.com",
-    recipients: list[str] | None = None,
-    body: str = "body",
-    sent_at: datetime | None = None,
-    is_unread: bool = True,
-    provider: str = "fake",
-    thread_id: str | None = None,
-    raw_rfc822_b64url: str | None = None,
-) -> EmailMessage:
-    """Build a normalized ``EmailMessage`` with sensible defaults."""
-    if recipients is None:
-        recipients = ["recipient@example.com"]
-    if sent_at is None:
-        sent_at = DEFAULT_SENT_AT
-    return EmailMessage(
-        message_id=message_id,
-        subject=subject,
-        sender=sender,
-        recipients=recipients,
-        body=body,
-        sent_at=sent_at,
-        is_unread=is_unread,
-        provider=provider,
+    received_at: datetime | None = None,
+    is_read: bool = False,
+    box: str = "ALL_MAIL",
+    account_id: str = "",
+) -> EmailMetadata:
+    """Build a normalized ``EmailMetadata`` with sensible defaults."""
+    if received_at is None:
+        received_at = DEFAULT_RECEIVED_AT
+    return EmailMetadata(
+        provider_message_id=provider_message_id,
         thread_id=thread_id,
-        raw_rfc822_b64url=raw_rfc822_b64url,
+        from_email=from_email,
+        from_name=from_name,
+        subject=subject,
+        received_at=received_at,
+        is_read=is_read,
+        box=box,
+        account_id=account_id,
     )
 
 
@@ -52,7 +49,8 @@ class FakeEmailClient(EmailClient):
         auth_silent_exc: Exception | None = None,
         fetch_exc: Exception | None = None,
         send_exc: Exception | None = None,
-        unread_messages: list[EmailMessage] | None = None,
+        metadata: list[EmailMetadata] | None = None,
+        sync_cursor_return: str = DEFAULT_SYNC_CURSOR,
         auth_return: dict | None = None,
         auth_silent_return: dict | None = None,
     ) -> None:
@@ -61,7 +59,8 @@ class FakeEmailClient(EmailClient):
         self._auth_silent_exc = auth_silent_exc
         self._fetch_exc = fetch_exc
         self._send_exc = send_exc
-        self._unread_messages = list(unread_messages or [])
+        self._metadata = list(metadata or [])
+        self._sync_cursor_return = sync_cursor_return
         self._auth_return = auth_return
         self._auth_silent_return = auth_silent_return
         self.authenticate_calls = 0
@@ -70,6 +69,7 @@ class FakeEmailClient(EmailClient):
         self.sent_emails: list[tuple[str, str, list[str]]] = []
         self.last_app_credentials = None
         self.last_user_tokens = None
+        self.last_sync_cursor = None
 
     def authenticate(self, app_credentials=None) -> dict | None:
         self.authenticate_calls += 1
@@ -86,11 +86,16 @@ class FakeEmailClient(EmailClient):
             raise self._auth_silent_exc
         return self._auth_silent_return
 
-    def fetch_unread_emails(self) -> list[EmailMessage]:
+    def fetch_email_metadata(
+        self,
+        sync_cursor: str | None = None,
+        max_total: int = 500,
+    ) -> tuple[list[EmailMetadata], str]:
         self.fetch_calls += 1
+        self.last_sync_cursor = sync_cursor
         if self._fetch_exc:
             raise self._fetch_exc
-        return list(self._unread_messages)
+        return list(self._metadata), self._sync_cursor_return
 
     def send_email(self, subject: str, body: str, recipients: list[str]) -> None:
         if self._send_exc:
@@ -99,4 +104,3 @@ class FakeEmailClient(EmailClient):
 
     def get_account_label(self) -> str:
         return self._account_label
-

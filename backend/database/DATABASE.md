@@ -20,16 +20,18 @@ database/
 ├── settings.py                  # Centralized env var reading and validation
 ├── connection.py                # ThreadedConnectionPool + transactional context manager
 ├── lifecycle.py                 # App startup helpers (warmup, optional auto-migrate)
-├── contracts.py                 # Abstract interfaces (MailboxStore, AccountStore, UserStore, SessionStore)
+├── contracts.py                 # Abstract interfaces (MailboxStore, AccountStore, UserStore, SessionStore, EmailMetadataStore)
 │
 ├── queries/                     # Raw SQL constants only — no Python logic
 │   ├── mailboxes.py             #   CRUD for mailboxes table (incl. owner_user_id)
-│   ├── accounts.py              #   CRUD for accounts table + token SELECT/UPSERT/BACKFILL
+│   ├── accounts.py              #   CRUD for accounts table + token SELECT/UPSERT/BACKFILL + sync_cursor
+│   ├── email_metadata.py        #   UPSERT_BATCH, LIST_BY_ACCOUNT, DELETE_BY_ACCOUNT for email_metadata table
 │   └── auth.py                  #   UPSERT/SELECT/DELETE for users and sessions tables
 │
 ├── repositories/                # Concrete implementations of contracts
 │   ├── mailbox_repository.py    #   PgMailboxStore (implements MailboxStore)
-│   ├── account_repository.py    #   PgAccountStore (implements AccountStore) — includes token persistence with encryption
+│   ├── account_repository.py    #   PgAccountStore (implements AccountStore) — includes token persistence with encryption + sync_cursor
+│   ├── email_metadata_repository.py  #  PgEmailMetadataStore (implements EmailMetadataStore) — batch upsert via execute_values
 │   ├── user_repository.py       #   PgUserStore (implements UserStore)
 │   └── session_repository.py    #   PgSessionStore (implements SessionStore)
 │
@@ -155,6 +157,7 @@ All external code imports from the package root. The `__init__.py` facade re-exp
 |---|---|---|
 | `mailbox_store` | `repositories/` | Singleton `PgMailboxStore` instance |
 | `account_store` | `repositories/` | Singleton `PgAccountStore` instance |
+| `email_metadata_store` | `repositories/` | Singleton `PgEmailMetadataStore` instance |
 | `user_store` | `repositories/` | Singleton `PgUserStore` instance |
 | `session_store` | `repositories/` | Singleton `PgSessionStore` instance |
 | `close_pool` | `connection.py` | Shutdown: close all pooled connections |
@@ -167,16 +170,18 @@ All external code imports from the package root. The `__init__.py` facade re-exp
 | Contract | Methods | Implementation |
 |---|---|---|
 | `MailboxStore` | `create`, `list_by_owner`, `get`, `delete` | `PgMailboxStore` |
-| `AccountStore` | `list_by_mailbox`, `get`, `upsert`, `delete`, `get_tokens`, `upsert_tokens` | `PgAccountStore` |
+| `AccountStore` | `list_by_mailbox`, `get`, `upsert`, `delete`, `get_tokens`, `upsert_tokens`, `get_sync_cursor`, `update_sync_cursor` | `PgAccountStore` |
+| `EmailMetadataStore` | `upsert_batch`, `list_by_account`, `delete_by_account` | `PgEmailMetadataStore` |
 | `UserStore` | `upsert`, `get_by_id`, `get_by_google_sub`, `delete` | `PgUserStore` |
-| `SessionStore` | `create`, `get`, `delete` | `PgSessionStore` |
+| `SessionStore` | `create`, `get`, `delete`, `delete_expired` | `PgSessionStore` |
 
 ## Queries
 
 | Module | Tables | Operations |
 |---|---|---|
 | `queries/mailboxes.py` | `mailboxes` | INSERT (with owner_user_id), LIST_BY_OWNER, GET, DELETE |
-| `queries/accounts.py` | `accounts` | INSERT/UPSERT, LIST_BY_MAILBOX, GET, DELETE, SELECT_TOKENS, UPSERT_TOKENS, BACKFILL_TOKENS |
+| `queries/accounts.py` | `accounts` | INSERT/UPSERT, LIST_BY_MAILBOX, GET, DELETE, SELECT_TOKENS, UPSERT_TOKENS, BACKFILL_TOKENS, GET_SYNC_CURSOR, UPDATE_SYNC_CURSOR |
+| `queries/email_metadata.py` | `email_metadata` | UPSERT_EMAIL_METADATA_BATCH, LIST_BY_ACCOUNT, DELETE_BY_ACCOUNT |
 | `queries/auth.py` | `users`, `sessions` | UPSERT_USER, GET_USER_BY_ID, GET_USER_BY_GOOGLE_SUB, DELETE_USER, INSERT_SESSION, GET_VALID_SESSION, DELETE_SESSION, DELETE_EXPIRED_SESSIONS |
 
 ## Migration Workflow (Alembic)
@@ -232,6 +237,11 @@ Token encryption:
 - `TOKEN_ENCRYPTION_KEY_ID` (default `v1`)
 - `TOKEN_PLAINTEXT_FALLBACK_ENABLED` (default `true`)
 
+Provider credentials:
+
+- `MIA_GMAIL_CREDENTIALS_PATH` (required — path to Gmail OAuth client JSON)
+- `MIA_OUTLOOK_CREDENTIALS_PATH` (required — path to Outlook app credentials JSON)
+
 ## Extension Guidance
 
 When adding a provider:
@@ -239,7 +249,7 @@ When adding a provider:
 1. Register the provider env var in `settings.py` (`_PROVIDER_CREDENTIALS_ENV_VARS`).
 2. Add provider-specific JSON parsing in `security/app_credentials.py` if needed.
 3. Update provider validation constraints via a new migration.
-4. Add/adjust integration and E2E tests for connect, send, and unread flows.
+4. Add/adjust integration and E2E tests for connect, send, and inbox flows.
 
 ## Deprecation Note
 

@@ -43,7 +43,7 @@ All routes except `/health`, `POST /auth/google`, and `POST /auth/logout` requir
 
 | Method | Path | Request | Response |
 |---|---|---|---|
-| `GET` | `/mailboxes/{mailbox_id}/emails/unread` | — | `[ { message_id, subject, sender, recipients, body, sent_at, is_unread, provider, thread_id?, raw_rfc822_b64url? } ]` |
+| `POST` | `/mailboxes/{mailbox_id}/emails/sync-metadata` | — | `{ total_synced, accounts: [ { account_id, provider, emails_synced, sync_cursor? } ] }` |
 | `POST` | `/mailboxes/{mailbox_id}/emails/send` | `{ account_id, subject, body, recipients }` | `{ status: "sent" }` |
 
 ## Error Contract

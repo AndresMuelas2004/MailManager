@@ -8,7 +8,7 @@ import urllib.request
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from .email_client import EmailClient, EmailMessage
+from .email_client import EmailClient, EmailMetadata
 from .errors import (
     EmailExternalAPIError,
     EmailMissingAppCredentialsError,
@@ -313,79 +313,13 @@ class OutlookClient(EmailClient):
     # Email operations
     # ------------------------------------------------------------------
 
-    def fetch_unread_emails(self, max_total: int = 200, page_size: int = 50) -> list[EmailMessage]:
-        """
-        Fetch unread messages from Microsoft Graph, normalize them into
-        EmailMessage objects and return them as a list.
-        """
-        if self._access_token is None:
-            raise EmailNotAuthenticatedError()
-
-        select_fields = "id,conversationId,subject,from,toRecipients,bodyPreview,receivedDateTime,isRead"
-        query = urllib.parse.urlencode(
-            {
-                "$filter": "isRead eq false",
-                "$select": select_fields,
-                "$top": page_size,
-                "$orderby": "receivedDateTime desc",
-            },
-            quote_via=urllib.parse.quote,
-            safe="$,",
-        )
-        url: str | None = f"{GRAPH_BASE_URL}/me/messages?{query}"
-
-        raw_messages: list[dict[str, Any]] = []
-        while url and len(raw_messages) < max_total:
-            response = self._graph_request("GET", url)
-            raw_messages.extend(response.get("value", []))
-            url = response.get("@odata.nextLink")
-
-        raw_messages = raw_messages[:max_total]
-
-        unread_emails: list[EmailMessage] = []
-        for msg in raw_messages:
-            from_data = (msg.get("from") or {}).get("emailAddress") or {}
-            sender_name = from_data.get("name") or ""
-            sender_addr = from_data.get("address") or ""
-            sender = f"{sender_name} <{sender_addr}>".strip() if sender_addr else sender_name
-
-            to_recipients = msg.get("toRecipients") or []
-            recipients = [
-                (r.get("emailAddress") or {}).get("address", "")
-                for r in to_recipients
-            ]
-            recipients = [r for r in recipients if r]
-
-            received_str = msg.get("receivedDateTime") or ""
-            if received_str:
-                try:
-                    sent_at = datetime.fromisoformat(received_str.replace("Z", "+00:00"))
-                except ValueError:
-                    sent_at = datetime.now(timezone.utc)
-            else:
-                sent_at = datetime.now(timezone.utc)
-
-            message_id = msg.get("id", "")
-            raw_mime_url = f"{GRAPH_BASE_URL}/me/messages/{message_id}/$value"
-            raw_bytes = self._graph_raw_request(raw_mime_url)
-            raw_rfc822_b64url = base64.urlsafe_b64encode(raw_bytes).decode("utf-8")
-
-            unread_emails.append(
-                EmailMessage(
-                    message_id=message_id,
-                    thread_id=msg.get("conversationId"),
-                    subject=msg.get("subject", ""),
-                    sender=sender,
-                    recipients=recipients,
-                    body=msg.get("bodyPreview", ""),
-                    sent_at=sent_at,
-                    is_unread=True,
-                    provider="outlook",
-                    raw_rfc822_b64url=raw_rfc822_b64url,
-                )
-            )
-
-        return unread_emails
+    def fetch_email_metadata(
+        self,
+        sync_cursor: str | None = None,
+        max_total: int = 500,
+    ) -> tuple[list[EmailMetadata], str]:
+        """Outlook metadata sync is not yet implemented."""
+        raise EmailExternalAPIError("Outlook metadata sync not yet implemented.")
 
     def send_email(
         self,

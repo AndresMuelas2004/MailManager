@@ -35,22 +35,21 @@ export type AccountConnectResponse = {
   message?: string | null;
 };
 
-export type EmailOut = {
-  message_id: string;
-  subject?: string | null;
-  sender?: string | null;
-  recipients?: string[] | null;
-  body?: string | null;
-  sent_at?: string | null;
-  is_unread?: boolean | null;
-  provider?: string | null;
-  thread_id?: string | null;
-  raw_rfc822_b64url?: string | null;
-};
-
 export type EmailSendRequest = {
   account_id: string;
   subject: string;
   body: string;
   recipients: string[];
+};
+
+export type AccountSyncDetail = {
+  account_id: string;
+  provider: string;
+  emails_synced: number;
+  sync_cursor?: string | null;
+};
+
+export type SyncResultOut = {
+  total_synced: number;
+  accounts: AccountSyncDetail[];
 };

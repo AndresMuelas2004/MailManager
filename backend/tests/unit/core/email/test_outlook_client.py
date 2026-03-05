@@ -5,9 +5,6 @@ Shared helper tests (parse_expiry, unwrap/wrap) live in ``test_helpers.py``.
 
 from __future__ import annotations
 
-import base64
-import io
-import urllib.error
 from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
@@ -23,7 +20,7 @@ from core.email.errors import (
     EmailRecipientsMissingError,
     EmailRefreshFailedError,
 )
-from core.email.outlook_client import GRAPH_BASE_URL, OUTLOOK_SCOPES, OutlookClient
+from core.email.outlook_client import OUTLOOK_SCOPES, OutlookClient
 
 
 @pytest.fixture
@@ -64,7 +61,6 @@ class TestComputeExpiry:
         before = datetime.now(timezone.utc)
         result = OutlookClient._compute_expiry(-10)
         parsed = datetime.fromisoformat(result)
-        # Clamped to 0 seconds, so expiry should be ~now
         assert before <= parsed <= before + timedelta(seconds=2)
 
     def test_invalid_type_returns_none(self):
@@ -151,7 +147,7 @@ class TestGuardClauses:
     def test_authenticate_silent_missing_client_id_or_secret_raises_error(
         self, client: OutlookClient
     ):
-        creds = {"tenant": "t"}  # missing client_id and client_secret
+        creds = {"tenant": "t"}
         tokens = {
             "access_token": "at",
             "refresh_token": "rt",
@@ -160,10 +156,10 @@ class TestGuardClauses:
         with pytest.raises(EmailMissingAppCredentialsError, match="Missing required"):
             client.authenticate_silent(app_credentials=creds, user_tokens=tokens)
 
-    def test_fetch_unread_emails_not_authenticated_raises_error(self, client: OutlookClient):
-        assert client._access_token is None
-        with pytest.raises(EmailNotAuthenticatedError):
-            client.fetch_unread_emails()
+    def test_fetch_email_metadata_raises_not_implemented(self, client: OutlookClient):
+        """Outlook metadata sync is not yet implemented."""
+        with pytest.raises(EmailExternalAPIError, match="not yet implemented"):
+            client.fetch_email_metadata()
 
     def test_send_email_not_authenticated_raises_error(self, client: OutlookClient):
         assert client._access_token is None
@@ -222,7 +218,7 @@ class TestAuthenticateSilentRefreshPath:
 
     def test_refresh_missing_access_token_raises_refresh_failed(self, client: OutlookClient):
         creds, tokens = self._make_expired_setup()
-        mock_response = {"refresh_token": "new_rt"}  # no access_token
+        mock_response = {"refresh_token": "new_rt"}
         with patch.object(client, "_token_request", return_value=mock_response):
             with pytest.raises(EmailRefreshFailedError, match="missing access_token"):
                 client.authenticate_silent(app_credentials=creds, user_tokens=tokens)
@@ -245,116 +241,8 @@ class TestAuthenticateSilentRefreshPath:
         mock_response = {
             "access_token": "new_at",
             "expires_in": 3600,
-            # no refresh_token in response
         }
         with patch.object(client, "_token_request", return_value=mock_response):
             result = client.authenticate_silent(app_credentials=creds, user_tokens=tokens)
 
         assert result["refresh_token"].get_secret_value() == "old_rt"
-
-
-# ── _graph_raw_request ──────────────────────────────────────────────
-
-
-class TestGraphRawRequest:
-    """Test the raw MIME download helper by mocking urllib.request.urlopen."""
-
-    def test_returns_raw_bytes(self, client: OutlookClient):
-        client._access_token = "token"
-        fake_body = b"MIME-Version: 1.0\r\nSubject: hi\r\n\r\nbody"
-        mock_response = MagicMock()
-        mock_response.read.return_value = fake_body
-        mock_response.__enter__ = lambda s: s
-        mock_response.__exit__ = MagicMock(return_value=False)
-
-        with patch("core.email.outlook_client.urllib.request.urlopen", return_value=mock_response):
-            result = client._graph_raw_request("https://graph.microsoft.com/v1.0/me/messages/abc/$value")
-
-        assert result == fake_body
-
-    def test_http_error_raises_external_api_error(self, client: OutlookClient):
-        client._access_token = "token"
-        exc = urllib.error.HTTPError(
-            url="https://example.com",
-            code=404,
-            msg="Not Found",
-            hdrs={},
-            fp=io.BytesIO(b'{"error":{"code":"ResourceNotFound","message":"msg"}}'),
-        )
-
-        with patch("core.email.outlook_client.urllib.request.urlopen", side_effect=exc):
-            with pytest.raises(EmailExternalAPIError, match="Graph API call"):
-                client._graph_raw_request("https://example.com")
-
-    def test_url_error_raises_external_api_error(self, client: OutlookClient):
-        client._access_token = "token"
-        exc = urllib.error.URLError(reason="DNS failure")
-
-        with patch("core.email.outlook_client.urllib.request.urlopen", side_effect=exc):
-            with pytest.raises(EmailExternalAPIError, match="reach Graph API"):
-                client._graph_raw_request("https://example.com")
-
-    def test_generic_exception_raises_external_api_error(self, client: OutlookClient):
-        client._access_token = "token"
-
-        with patch("core.email.outlook_client.urllib.request.urlopen", side_effect=RuntimeError("boom")):
-            with pytest.raises(EmailExternalAPIError, match="RuntimeError"):
-                client._graph_raw_request("https://example.com")
-
-
-# ── fetch_unread_emails (with raw MIME) ─────────────────────────────
-
-
-class TestFetchUnreadEmails:
-    """Test the full fetch flow by mocking _graph_request and _graph_raw_request."""
-
-    @staticmethod
-    def _make_raw_message(msg_id: str = "msg-1") -> dict:
-        return {
-            "id": msg_id,
-            "conversationId": "conv-1",
-            "subject": "Hello",
-            "from": {"emailAddress": {"name": "Alice", "address": "alice@example.com"}},
-            "toRecipients": [{"emailAddress": {"address": "bob@example.com"}}],
-            "bodyPreview": "Preview text",
-            "receivedDateTime": "2024-06-01T10:00:00Z",
-            "isRead": False,
-        }
-
-    def test_populates_raw_rfc822_b64url(self, client: OutlookClient):
-        client._access_token = "token"
-        raw_msg = self._make_raw_message("msg-1")
-        graph_response = {"value": [raw_msg]}
-        mime_bytes = b"MIME-Version: 1.0\r\nSubject: Hello\r\n\r\nPreview text"
-
-        with patch.object(client, "_graph_request", return_value=graph_response), \
-             patch.object(client, "_graph_raw_request", return_value=mime_bytes) as mock_raw:
-            emails = client.fetch_unread_emails()
-
-        assert len(emails) == 1
-        expected_b64 = base64.urlsafe_b64encode(mime_bytes).decode("utf-8")
-        assert emails[0].raw_rfc822_b64url == expected_b64
-        assert emails[0].message_id == "msg-1"
-        assert emails[0].provider == "outlook"
-        mock_raw.assert_called_once_with(f"{GRAPH_BASE_URL}/me/messages/msg-1/$value")
-
-    def test_empty_inbox_returns_empty_list(self, client: OutlookClient):
-        client._access_token = "token"
-        graph_response = {"value": []}
-
-        with patch.object(client, "_graph_request", return_value=graph_response) as mock_graph, \
-             patch.object(client, "_graph_raw_request") as mock_raw:
-            emails = client.fetch_unread_emails()
-
-        assert emails == []
-        mock_raw.assert_not_called()
-
-    def test_raw_request_failure_propagates_error(self, client: OutlookClient):
-        client._access_token = "token"
-        raw_msg = self._make_raw_message("msg-fail")
-        graph_response = {"value": [raw_msg]}
-
-        with patch.object(client, "_graph_request", return_value=graph_response), \
-             patch.object(client, "_graph_raw_request", side_effect=EmailExternalAPIError("boom")):
-            with pytest.raises(EmailExternalAPIError, match="boom"):
-                client.fetch_unread_emails()

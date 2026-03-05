@@ -1,5 +1,5 @@
 """
-Email router for inbox fetching and sending.
+Email router for metadata sync and sending.
 """
 
 from __future__ import annotations
@@ -7,22 +7,22 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends
 
 from api.routers.routers_helpers import require_session
-from api.schemas.email import EmailOut, EmailSendRequest
+from api.schemas.email import EmailSendRequest, SyncResultOut
 from api.services import emails_service
 
 
 router = APIRouter(prefix="/mailboxes/{mailbox_id}/emails", tags=["emails"])
 
 
-@router.get("/unread", response_model=list[EmailOut])
-def list_unread_emails(
+@router.post("/sync-metadata", response_model=SyncResultOut)
+def sync_email_metadata(
     mailbox_id: str,
     user_id: str = Depends(require_session),
-) -> list[EmailOut]:
+) -> SyncResultOut:
     """
-    Fetch unread emails for all accounts under a mailbox.
+    Fetch and persist email metadata for all accounts under a mailbox.
     """
-    return emails_service.get_unread(mailbox_id, user_id)
+    return emails_service.sync_email_metadata(mailbox_id, user_id)
 
 
 @router.post("/send")

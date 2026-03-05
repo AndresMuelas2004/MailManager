@@ -34,13 +34,13 @@ api/
 │   ├── auth_routers.py             #   POST /auth/google, GET /auth/me, POST /auth/logout, DELETE /auth/me
 │   ├── mailboxes_routers.py        #   CRUD for /mailboxes
 │   ├── accounts_routers.py         #   CRUD + /connect for /mailboxes/{id}/accounts
-│   └── emails_routers.py           #   GET /unread, POST /send for /mailboxes/{id}/emails
+│   └── emails_routers.py           #   POST /sync-metadata, POST /send for /mailboxes/{id}/emails
 │
 ├── schemas/                        # Pydantic request/response models
 │   ├── auth.py                     #   GoogleLoginRequest, UserOut, AuthResponse
 │   ├── mailbox.py                  #   MailboxCreate, MailboxOut
 │   ├── account.py                  #   AccountCreate, AccountUpdate, AccountOut, AccountConnectResponse
-│   ├── email.py                    #   EmailOut, EmailSendRequest
+│   ├── email.py                    #   EmailSendRequest, AccountSyncDetail, SyncResultOut
 │   └── error.py                    #   ErrorDetail, ErrorResponse
 │
 └── services/                       # Orchestration, validation, error mapping
@@ -48,7 +48,7 @@ api/
     ├── auth_service.py             #   Google OIDC login, session management
     ├── mailboxes_service.py        #   Mailbox CRUD
     ├── accounts_service.py         #   Account CRUD + interactive connect
-    └── emails_service.py           #   Fetch unread, send email
+    └── emails_service.py           #   Sync metadata, send email
 ```
 
 ## 2. Layer Boundaries
@@ -105,14 +105,14 @@ Every router follows the same pattern:
 | `GET` | `/mailboxes` | Yes | `mailboxes_service.list_mailboxes` | `list[MailboxOut]` |
 | `GET` | `/mailboxes/{mailbox_id}` | Yes | `mailboxes_service.get_mailbox` | `MailboxOut` |
 | `DELETE` | `/mailboxes/{mailbox_id}` | Yes | `mailboxes_service.delete_mailbox` | `{"status": "deleted"}` |
-| `GET` | `/mailboxes/{mid}/accounts` | Yes | `accounts_service.list_accounts` | `list[AccountOut]` |
-| `POST` | `/mailboxes/{mid}/accounts` | Yes | `accounts_service.create_account` | `AccountOut` |
-| `GET` | `/mailboxes/{mid}/accounts/{aid}` | Yes | `accounts_service.get_account` | `AccountOut` |
-| `PATCH` | `/mailboxes/{mid}/accounts/{aid}` | Yes | `accounts_service.update_account` | `AccountOut` |
-| `DELETE` | `/mailboxes/{mid}/accounts/{aid}` | Yes | `accounts_service.delete_account` | `{"status": "deleted"}` |
-| `POST` | `/mailboxes/{mid}/accounts/{aid}/connect` | Yes | `accounts_service.connect_account` | `AccountConnectResponse` |
-| `GET` | `/mailboxes/{mid}/emails/unread` | Yes | `emails_service.get_unread` | `list[EmailOut]` |
-| `POST` | `/mailboxes/{mid}/emails/send` | Yes | `emails_service.send_email` | `{"status": "sent"}` |
+| `GET` | `/mailboxes/{mailbox_id}/accounts` | Yes | `accounts_service.list_accounts` | `list[AccountOut]` |
+| `POST` | `/mailboxes/{mailbox_id}/accounts` | Yes | `accounts_service.create_account` | `AccountOut` |
+| `GET` | `/mailboxes/{mailbox_id}/accounts/{account_id}` | Yes | `accounts_service.get_account` | `AccountOut` |
+| `PATCH` | `/mailboxes/{mailbox_id}/accounts/{account_id}` | Yes | `accounts_service.update_account` | `AccountOut` |
+| `DELETE` | `/mailboxes/{mailbox_id}/accounts/{account_id}` | Yes | `accounts_service.delete_account` | `{"status": "deleted"}` |
+| `POST` | `/mailboxes/{mailbox_id}/accounts/{account_id}/connect` | Yes | `accounts_service.connect_account` | `AccountConnectResponse` |
+| `POST` | `/mailboxes/{mailbox_id}/emails/sync-metadata` | Yes | `emails_service.sync_email_metadata` | `SyncResultOut` |
+| `POST` | `/mailboxes/{mailbox_id}/emails/send` | Yes | `emails_service.send_email` | `{"status": "sent"}` |
 
 ### Extensibility — new identity providers
 
@@ -141,6 +141,14 @@ Wrap all database calls in `catch_database_errors(*, fallback, context)` — a c
 ### Secret wrapping
 
 Load credentials with `load_wrapped_app_credentials(provider)` / `load_wrapped_account_tokens(mailbox_id, account_id, provider)` (uses `pydantic.SecretStr`). Unwrap with `unwrap_secret()` before persisting.
+
+### Metadata helpers
+
+Three helpers in `services_helpers.py` support the email metadata sync flow:
+
+- `persist_email_metadata_batch(account_id, metadata_list)` — persists email metadata via batch upsert to the database.
+- `load_sync_cursors(label_lookup)` — loads sync cursors per account from the database, keyed by account label.
+- `update_sync_cursor(mailbox_id, account_id, cursor)` — persists a new sync cursor for an account.
 
 ### Cookie management
 
@@ -286,7 +294,7 @@ The context manager catches `DatabaseError` (translated via `_DB_TO_API_MAP`) an
 
 - **`translate_connect_error`** — for the interactive `/connect` flow. Maps `EmailAuthError` to `AccountConnectAuthError` (401) instead of `AccountNotConnected` (409), because a connect-time auth failure means the user's credentials are wrong, not that they need to call `/connect` again.
 - **`raise_on_silent_auth_errors`** — inspects the per-account error dict from `manager.authenticate_all_silent()`. Non-auth `CoreError`s are translated and raised immediately. Auth errors are accumulated and raised as a single `AccountNotConnected` (409).
-- **Post-fetch error inspection** — after `fetch_all_unread_emails()`, the service checks `manager.get_last_errors()` for per-client failures and raises either `AccountNotConnected` (auth errors) or `EmailFetchError` (other errors).
+- **Post-fetch error inspection** — after `fetch_all_email_metadata()`, the service checks `manager.get_last_errors()` for per-client failures and raises either `AccountNotConnected` (auth errors) or `EmailFetchError` (other errors).
 
 ### Global handlers (`handlers.py`)
 
@@ -325,8 +333,9 @@ Two FastAPI exception handlers form the final safety net:
 
 | Schema | Fields | Used by |
 |---|---|---|
-| `EmailOut` | `message_id`, `subject`, `sender`, `recipients`, `body`, `sent_at`, `is_unread`, `provider`, `thread_id?`, `raw_rfc822_b64url?` | Email response model |
 | `EmailSendRequest` | `account_id`, `subject`, `body`, `recipients` (min 1) | `POST .../emails/send` request |
+| `AccountSyncDetail` | `account_id`, `provider`, `emails_synced`, `sync_cursor?` | Per-account sync result |
+| `SyncResultOut` | `total_synced`, `accounts: list[AccountSyncDetail]` | `POST .../emails/sync-metadata` response |
 
 ### `error.py`
 

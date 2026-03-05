@@ -61,3 +61,6 @@ backend/data/
 # Frontend
 node_modules/
 frontend/dist/
+
+#Personal things
+Ignore/

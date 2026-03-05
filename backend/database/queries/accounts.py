@@ -92,3 +92,17 @@ BACKFILL_LEGACY_TOKENS = """
        AND provider = %(provider)s
 """
 
+# ---------------------------------------------------------------------------
+# Sync cursor operations
+# ---------------------------------------------------------------------------
+
+GET_SYNC_CURSOR = """
+    SELECT sync_cursor FROM accounts
+    WHERE account_id = %(account_id)s AND mailbox_id = %(mailbox_id)s
+"""
+
+UPDATE_SYNC_CURSOR = """
+    UPDATE accounts SET sync_cursor = %(sync_cursor)s
+    WHERE account_id = %(account_id)s AND mailbox_id = %(mailbox_id)s
+"""
+

@@ -39,17 +39,18 @@ while replacing external provider boundaries with fakes.
 ### `create_test_schema` (session, autouse)
 
 - Requires `DATABASE_URL`.
-- Runs `alembic upgrade head` using `api/database/alembic.ini`.
+- Runs `alembic upgrade head` using `database/alembic.ini`.
 
 ### `isolated_db` (autouse, per test)
 
 - Opens one PostgreSQL connection with `autocommit=False`.
 - Monkeypatches `get_connection` in:
-  - `api.database.connection`
-  - `api.database.repositories.mailbox_repository`
-  - `api.database.repositories.account_repository`
-  - `api.database.repositories.user_repository`
-  - `api.database.repositories.session_repository`
+  - `database.connection`
+  - `database.repositories.mailbox_repository`
+  - `database.repositories.account_repository`
+  - `database.repositories.user_repository`
+  - `database.repositories.session_repository`
+  - `database.repositories.email_metadata_repository`
 - Rolls back after each test for clean isolation.
 
 ### `_seed_test_user` (autouse, per test)
@@ -68,6 +69,12 @@ while replacing external provider boundaries with fakes.
 - Patches manager builder and credential/token helpers.
 - Uses `FakeEmailClient` from `tests/shared/email_fakes.py`.
 - Used for happy-path and direct API error tests.
+
+### `setup_mailbox_and_account`
+
+- Returns a callable `_setup_mailbox_and_account(client, provider="gmail")`.
+- Creates a mailbox and account via POST requests and returns `(mailbox_id, account_id)`.
+- Used by tests that need a pre-existing mailbox and account pair.
 
 ### `failing_test_client` (indirect parametrize)
 

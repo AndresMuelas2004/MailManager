@@ -11,7 +11,7 @@ if str(BACKEND_PATH) not in sys.path:
 
 from api.app import create_app
 from core.email import EmailManager
-from tests.shared.email_fakes import FakeEmailClient, build_message
+from tests.shared.email_fakes import FakeEmailClient, build_metadata
 
 
 @pytest.fixture(scope="session")
@@ -32,16 +32,16 @@ def temp_base_dir():
 
 
 @pytest.fixture
-def sample_messages():
+def sample_metadata():
     return [
-        build_message(message_id="m1"),
-        build_message(message_id="m2"),
-        build_message(message_id="m3"),
+        build_metadata(provider_message_id="m1"),
+        build_metadata(provider_message_id="m2"),
+        build_metadata(provider_message_id="m3"),
     ]
 
 
 @pytest.fixture
-def fake_email_manager(sample_messages):
+def fake_email_manager(sample_metadata):
     manager = EmailManager()
-    manager.add_client(FakeEmailClient("mb1__acc1", unread_messages=sample_messages))
+    manager.add_client(FakeEmailClient("mb1__acc1", metadata=sample_metadata))
     return manager

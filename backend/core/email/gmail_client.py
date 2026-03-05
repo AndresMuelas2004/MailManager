@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import base64
 from datetime import datetime, timezone
-from email.utils import parsedate_to_datetime
+from email.utils import parseaddr
 from typing import Any
 
 from google.auth.exceptions import RefreshError, TransportError
@@ -12,7 +12,7 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
-from .email_client import EmailClient, EmailMessage
+from .email_client import EmailClient, EmailMetadata
 from .errors import (
     EmailExternalAPIError,
     EmailMissingAppCredentialsError,
@@ -31,41 +31,7 @@ from .helpers import (
 
 GMAIL_SCOPES = ["https://www.googleapis.com/auth/gmail.modify"]
 
-
-def _parse_headers_from_raw(raw_b64url: str) -> dict[str, str]:
-    """Decode the raw RFC822 message and extract normalized email headers."""
-    if not raw_b64url:
-        return {}
-    try:
-        raw_bytes = base64.urlsafe_b64decode(raw_b64url.encode("utf-8"))
-    except (ValueError, TypeError):
-        return {}
-
-    raw_text = raw_bytes.decode("utf-8", errors="replace")
-    header_lines = []
-    for line in raw_text.splitlines():
-        if line == "":
-            break
-        header_lines.append(line)
-
-    unfolded = []
-    current = ""
-    for line in header_lines:
-        if line.startswith((" ", "\t")) and current:
-            current = f"{current} {line.strip()}"
-        else:
-            if current:
-                unfolded.append(current)
-            current = line.strip()
-    if current:
-        unfolded.append(current)
-
-    headers: dict[str, str] = {}
-    for line in unfolded:
-        if ":" in line:
-            name, value = line.split(":", 1)
-            headers[name.strip()] = value.strip()
-    return headers
+_BATCH_SIZE = 100
 
 
 class GmailClient(EmailClient):
@@ -195,25 +161,52 @@ class GmailClient(EmailClient):
             return payload
         return {"installed": payload}
 
-    def fetch_unread_emails(self, max_total: int = 200, page_size: int = 50) -> list[EmailMessage]:
+    # ------------------------------------------------------------------
+    # Metadata sync
+    # ------------------------------------------------------------------
+
+    def fetch_email_metadata(
+        self,
+        sync_cursor: str | None = None,
+        max_total: int = 500,
+    ) -> tuple[list[EmailMetadata], str]:
         """
-        Fetch unread Gmail messages, normalize them into EmailMessage objects
-        and return them as a list.
+        Fetch email metadata from Gmail.
+
+        Returns (metadata_list, new_sync_cursor).
         """
         if self.service is None:
-            raise EmailNotAuthenticatedError("Gmail fetch_unread_emails requires authentication.")
+            raise EmailNotAuthenticatedError("Gmail fetch_email_metadata requires authentication.")
 
-        unread_emails: list[EmailMessage] = []
+        if sync_cursor is not None and self._is_sync_cursor_valid(sync_cursor):
+            # ------ Path 2: Incremental sync via users.history.list ------
+            # TODO: return self._incremental_email_metadata(sync_cursor)
+            pass
 
-        messages = []
+        # ------ Path 1: Bootstrap (full fetch) ------
+        return self._bootstrap_email_metadata(max_total)
+
+    def _bootstrap_email_metadata(
+        self,
+        max_total: int,
+    ) -> tuple[list[EmailMetadata], str]:
+        """Path 1: Full bootstrap fetch of message metadata."""
+        message_ids = self._list_message_ids(max_total)
+        metadata_list = self._batch_fetch_metadata(message_ids)
+        history_id = self._get_current_history_id()
+        return metadata_list, history_id
+
+    def _list_message_ids(self, max_total: int) -> list[str]:
+        """List message IDs using pagination, including spam and trash."""
+        ids: list[str] = []
         page_token = None
+        page_size = min(max_total, 500)
 
-        # Fetch unread email message IDs from Gmail using pagination and enforce a global max limit.
         while True:
-            list_kwargs = {
+            list_kwargs: dict[str, Any] = {
                 "userId": "me",
-                "q": "in:inbox is:unread category:primary",
                 "maxResults": page_size,
+                "includeSpamTrash": True,
             }
             if page_token:
                 list_kwargs["pageToken"] = page_token
@@ -230,77 +223,142 @@ class GmailClient(EmailClient):
                 raise EmailExternalAPIError(
                     f"Gmail unexpected fetch message list error ({type(exc).__name__}): {exc}"
                 ) from exc
-            messages.extend(response.get("messages", []))
 
-            if len(messages) >= max_total:
-                messages = messages[:max_total]
+            for msg in response.get("messages", []):
+                msg_id = str(msg.get("id") or "").strip()
+                if msg_id:
+                    ids.append(msg_id)
+
+            if len(ids) >= max_total:
+                ids = ids[:max_total]
                 break
 
             page_token = response.get("nextPageToken")
             if not page_token:
                 break
 
-        # Retrieve each full email from Gmail in raw format using the previously collected IDs.
-        for message_meta in messages:
-            message_id = str(message_meta.get("id") or "").strip()
-            if not message_id:
-                raise EmailExternalAPIError("Gmail response missing message id in message list.")
+        return ids
+
+    def _batch_fetch_metadata(self, message_ids: list[str]) -> list[EmailMetadata]:
+        """Fetch metadata for message IDs using Gmail BatchHttpRequest."""
+        results: list[EmailMetadata] = []
+
+        for chunk_start in range(0, len(message_ids), _BATCH_SIZE):
+            chunk = message_ids[chunk_start:chunk_start + _BATCH_SIZE]
+            batch_results: dict[str, dict[str, Any]] = {}
+
+            def _callback(request_id: str, response: Any, exception: Any) -> None:
+                if exception is not None:
+                    return
+                batch_results[request_id] = response
 
             try:
-                message = self.service.users().messages().get(
-                    userId="me",
-                    id=message_id,
-                    format="raw",
-                ).execute()
+                batch = self.service.new_batch_http_request(callback=_callback)
+                for msg_id in chunk:
+                    batch.add(
+                        self.service.users().messages().get(
+                            userId="me",
+                            id=msg_id,
+                            format="metadata",
+                            metadataHeaders=["From", "Subject"],
+                        ),
+                        request_id=msg_id,
+                    )
+                batch.execute()
             except HttpError as exc:
                 status = getattr(exc.resp, "status", "unknown")
                 reason = getattr(exc, "reason", "unknown")
                 raise EmailExternalAPIError(
-                    f"Gmail failed to fetch message {message_id} (HTTP {status}: {reason})."
+                    f"Gmail batch metadata fetch failed (HTTP {status}: {reason})."
                 ) from exc
             except Exception as exc:
                 raise EmailExternalAPIError(
-                    f"Gmail unexpected fetch message error for {message_id} ({type(exc).__name__}): {exc}"
+                    f"Gmail unexpected batch fetch error ({type(exc).__name__}): {exc}"
                 ) from exc
 
-            raw_rfc822_b64url = message.get("raw", "")
-            raw_headers = _parse_headers_from_raw(raw_rfc822_b64url)
+            for msg_id in chunk:
+                msg = batch_results.get(msg_id)
+                if msg is None:
+                    continue
+                results.append(self._parse_metadata_response(msg))
 
-            subject = raw_headers.get("Subject", "")
-            sender = raw_headers.get("From", "")
-            to_header = raw_headers.get("To", "")
-            recipients = [to_header] if to_header else []
-            body = message.get("snippet", "")
+        return results
 
-            date_value = raw_headers.get("Date", "")
-            if date_value:
-                try:
-                    sent_at = parsedate_to_datetime(date_value)
-                except (TypeError, ValueError):
-                    sent_at = datetime.now(timezone.utc)
-            else:
-                internal_date = message.get("internalDate")
-                if internal_date:
-                    sent_at = datetime.fromtimestamp(int(internal_date) / 1000, tz=timezone.utc)
-                else:
-                    sent_at = datetime.now(timezone.utc)
+    @staticmethod
+    def _parse_metadata_response(msg: dict[str, Any]) -> EmailMetadata:
+        """Parse a Gmail message response (format=metadata) into EmailMetadata."""
+        headers = {
+            h["name"]: h["value"]
+            for h in (msg.get("payload") or {}).get("headers", [])
+        }
 
-            unread_emails.append(
-                EmailMessage(
-                    message_id=message_id,
-                    thread_id=message.get("threadId"),
-                    subject=subject,
-                    sender=sender,
-                    recipients=recipients,
-                    body=body,
-                    sent_at=sent_at,
-                    is_unread=True,
-                    provider="gmail",
-                    raw_rfc822_b64url=raw_rfc822_b64url or None,
-                )
-            )
+        from_header = headers.get("From", "")
+        from_name, from_email = parseaddr(from_header)
 
-        return unread_emails
+        label_ids = msg.get("labelIds") or []
+        is_read = "UNREAD" not in label_ids
+
+        if "SPAM" in label_ids:
+            box = "SPAM"
+        elif "TRASH" in label_ids:
+            box = "TRASH"
+        else:
+            box = "ALL_MAIL"
+
+        internal_date = msg.get("internalDate")
+        if internal_date:
+            received_at = datetime.fromtimestamp(int(internal_date) / 1000, tz=timezone.utc)
+        else:
+            received_at = datetime.now(timezone.utc)
+
+        return EmailMetadata(
+            provider_message_id=msg.get("id", ""),
+            thread_id=msg.get("threadId", ""),
+            from_email=from_email or "",
+            from_name=from_name or "",
+            subject=headers.get("Subject", ""),
+            received_at=received_at,
+            is_read=is_read,
+            box=box,
+        )
+
+    def _get_current_history_id(self) -> str:
+        """Retrieve the current historyId from the user's Gmail profile."""
+        try:
+            profile = self.service.users().getProfile(userId="me").execute()
+            return str(profile.get("historyId", ""))
+        except HttpError as exc:
+            status = getattr(exc.resp, "status", "unknown")
+            reason = getattr(exc, "reason", "unknown")
+            raise EmailExternalAPIError(
+                f"Gmail failed to fetch profile for historyId (HTTP {status}: {reason})."
+            ) from exc
+        except Exception as exc:
+            raise EmailExternalAPIError(
+                f"Gmail unexpected getProfile error ({type(exc).__name__}): {exc}"
+            ) from exc
+
+    def _is_sync_cursor_valid(self, sync_cursor: str) -> bool:
+        """Check if historyId is still valid by probing users.history.list."""
+        try:
+            self.service.users().history().list(
+                userId="me", startHistoryId=sync_cursor, maxResults=1,
+            ).execute()
+            return True
+        except HttpError:
+            return False
+        except Exception:
+            return False
+
+    def _incremental_email_metadata(
+        self, sync_cursor: str,
+    ) -> tuple[list[EmailMetadata], str]:
+        """Camino 2: Incremental sync via history.list. NOT YET IMPLEMENTED."""
+        raise NotImplementedError("Gmail incremental sync not yet implemented.")
+
+    # ------------------------------------------------------------------
+    # Send
+    # ------------------------------------------------------------------
 
     def send_email(
         self,

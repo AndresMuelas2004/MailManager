@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from typing import Any
-from .email_client import EmailClient, EmailMessage
+from .email_client import EmailClient, EmailMetadata
 from .errors import (
     EmailAccountNotFoundError,
     EmailAccountRecordError,
@@ -115,20 +115,24 @@ class EmailManager:
             self._last_errors[account_label] = exc
             raise
 
-    def fetch_all_unread_emails(self) -> list[EmailMessage]:
+    def fetch_all_email_metadata(
+        self,
+        sync_cursors: dict[str, str | None] | None = None,
+    ) -> dict[str, tuple[list[EmailMetadata], str]]:
         """
-        Fetch unread messages from all clients and return a unified list.
+        Fetch email metadata from all clients.
+        Returns {account_label: (metadata_list, new_sync_cursor)}.
         """
         self._last_errors = {}
-        all_unread: list[EmailMessage] = []
-
+        results: dict[str, tuple[list[EmailMetadata], str]] = {}
         for client in self._clients:
+            label = client.get_account_label()
+            cursor = (sync_cursors or {}).get(label)
             try:
-                all_unread.extend(client.fetch_unread_emails())
+                results[label] = client.fetch_email_metadata(sync_cursor=cursor)
             except Exception as exc:
-                self._last_errors[client.get_account_label()] = exc
-
-        return all_unread
+                self._last_errors[label] = exc
+        return results
 
     def send_email_from_account(
         self,

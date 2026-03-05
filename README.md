@@ -1,13 +1,13 @@
 ﻿# MailManager
 
 MailManager is a multi-account email management platform with a FastAPI backend and a React frontend.
-It lets you group Gmail and Outlook accounts under mailbox entities, connect them with OAuth 2.0, fetch unread messages across providers, and send emails from any connected account.
+It lets you group Gmail and Outlook accounts under mailbox entities, connect them with OAuth 2.0, fetch inbox messages across providers, and send emails from any connected account.
 
 ## Highlights
 
 - Multi-mailbox model to isolate contexts (work, personal, clients).
 - Multi-provider support: Gmail and Outlook are implemented.
-- Unified unread inbox per mailbox across all connected accounts.
+- Unified inbox per mailbox across all connected accounts.
 - Send email from a specific account in a mailbox.
 - OAuth 2.0 interactive connect flow plus silent re-authentication.
 - PostgreSQL persistence for mailboxes, accounts, and tokens.
@@ -19,8 +19,10 @@ Request flow:
 
 ```text
 Routers (api/routers)
+  -> Routers helpers (api/routers/routers_helpers.py)
   -> Services (api/services)
-    -> Database (api/database)
+    -> Auth (auth/)
+    -> Database (database/)
     -> Core (core/email)
       -> EmailManager
         -> GmailClient / OutlookClient
@@ -30,7 +32,8 @@ Layer contracts:
 
 - `Routers`: HTTP interface only. No business logic.
 - `Services`: orchestration, validation, and error translation.
-- `Database`: PostgreSQL persistence and token storage.
+- `Auth`: framework-agnostic authentication (Google OIDC, session management).
+- `Database`: PostgreSQL persistence and token storage (independent layer).
 - `Core`: provider-specific email behavior and client orchestration.
 
 ## Repository Structure
@@ -42,8 +45,9 @@ MailManager/
 |   |   |-- routers/
 |   |   |-- services/
 |   |   |-- schemas/
-|   |   |-- errors/
-|   |   `-- database/
+|   |   `-- errors/
+|   |-- auth/
+|   |-- database/
 |   |-- core/
 |   |   `-- email/
 |   |-- tests/
@@ -115,14 +119,14 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 ### 3. Apply database migrations
 
 ```bash
-python -m alembic -c backend/api/database/alembic.ini upgrade head
+python -m alembic -c backend/database/alembic.ini upgrade head
 ```
 
 For existing databases initialized before Alembic:
 
 ```bash
-python -m alembic -c backend/api/database/alembic.ini stamp 0001_initial_schema
-python -m alembic -c backend/api/database/alembic.ini upgrade head
+python -m alembic -c backend/database/alembic.ini stamp 0001_initial_schema
+python -m alembic -c backend/database/alembic.ini upgrade head
 ```
 
 ### 4. Run backend
@@ -157,7 +161,7 @@ mkdir credentials
 docker compose up --build
 ```
 
-This starts PostgreSQL, the backend (port 8000), and the frontend (port 5173). Run Alembic migrations before exposing the API.
+This starts PostgreSQL and the backend (port 8000). The frontend service is currently commented out in `docker-compose.yml`. Run Alembic migrations before exposing the API.
 
 ```bash
 docker compose down      # stop all services
@@ -180,6 +184,10 @@ docker compose down -v   # stop and delete database volume
 | `TOKEN_PLAINTEXT_FALLBACK_ENABLED` | No | Enables temporary legacy plaintext token reads. Default: `true`. |
 | `MIA_GMAIL_CREDENTIALS_PATH` | Yes | Path to Gmail OAuth credentials JSON file. |
 | `MIA_OUTLOOK_CREDENTIALS_PATH` | Yes | Path to Outlook app credentials JSON file. |
+| `GOOGLE_CLIENT_ID` | Yes | Google OAuth client ID for OIDC authentication. |
+| `AUTH_SESSION_LIFETIME_DAYS` | No | Session duration in days. Default: `7`. |
+| `AUTH_COOKIE_SECURE` | No | HTTPS-only session cookies. Default: `false`. |
+| `CORS_ALLOWED_ORIGINS` | No | Comma-separated CORS origins. Default: `http://localhost:5173`. |
 | `VITE_API_BASE_URL` | No | Frontend override for the backend URL. Defaults to `http://localhost:8000`. |
 
 Outlook credential file keys: `client_id`, `client_secret`, `tenant`, `redirect_uri`, `scopes`.
@@ -208,8 +216,15 @@ Accounts:
 
 Emails:
 
-- `GET /mailboxes/{mailbox_id}/emails/unread`
+- `POST /mailboxes/{mailbox_id}/emails/sync-metadata`
 - `POST /mailboxes/{mailbox_id}/emails/send`
+
+Auth:
+
+- `POST /auth/google`
+- `GET /auth/me`
+- `POST /auth/logout`
+- `DELETE /auth/me`
 
 Detailed endpoint contracts: `backend/api/API_ENDPOINTS.md`
 
@@ -229,16 +244,28 @@ All API errors follow this schema:
 
 Primary API error codes include:
 
+- `api_error`
 - `mailbox_not_found`
 - `account_not_found`
+- `user_not_found`
 - `account_misconfigured`
+- `recipients_missing`
+- `unauthorized`
 - `account_connect_auth_error`
+- `forbidden`
 - `account_not_connected`
+- `app_credentials_invalid`
+- `app_credentials_missing`
+- `env_var_error`
+- `credential_file_error`
+- `database_connection_error`
+- `database_query_error`
+- `database_migration_error`
+- `token_decryption_error`
+- `token_integrity_error`
 - `email_fetch_error`
 - `email_send_error`
 - `external_api_error`
-- `env_var_error`
-- `database_error`
 
 ## Testing
 
@@ -265,7 +292,9 @@ Testing docs:
 ## Additional Documentation
 
 - API endpoints: `backend/api/API_ENDPOINTS.md`
-- Database package: `backend/api/database/DATABASE.md`
+- API layer guide: `backend/api/API_GUIDE.md`
+- Auth layer guide: `backend/auth/AUTH_GUIDE.md`
+- Database package: `backend/database/DATABASE.md`
 - Email client implementation guide: `backend/core/email/CLIENT_GUIDE.md`
 - Frontend setup: `frontend/README.md`
 - Agent guidance: `CLAUDE.md`

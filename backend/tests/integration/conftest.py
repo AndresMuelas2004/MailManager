@@ -12,13 +12,14 @@ from pydantic import SecretStr
 from database import connection as connection_module
 from database.migrations.runner import ensure_schema_at_head
 from database.repositories import account_repository as account_repo_module
+from database.repositories import email_metadata_repository as email_metadata_repo_module
 from database.repositories import mailbox_repository as mailbox_repo_module
 from database.repositories import session_repository as session_repo_module
 from database.repositories import user_repository as user_repo_module
 from api.routers.routers_helpers import require_session
 from api.services import accounts_service, emails_service, services_helpers
 from core.email import EmailManager
-from tests.shared.email_fakes import FakeEmailClient
+from tests.shared.email_fakes import FakeEmailClient, build_metadata
 
 _ALEMBIC_INI_PATH = Path(__file__).resolve().parents[2] / "database" / "alembic.ini"
 
@@ -117,6 +118,7 @@ def isolated_db(monkeypatch):
     monkeypatch.setattr(account_repo_module.connection, "get_connection", _get_conn)
     monkeypatch.setattr(user_repo_module.connection, "get_connection", _get_conn)
     monkeypatch.setattr(session_repo_module.connection, "get_connection", _get_conn)
+    monkeypatch.setattr(email_metadata_repo_module.connection, "get_connection", _get_conn)
 
     yield conn
 
@@ -187,7 +189,7 @@ def _apply_test_monkeypatches(monkeypatch, build_manager_fn):
 
 
 @pytest.fixture
-def test_client(test_client_base, sample_messages, monkeypatch):
+def test_client(test_client_base, sample_metadata, monkeypatch):
     def _build_manager(accounts):
         manager = EmailManager()
         for account in accounts:
@@ -197,7 +199,7 @@ def test_client(test_client_base, sample_messages, monkeypatch):
             manager.add_client(
                 FakeEmailClient(
                     label,
-                    unread_messages=sample_messages,
+                    metadata=sample_metadata,
                     auth_return={"access_token": "tok", "refresh_token": "ref"},
                 )
             )
@@ -208,7 +210,7 @@ def test_client(test_client_base, sample_messages, monkeypatch):
 
 
 @pytest.fixture
-def failing_test_client(test_client_base, sample_messages, monkeypatch, request):
+def failing_test_client(test_client_base, sample_metadata, monkeypatch, request):
     """Test client whose FakeEmailClients are configured with failure kwargs.
 
     Use via ``@pytest.mark.parametrize("failing_test_client", [kwargs], indirect=True)``
@@ -226,7 +228,7 @@ def failing_test_client(test_client_base, sample_messages, monkeypatch, request)
             manager.add_client(
                 FakeEmailClient(
                     label,
-                    unread_messages=sample_messages,
+                    metadata=sample_metadata,
                     auth_return={"access_token": "tok", "refresh_token": "ref"},
                     **client_kwargs,
                 )

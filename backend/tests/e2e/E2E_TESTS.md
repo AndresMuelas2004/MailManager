@@ -93,7 +93,7 @@ Step 1 uses `InstalledAppFlow` with `openid email profile` scopes to obtain a re
 | 5 | Connect Gmail and Outlook | `POST /mailboxes/{mid}/accounts/{id}/connect` | Yes — browser opens for each provider |
 | 6 | Update Gmail label | `PATCH /mailboxes/{mid}/accounts/{id}` | No |
 | 7 | Send one email from each provider | `POST /mailboxes/{mid}/emails/send` | No |
-| 8 | Fetch unread emails | `GET /mailboxes/{mid}/emails/unread` | No |
+| 8 | Sync email metadata | `POST /mailboxes/{mid}/emails/sync-metadata` | No |
 | 9 | List accounts | `GET /mailboxes/{mid}/accounts` | No |
 | 10 | Get Gmail account detail | `GET /mailboxes/{mid}/accounts/{id}` | No |
 | 11 | Delete Outlook account | `DELETE /mailboxes/{mid}/accounts/{id}` | No |

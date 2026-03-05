@@ -119,14 +119,22 @@ def test_connect_account(test_client, setup_mailbox_and_account):
 
 
 # ------------------------------------------------------------------
-# Emails
+# Emails — sync-metadata
 # ------------------------------------------------------------------
 
-def test_list_unread_emails(test_client, setup_mailbox_and_account):
+def test_sync_email_metadata(test_client, setup_mailbox_and_account):
     mid, _ = setup_mailbox_and_account(test_client)
-    resp = test_client.get(f"{_MAILBOX_URL}/{mid}/emails/unread")
+    resp = test_client.post(f"{_MAILBOX_URL}/{mid}/emails/sync-metadata")
     assert resp.status_code == 200
-    assert len(resp.json()) == 3
+    data = resp.json()
+    assert "total_synced" in data
+    assert "accounts" in data
+    assert isinstance(data["accounts"], list)
+    assert len(data["accounts"]) == 1
+    detail = data["accounts"][0]
+    assert "account_id" in detail
+    assert "provider" in detail
+    assert "emails_synced" in detail
 
 
 def test_send_email(test_client, setup_mailbox_and_account):
@@ -162,12 +170,12 @@ def _setup_mailbox_with_two_accounts(client) -> tuple[str, str, str]:
     return mid, aid1, aid2
 
 
-def test_multi_account_unread_aggregates(test_client):
+def test_multi_account_sync_metadata(test_client):
     mid, _, _ = _setup_mailbox_with_two_accounts(test_client)
-    resp = test_client.get(f"{_MAILBOX_URL}/{mid}/emails/unread")
+    resp = test_client.post(f"{_MAILBOX_URL}/{mid}/emails/sync-metadata")
     assert resp.status_code == 200
-    # Each FakeEmailClient returns 3 sample messages -> 2 accounts = 6.
-    assert len(resp.json()) == 6
+    data = resp.json()
+    assert len(data["accounts"]) == 2
 
 
 def test_multi_account_send_targets_specific_account(test_client):
@@ -192,7 +200,6 @@ def test_multi_account_send_targets_specific_account(test_client):
 def test_delete_mailbox_removes_accounts(test_client):
     mid, aid1, aid2 = _setup_mailbox_with_two_accounts(test_client)
     test_client.delete(f"{_MAILBOX_URL}/{mid}")
-    # Mailbox gone -> any account operation returns 404.
     assert test_client.get(f"{_MAILBOX_URL}/{mid}/accounts/{aid1}").status_code == 404
     assert test_client.get(f"{_MAILBOX_URL}/{mid}/accounts/{aid2}").status_code == 404
 
@@ -210,7 +217,7 @@ def test_update_account_config_only(test_client, setup_mailbox_and_account):
     assert resp.status_code == 200
     data = resp.json()
     assert data["config"] == {"extra": True}
-    assert data["display_label"] == "test-gmail"  # unchanged
+    assert data["display_label"] == "test-gmail"
 
 
 # ==================================================================

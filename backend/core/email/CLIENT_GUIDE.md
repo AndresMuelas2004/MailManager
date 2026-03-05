@@ -22,11 +22,11 @@ Every provider client must implement the `EmailClient` abstract methods:
 |---|---|---|
 | `authenticate(app_credentials)` | Interactive account connection flow. | `dict[str, Any] \| None` |
 | `authenticate_silent(app_credentials, user_tokens)` | Non-interactive auth and refresh path. | `dict[str, Any] \| None` |
-| `fetch_unread_emails(...)` | Fetch unread provider messages. | `list[EmailMessage]` |
+| `fetch_email_metadata(sync_cursor, max_total)` | Fetch email metadata from provider. | `tuple[list[EmailMetadata], str]` |
 | `send_email(subject, body, recipients)` | Send plain-text email. | `None` |
 | `get_account_label()` | Stable account identifier in manager. | `str` |
 
-`EmailMessage` is the normalized provider-agnostic payload used by the API layer.
+`EmailMetadata` is the normalized provider-agnostic metadata dataclass used by the service layer for persistence.
 
 ## 2. Account Label Convention
 
@@ -64,7 +64,7 @@ Main methods:
 - `add_account_record(record)`
 - `authenticate_all_silent(auth_payloads)`
 - `connect_account(account_label, app_credentials)`
-- `fetch_all_unread_emails()`
+- `fetch_all_email_metadata(sync_cursors)`
 - `send_email_from_account(account_label, ...)`
 - `get_last_errors()`
 
@@ -72,6 +72,7 @@ Behavioral notes:
 
 - Manager stores per-account errors in `_last_errors`.
 - Silent auth can refresh tokens and return updated payloads per account label.
+- `fetch_all_email_metadata()` accepts an optional `sync_cursors` dict keyed by account label. Each client receives its cursor (or `None` for bootstrap). Per-client errors are collected in `_last_errors` without aborting other clients.
 - Missing target account label raises `EmailAccountNotFoundError`.
 
 ## 5. Authentication Flows
@@ -112,14 +113,63 @@ Provider-specific token refresh behavior:
 
 ## 6. Email Operations
 
-### 6.1 `fetch_unread_emails`
+### 6.1 `fetch_email_metadata`
+
+Signature:
+
+```python
+def fetch_email_metadata(
+    self, sync_cursor: str | None = None, max_total: int = 500,
+) -> tuple[list[EmailMetadata], str]:
+```
 
 Requirements:
 
 - Fail fast if client is not authenticated (`EmailNotAuthenticatedError`).
-- Return normalized `EmailMessage` items.
-- Include provider identifier (`gmail`, `outlook`, etc.) in each message.
-- Raise typed core errors for provider/network failures.
+- Return `(metadata_list, new_sync_cursor)`.
+- If `sync_cursor` is `None` → bootstrap (Camino 1): fetch up to `max_total` messages.
+- If `sync_cursor` is not `None` → attempt incremental (Camino 2), fall back to bootstrap on failure or if not yet implemented.
+- `account_id` field on `EmailMetadata` is left empty (`""`) — stamped by the service layer before persistence.
+
+#### `EmailMetadata` dataclass
+
+```python
+@dataclass
+class EmailMetadata:
+    provider_message_id: str
+    thread_id: str
+    from_email: str
+    from_name: str
+    subject: str
+    received_at: datetime
+    is_read: bool
+    box: str          # "ALL_MAIL" | "SPAM" | "TRASH"
+    account_id: str = ""
+```
+
+#### Box mapping (label → box)
+
+```
+labelIds contains "SPAM"  → box = "SPAM"
+labelIds contains "TRASH" → box = "TRASH"
+otherwise                 → box = "ALL_MAIL"
+```
+
+#### Gmail batch fetch pattern
+
+1. **List message IDs** — paginated `messages.list()` with `includeSpamTrash=True`, no `q` filter, up to `max_total`.
+2. **Batch-fetch metadata** — chunks of 100 IDs via `service.new_batch_http_request()` with `format="metadata"`, `metadataHeaders=["From", "Subject"]`.
+3. **Parse each response** — extract `From` header via `email.utils.parseaddr()`, `Subject` header, `internalDate` (millis → UTC datetime), `labelIds` for `is_read` and `box`.
+4. **Get current historyId** — `users().getProfile(userId="me")["historyId"]` as `new_sync_cursor`.
+
+#### Sync cursor (Gmail)
+
+- Bootstrap: `sync_cursor=None` → Camino 1 → returns `historyId` as new cursor.
+- Incremental: `sync_cursor` present → validates via `users.history.list` probe. Currently falls back to bootstrap (Camino 2 not yet implemented).
+
+#### Outlook
+
+`fetch_email_metadata()` raises `EmailExternalAPIError("Outlook metadata sync not yet implemented.")`. Full implementation is planned for a future iteration.
 
 ### 6.2 `send_email`
 
@@ -147,6 +197,9 @@ Typical mappings:
 | External API failure | `EmailExternalAPIError` |
 | Unknown provider in manager | `EmailProviderConfigError` |
 | Invalid account record fields | `EmailAccountRecordError` |
+| Invalid or unparseable expiry value | `EmailInvalidExpiryError` |
+| App credentials data is structurally invalid | `EmailInvalidCredentialsDataError` |
+| Token data is structurally invalid | `EmailInvalidTokenDataError` |
 | Duplicate account label in manager | `EmailDuplicateAccountLabelError` |
 | Account label not registered in manager | `EmailAccountNotFoundError` |
 
@@ -185,7 +238,8 @@ Every provider client follows these rules when catching exceptions:
 | Interactive OAuth | `google-auth-oauthlib` local server flow | PKCE + local callback server |
 | Silent refresh | Google `Credentials.refresh()` | Token endpoint POST (`refresh_token`) |
 | Send operation | Gmail `users.messages.send` | Graph `POST /me/sendMail` |
-| Unread fetch | Gmail list + per-message get | Graph `/me/messages` with filter |
+| Metadata fetch | Gmail `messages.list` + `BatchHttpRequest` (`format="metadata"`) | Not yet implemented (stub raises `EmailExternalAPIError`) |
+| Sync cursor | `historyId` from `users().getProfile()` | N/A |
 
 ## 9. Adding a New Provider Checklist
 
@@ -199,11 +253,12 @@ Core layer:
 
 Database and config:
 
-- [ ] Add provider env var mapping in `api/database/settings.py` and ensure `api/database/security/app_credentials.py` can load the new provider.
-- [ ] Update provider CHECK constraint in `api/database/schema.sql`.
+- [ ] Add provider env var mapping in `database/settings.py` and ensure `database/security/app_credentials.py` can load the new provider.
+- [ ] Update provider CHECK constraint in `database/schema.sql`.
 
 Services/tests/docs:
 
+- [ ] Update `_CORE_TO_API_MAP` in `api/services/services_helpers.py` if the new provider introduces new error types.
 - [ ] Ensure service flows call provider through existing helper APIs.
 - [ ] Add unit tests for helper, auth, fetch, and send behavior.
 - [ ] Add integration and E2E coverage.

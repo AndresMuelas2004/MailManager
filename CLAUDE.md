@@ -123,7 +123,7 @@ Missing required env vars must raise `EnvVarError` (api), `SettingsError` (datab
 
 - **Unit tests** (`backend/tests/unit/`) — use `FakeEmailClient` from `tests/shared/email_fakes.py`. Cover service logic, auth settings, error translation.
 - **Integration tests** (`backend/tests/integration/`) — use `FastAPI TestClient`, monkeypatch `build_manager_for_accounts` with fakes, isolate via `isolated_db` (transaction rollback). `require_session` overridden to return a fixed test user_id. Split across `test_endpoints.py`, `test_api_layer_errors.py`, `test_core_error_translation.py`, `test_auth_endpoints.py`.
-- Both test layers share `FakeEmailClient` and `build_message` via `tests/shared/`.
+- Both test layers share `FakeEmailClient` and `build_metadata` via `tests/shared/`.
 - **E2E tests** — NEVER run E2E tests. They require manual execution by the developer.
 
 ### Frontend Structure
@@ -133,7 +133,7 @@ Missing required env vars must raise `EnvVarError` (api), `SettingsError` (datab
 
 ### Docker
 
-- `docker-compose.yml` — orchestrates `db` (PostgreSQL 16), `backend` (port 8000), `frontend` (port 5173). Backend waits for database via `service_healthy`. OAuth credentials mounted from `./credentials/`.
+- `docker-compose.yml` — orchestrates `db` (PostgreSQL 16) and `backend` (port 8000). The frontend service is currently commented out. Backend waits for database via `service_healthy`. OAuth credentials mounted from `./credentials/`.
 
 ## Extensibility
 

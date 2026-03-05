@@ -8,9 +8,9 @@ They do not require external services, browser interaction, or a database.
 Primary target:
 
 - `backend/core/email`
-- `backend/api/database` (settings, token crypto, account repository token behavior)
+- `backend/database` (settings, token crypto, account repository token behavior)
 - `backend/api/services` (auth service)
-- `backend/api/settings` (auth settings)
+- `backend/auth` (auth settings)
 
 ## Test Principles
 
@@ -23,10 +23,17 @@ Primary target:
 
 | File | Main Focus |
 |---|---|
-| `api/database/test_settings.py` | Env var parsing and validation for DB/token settings |
-| `api/database/test_token_crypto.py` | Fernet encryption/decryption behavior and key validation |
-| `api/database/test_account_repository.py` | Account repository CRUD + token dual-read fallback, lazy backfill, and context validation |
+| `database/test_settings.py` | Env var parsing and validation for DB/token settings |
+| `database/test_token_crypto.py` | Fernet encryption/decryption behavior and key validation |
+| `database/test_account_repository.py` | Account repository CRUD + token dual-read fallback, lazy backfill, and context validation |
+| `database/test_app_credentials.py` | App credential loading for Gmail/Outlook |
+| `database/test_connection.py` | Connection pool creation and error handling |
+| `database/test_lifecycle.py` | Database lifecycle warmup and migration errors |
+| `database/test_mailbox_repository.py` | Mailbox repository CRUD operations |
+| `database/test_session_repository.py` | Session repository CRUD operations |
+| `database/test_user_repository.py` | User repository CRUD operations |
 | `api/services/test_auth_service.py` | Auth service: validate_session, google_login, logout, get_current_user |
+| `api/services/test_services_helpers.py` | `build_manager_for_accounts`, `catch_database_errors`, `ensure_mailbox_access` |
 | `api/test_auth_settings.py` | Auth settings: GOOGLE_CLIENT_ID, session lifetime, cookie secure |
 | `core/email/test_email_manager.py` | `EmailManager` lifecycle, account registration, routing, and error handling |
 | `core/email/test_email_manager_extended.py` | Additional manager scenarios and edge-case behavior |
@@ -40,7 +47,14 @@ Primary target:
 `tests/shared/email_fakes.py` provides reusable fakes for both unit and integration tests:
 
 - `FakeEmailClient`
-- `build_message(...)`
+- `build_metadata(...)`
+
+`tests/shared/database_fakes.py` provides database-level fakes:
+
+- `FakeCursor` — records SQL executions, returns pre-configured results
+- `FakeConnection` — returns pre-configured `FakeCursor` instances
+- `patch_connection(monkeypatch, module, cursors)` — replaces `module.connection.get_connection` with a fake
+- `patch_connection_error(monkeypatch, module, error)` — replaces `module.connection.get_connection` with one that raises immediately
 
 These keep provider-independent tests simple and stable.
 

@@ -59,6 +59,32 @@ class AccountStore(ABC):
     def upsert_tokens(self, mailbox_id: str, account_id: str, provider: str, token_data: dict[str, Any]) -> None:
         raise NotImplementedError
 
+    @abstractmethod
+    def get_sync_cursor(self, mailbox_id: str, account_id: str) -> str | None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def update_sync_cursor(self, mailbox_id: str, account_id: str, cursor: str) -> None:
+        raise NotImplementedError
+
+
+class EmailMetadataStore(ABC):
+    """
+    Contract for email metadata persistence.
+    """
+
+    @abstractmethod
+    def upsert_batch(self, account_id: str, rows: list[tuple]) -> int:
+        raise NotImplementedError
+
+    @abstractmethod
+    def list_by_account(self, account_id: str) -> list[dict[str, Any]]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def delete_by_account(self, account_id: str) -> None:
+        raise NotImplementedError
+
 
 class UserStore(ABC):
     """

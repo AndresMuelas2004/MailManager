@@ -1,15 +1,9 @@
 import { request } from "../client/http";
-import { toUiError } from "../client/errors";
-import type { EmailOut, EmailSendRequest } from "../types/dto";
-import { parseUnreadEmailsResponse } from "../types/zod";
+import type { EmailSendRequest, SyncResultOut } from "../types/dto";
 
-export function listUnreadEmails(mailboxId: string): Promise<EmailOut[]> {
-  return request<EmailOut[]>(`/mailboxes/${mailboxId}/emails/unread`).then((data) => {
-    try {
-      return parseUnreadEmailsResponse(data) as EmailOut[];
-    } catch (error) {
-      throw toUiError(error);
-    }
+export function syncEmailMetadata(mailboxId: string): Promise<SyncResultOut> {
+  return request<SyncResultOut>(`/mailboxes/${mailboxId}/emails/sync-metadata`, {
+    method: "POST",
   });
 }
 

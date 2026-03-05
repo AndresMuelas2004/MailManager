@@ -85,8 +85,8 @@ def test_send_email_from_account_propagates_client_exception(
         manager.send_email_from_account("acct1", "subj", "body", ["a@b.com"])
 
 
-def test_fetch_empty_manager_returns_empty_list(manager: EmailManager):
-    """A manager with no clients returns an empty list for fetch."""
-    result = manager.fetch_all_unread_emails()
-    assert result == []
+def test_fetch_empty_manager_returns_empty_dict(manager: EmailManager):
+    """A manager with no clients returns an empty dict for fetch."""
+    result = manager.fetch_all_email_metadata()
+    assert result == {}
     assert manager.get_last_errors() == {}

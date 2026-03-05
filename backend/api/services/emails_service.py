@@ -13,17 +13,20 @@ from api.errors.exceptions import (
     EmailSendError,
 )
 from core.email import CoreError
-from api.schemas.email import EmailOut, EmailSendRequest
+from api.schemas.email import AccountSyncDetail, EmailSendRequest, SyncResultOut
 from api.services.services_helpers import (
     build_manager_for_accounts,
     catch_database_errors,
     ensure_mailbox_access,
     is_auth_error,
+    load_sync_cursors,
     load_wrapped_account_tokens,
     load_wrapped_app_credentials,
+    persist_email_metadata_batch,
     raise_on_silent_auth_errors,
     translate_core_error,
     unwrap_secret,
+    update_sync_cursor,
 )
 from database import account_store
 
@@ -44,64 +47,104 @@ def _persist_refreshed_tokens(
             account_store.upsert_tokens(mailbox_id, account_id, provider, payload)
 
 
-def get_unread(mailbox_id: str, user_id: str) -> list[EmailOut]:
-    ensure_mailbox_access(mailbox_id, user_id)
-    with catch_database_errors():
-        accounts = account_store.list_by_mailbox(mailbox_id)
-    auth_payloads = {}
+def _build_auth_context(
+    accounts: list[dict[str, Any]],
+    mailbox_id: str,
+) -> tuple[
+    dict[str, tuple[dict[str, Any], dict[str, Any]]],
+    dict[str, tuple[str, str, str]],
+]:
+    """Build auth_payloads and label_lookup for accounts."""
+    auth_payloads: dict[str, tuple[dict[str, Any], dict[str, Any]]] = {}
     label_lookup: dict[str, tuple[str, str, str]] = {}
-    valid_providers = {
-        str(account.get("provider") or "").lower()
-        for account in accounts
-        if str(account.get("account_id") or "").strip() and str(account.get("provider") or "").strip()
-    }
-    credentials_cache: dict[str, dict[str, Any]] = {
-        provider: load_wrapped_app_credentials(provider)
-        for provider in valid_providers
-    }
+    credentials_cache: dict[str, dict[str, Any]] = {}
     for account in accounts:
         account_id = str(account.get("account_id") or "")
         provider = str(account.get("provider") or "").lower()
-        if not account_id:
+        if not account_id or not provider:
             continue
+        if provider not in credentials_cache:
+            credentials_cache[provider] = load_wrapped_app_credentials(provider)
         account_label = f"{mailbox_id}__{account_id}"
-        app_credentials = credentials_cache[provider]
-        user_tokens = load_wrapped_account_tokens(mailbox_id, account_id, provider)
-        auth_payloads[account_label] = (app_credentials, user_tokens)
+        auth_payloads[account_label] = (
+            credentials_cache[provider],
+            load_wrapped_account_tokens(mailbox_id, account_id, provider),
+        )
         label_lookup[account_label] = (mailbox_id, account_id, provider)
+    return auth_payloads, label_lookup
+
+
+def _raise_on_fetch_errors(errors: dict[str, Exception]) -> None:
+    """Raise appropriate API errors from per-account fetch errors."""
+    if not errors:
+        return
+    auth_labels = [label for label, error in errors.items() if is_auth_error(error)]
+    if auth_labels:
+        raise AccountNotConnected(
+            "One or more accounts are not connected. Call /connect first.",
+            {"account_labels": auth_labels},
+        )
+    reasons = {label: str(exc) for label, exc in errors.items() if str(exc)}
+    detail: dict[str, Any] = {"account_labels": list(errors.keys())}
+    if reasons:
+        detail["reasons"] = reasons
+    raise EmailFetchError(
+        "Failed to fetch email metadata from one or more accounts.",
+        detail,
+    )
+
+
+def sync_email_metadata(mailbox_id: str, user_id: str) -> SyncResultOut:
+    """Fetch and persist email metadata for all accounts under a mailbox."""
+    ensure_mailbox_access(mailbox_id, user_id)
+
+    with catch_database_errors():
+        accounts = account_store.list_by_mailbox(mailbox_id)
+
+    auth_payloads, label_lookup = _build_auth_context(accounts, mailbox_id)
+
     manager = build_manager_for_accounts(accounts)
 
-    # Silent auth attempts may refresh tokens without launching interactive flows.
     updated_tokens = manager.authenticate_all_silent(auth_payloads)
     if updated_tokens:
         _persist_refreshed_tokens(updated_tokens, label_lookup)
     raise_on_silent_auth_errors(manager.get_last_errors())
 
+    sync_cursors = load_sync_cursors(label_lookup)
+
     try:
-        unread = manager.fetch_all_unread_emails()
+        results = manager.fetch_all_email_metadata(sync_cursors)
     except CoreError as exc:
         raise translate_core_error(exc, fallback=EmailFetchError) from exc
     except Exception as exc:
-        raise EmailFetchError("Failed to fetch unread emails.") from exc
+        raise EmailFetchError("Failed to sync email metadata.") from exc
 
-    errors = manager.get_last_errors()
-    if errors:
-        auth_labels = [label for label, error in errors.items() if is_auth_error(error)]
-        if auth_labels:
-            raise AccountNotConnected(
-                "One or more accounts are not connected. Call /connect first.",
-                {"account_labels": auth_labels},
-            )
-        reasons = {label: str(exc) for label, exc in errors.items() if str(exc)}
-        detail: dict[str, Any] = {"account_labels": list(errors.keys())}
-        if reasons:
-            detail["reasons"] = reasons
-        raise EmailFetchError(
-            "Failed to fetch unread emails from one or more accounts.",
-            detail,
-        )
+    _raise_on_fetch_errors(manager.get_last_errors())
 
-    return [EmailOut.from_core(email) for email in unread]
+    account_details: list[AccountSyncDetail] = []
+    total_synced = 0
+
+    for label, (metadata_list, new_cursor) in results.items():
+        ids = label_lookup.get(label)
+        if not ids:
+            continue
+        mid, aid, provider = ids
+
+        for m in metadata_list:
+            m.account_id = aid
+
+        count = persist_email_metadata_batch(aid, metadata_list)
+        update_sync_cursor(mid, aid, new_cursor)
+
+        total_synced += count
+        account_details.append(AccountSyncDetail(
+            account_id=aid,
+            provider=provider,
+            emails_synced=count,
+            sync_cursor=new_cursor,
+        ))
+
+    return SyncResultOut(total_synced=total_synced, accounts=account_details)
 
 
 def send_email(mailbox_id: str, payload: EmailSendRequest, user_id: str) -> dict[str, str]:
@@ -120,7 +163,6 @@ def send_email(mailbox_id: str, payload: EmailSendRequest, user_id: str) -> dict
     label_lookup: dict[str, tuple[str, str, str]] = {
         account_label: (mailbox_id, payload.account_id, provider),
     }
-    # Ensure the account is silently authenticated before sending.
     updated_tokens = manager.authenticate_all_silent(auth_payloads)
     if updated_tokens:
         _persist_refreshed_tokens(updated_tokens, label_lookup)

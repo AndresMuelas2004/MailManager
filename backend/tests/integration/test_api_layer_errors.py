@@ -44,8 +44,8 @@ def test_connect_account_missing_mailbox(test_client):
     assert resp.status_code == 404
 
 
-def test_unread_missing_mailbox(test_client):
-    resp = test_client.get(f"{_MAILBOX_URL}/nonexistent/emails/unread")
+def test_sync_metadata_missing_mailbox(test_client):
+    resp = test_client.post(f"{_MAILBOX_URL}/nonexistent/emails/sync-metadata")
     assert resp.status_code == 404
 
 

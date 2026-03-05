@@ -339,4 +339,49 @@ class PgAccountStore(AccountStore):
             ) from exc
 
 
+    # ------------------------------------------------------------------
+    # Sync cursor operations
+    # ------------------------------------------------------------------
+
+    def get_sync_cursor(self, mailbox_id: str, account_id: str) -> str | None:
+        try:
+            with connection.get_connection() as conn:
+                with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                    cur.execute(
+                        accounts.GET_SYNC_CURSOR,
+                        {"mailbox_id": mailbox_id, "account_id": account_id},
+                    )
+                    row = cur.fetchone()
+        except psycopg2.errors.InvalidTextRepresentation:
+            return None
+        except DatabaseError:
+            raise
+        except psycopg2.Error as exc:
+            raise QueryError("Failed to read sync cursor.") from exc
+        except Exception as exc:
+            raise QueryError(
+                f"Unexpected sync cursor get error ({type(exc).__name__}): {exc}"
+            ) from exc
+        if row is None:
+            return None
+        return row.get("sync_cursor")
+
+    def update_sync_cursor(self, mailbox_id: str, account_id: str, cursor: str) -> None:
+        try:
+            with connection.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        accounts.UPDATE_SYNC_CURSOR,
+                        {"mailbox_id": mailbox_id, "account_id": account_id, "sync_cursor": cursor},
+                    )
+        except DatabaseError:
+            raise
+        except psycopg2.Error as exc:
+            raise QueryError("Failed to update sync cursor.") from exc
+        except Exception as exc:
+            raise QueryError(
+                f"Unexpected sync cursor update error ({type(exc).__name__}): {exc}"
+            ) from exc
+
+
 account_store = PgAccountStore()

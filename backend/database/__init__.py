@@ -15,7 +15,7 @@ from database.errors import (
     UnknownProviderError,
 )
 from database.lifecycle import run_startup_migrations_if_enabled, warmup_connection
-from database.repositories import account_store, mailbox_store, session_store, user_store
+from database.repositories import account_store, email_metadata_store, mailbox_store, session_store, user_store
 from database.security import load_app_credentials
 
 __all__ = [
@@ -24,6 +24,7 @@ __all__ = [
     "ConnectionPoolError",
     "CredentialReadError",
     "DatabaseError",
+    "email_metadata_store",
     "load_app_credentials",
     "mailbox_store",
     "MigrationError",

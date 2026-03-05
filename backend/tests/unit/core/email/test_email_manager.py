@@ -122,31 +122,51 @@ def test_connect_account_authenticate_failure_is_recorded_and_raised(
     assert set(errors.keys()) == {fake_client_fail_auth.get_account_label()}
 
 
-def test_fetch_all_unread_emails_aggregates_lists_from_all_clients(
-    manager: EmailManager, sample_messages, fake_client_factory
+def test_fetch_all_email_metadata_aggregates_from_all_clients(
+    manager: EmailManager, sample_metadata, fake_client_factory
 ):
-    """Aggregates unread messages from all clients in order."""
+    """Aggregates metadata from all clients keyed by account label."""
     client1 = fake_client_factory(
-        "acct1", unread_messages=[sample_messages[0], sample_messages[1]]
+        "acct1", metadata=[sample_metadata[0], sample_metadata[1]]
     )
-    client2 = fake_client_factory("acct2", unread_messages=[sample_messages[2]])
+    client2 = fake_client_factory("acct2", metadata=[sample_metadata[2]])
     manager.add_client(client1)
     manager.add_client(client2)
 
-    results = manager.fetch_all_unread_emails()
-    assert [m.message_id for m in results] == ["m1", "m2", "m3"]
+    results = manager.fetch_all_email_metadata()
+    assert "acct1" in results
+    assert "acct2" in results
+    assert len(results["acct1"][0]) == 2
+    assert len(results["acct2"][0]) == 1
 
 
-def test_fetch_all_unread_emails_records_errors_and_continues(
+def test_fetch_all_email_metadata_records_errors_and_continues(
     manager: EmailManager, fake_client_fail_fetch, fake_client_ok
 ):
     """Records fetch errors and returns successful results."""
     manager.add_client(fake_client_fail_fetch)
     manager.add_client(fake_client_ok)
-    results = manager.fetch_all_unread_emails()
-    assert [m.message_id for m in results] == ["m1"]
+    results = manager.fetch_all_email_metadata()
+    assert fake_client_ok.get_account_label() in results
+    assert fake_client_fail_fetch.get_account_label() not in results
     errors = manager.get_last_errors()
     assert set(errors.keys()) == {fake_client_fail_fetch.get_account_label()}
+
+
+def test_fetch_all_email_metadata_passes_sync_cursors(
+    manager: EmailManager, fake_client_factory, sample_metadata
+):
+    """Passes the correct sync_cursor to each client."""
+    client1 = fake_client_factory("acct1", metadata=[sample_metadata[0]])
+    client2 = fake_client_factory("acct2", metadata=[sample_metadata[1]])
+    manager.add_client(client1)
+    manager.add_client(client2)
+
+    cursors = {"acct1": "cursor_1", "acct2": None}
+    manager.fetch_all_email_metadata(sync_cursors=cursors)
+
+    assert client1.last_sync_cursor == "cursor_1"
+    assert client2.last_sync_cursor is None
 
 
 def test_send_email_from_account_routes_to_correct_client(
@@ -175,7 +195,7 @@ def test_send_email_from_account_not_found_raises_error(manager: EmailManager):
 def test_get_last_errors_returns_copy(manager: EmailManager, fake_client_fail_fetch):
     """Protects internal error registry from external mutation."""
     manager.add_client(fake_client_fail_fetch)
-    manager.fetch_all_unread_emails()
+    manager.fetch_all_email_metadata()
 
     errors = manager.get_last_errors()
     errors["new"] = Exception("mutate")

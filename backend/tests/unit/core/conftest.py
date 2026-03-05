@@ -8,7 +8,7 @@ if str(BACKEND_PATH) not in sys.path:
     sys.path.insert(0, str(BACKEND_PATH))
 
 from core.email import EmailManager
-from tests.shared.email_fakes import FakeEmailClient, build_message
+from tests.shared.email_fakes import FakeEmailClient, build_metadata
 
 
 @pytest.fixture
@@ -17,30 +17,30 @@ def manager() -> EmailManager:
 
 
 @pytest.fixture
-def message_factory():
+def metadata_factory():
     def _factory(**kwargs):
-        return build_message(**kwargs)
+        return build_metadata(**kwargs)
 
     return _factory
 
 
 @pytest.fixture
-def sample_messages(message_factory):
+def sample_metadata(metadata_factory):
     return [
-        message_factory(message_id="m1"),
-        message_factory(message_id="m2"),
-        message_factory(message_id="m3"),
+        metadata_factory(provider_message_id="m1"),
+        metadata_factory(provider_message_id="m2"),
+        metadata_factory(provider_message_id="m3"),
     ]
 
 
 @pytest.fixture
-def fake_client_ok(sample_messages):
-    return FakeEmailClient("acct_ok", unread_messages=[sample_messages[0]])
+def fake_client_ok(sample_metadata):
+    return FakeEmailClient("acct_ok", metadata=[sample_metadata[0]])
 
 
 @pytest.fixture
-def fake_client_ok_2(sample_messages):
-    return FakeEmailClient("acct_ok_2", unread_messages=[sample_messages[1]])
+def fake_client_ok_2(sample_metadata):
+    return FakeEmailClient("acct_ok_2", metadata=[sample_metadata[1]])
 
 
 @pytest.fixture
