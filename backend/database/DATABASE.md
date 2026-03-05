@@ -132,6 +132,7 @@ Rules:
 - **`migrations/runner.py`** → `MigrationError`
 - **`repositories/*.py`** → `QueryError` (SQL failures), `TokenValidationError` (token validation in `account_repository.py`)
 - **`settings.py`** → `SettingsError` (missing/invalid env vars)
+- **`repositories/account_repository.py`** → `SettingsError` (raised when encryption key is required but absent and plaintext fallback is disabled)
 - **`security/token_crypto.py`** → `TokenDecryptError`, `SettingsError` (malformed `TOKEN_ENCRYPTION_KEY` — fails loud, never falls back to plaintext)
 - **`security/app_credentials.py`** → `CredentialReadError`, `UnknownProviderError`
 
@@ -171,7 +172,7 @@ All external code imports from the package root. The `__init__.py` facade re-exp
 |---|---|---|
 | `MailboxStore` | `create`, `list_by_owner`, `get`, `delete` | `PgMailboxStore` |
 | `AccountStore` | `list_by_mailbox`, `get`, `upsert`, `delete`, `get_tokens`, `upsert_tokens`, `get_sync_cursor`, `update_sync_cursor` | `PgAccountStore` |
-| `EmailMetadataStore` | `upsert_batch`, `list_by_account`, `delete_by_account` | `PgEmailMetadataStore` |
+| `EmailMetadataStore` | `upsert_batch`, `list_by_account`, `delete_by_account`, `delete_batch_by_message_ids`, `update_labels_batch` | `PgEmailMetadataStore` |
 | `UserStore` | `upsert`, `get_by_id`, `get_by_google_sub`, `delete` | `PgUserStore` |
 | `SessionStore` | `create`, `get`, `delete`, `delete_expired` | `PgSessionStore` |
 

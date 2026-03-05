@@ -156,8 +156,15 @@ class TestGuardClauses:
         with pytest.raises(EmailMissingAppCredentialsError, match="Missing required"):
             client.authenticate_silent(app_credentials=creds, user_tokens=tokens)
 
+    def test_fetch_email_metadata_not_authenticated_raises_error(self, client: OutlookClient):
+        """Unauthenticated fetch raises EmailNotAuthenticatedError."""
+        assert client._access_token is None
+        with pytest.raises(EmailNotAuthenticatedError):
+            client.fetch_email_metadata()
+
     def test_fetch_email_metadata_raises_not_implemented(self, client: OutlookClient):
         """Outlook metadata sync is not yet implemented."""
+        client._access_token = "token"
         with pytest.raises(EmailExternalAPIError, match="not yet implemented"):
             client.fetch_email_metadata()
 

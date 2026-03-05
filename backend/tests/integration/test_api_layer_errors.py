@@ -8,6 +8,10 @@ errors are covered in ``test_core_error_translation.py``.
 
 from __future__ import annotations
 
+from fastapi.testclient import TestClient
+
+from api.services import emails_service
+
 
 _MAILBOX_URL = "/mailboxes"
 
@@ -19,11 +23,13 @@ _MAILBOX_URL = "/mailboxes"
 def test_get_mailbox_not_found(test_client):
     resp = test_client.get(f"{_MAILBOX_URL}/nonexistent")
     assert resp.status_code == 404
+    assert resp.json()["error"]["code"] == "mailbox_not_found"
 
 
 def test_delete_mailbox_not_found(test_client):
     resp = test_client.delete(f"{_MAILBOX_URL}/nonexistent")
     assert resp.status_code == 404
+    assert resp.json()["error"]["code"] == "mailbox_not_found"
 
 
 def test_create_account_on_missing_mailbox(test_client):
@@ -32,21 +38,25 @@ def test_create_account_on_missing_mailbox(test_client):
         json={"provider": "gmail", "display_label": "x"},
     )
     assert resp.status_code == 404
+    assert resp.json()["error"]["code"] == "mailbox_not_found"
 
 
 def test_list_accounts_missing_mailbox(test_client):
     resp = test_client.get(f"{_MAILBOX_URL}/nonexistent/accounts")
     assert resp.status_code == 404
+    assert resp.json()["error"]["code"] == "mailbox_not_found"
 
 
 def test_connect_account_missing_mailbox(test_client):
     resp = test_client.post(f"{_MAILBOX_URL}/nonexistent/accounts/fake-id/connect")
     assert resp.status_code == 404
+    assert resp.json()["error"]["code"] == "mailbox_not_found"
 
 
 def test_sync_metadata_missing_mailbox(test_client):
     resp = test_client.post(f"{_MAILBOX_URL}/nonexistent/emails/sync-metadata")
     assert resp.status_code == 404
+    assert resp.json()["error"]["code"] == "mailbox_not_found"
 
 
 def test_send_missing_mailbox(test_client):
@@ -60,6 +70,7 @@ def test_send_missing_mailbox(test_client):
         },
     )
     assert resp.status_code == 404
+    assert resp.json()["error"]["code"] == "mailbox_not_found"
 
 
 # ==================================================================
@@ -70,6 +81,7 @@ def test_get_account_not_found(test_client, setup_mailbox_and_account):
     mid, _ = setup_mailbox_and_account(test_client)
     resp = test_client.get(f"{_MAILBOX_URL}/{mid}/accounts/nonexistent")
     assert resp.status_code == 404
+    assert resp.json()["error"]["code"] == "account_not_found"
 
 
 def test_update_account_not_found(test_client, setup_mailbox_and_account):
@@ -79,18 +91,21 @@ def test_update_account_not_found(test_client, setup_mailbox_and_account):
         json={"display_label": "nope"},
     )
     assert resp.status_code == 404
+    assert resp.json()["error"]["code"] == "account_not_found"
 
 
 def test_delete_account_not_found(test_client, setup_mailbox_and_account):
     mid, _ = setup_mailbox_and_account(test_client)
     resp = test_client.delete(f"{_MAILBOX_URL}/{mid}/accounts/nonexistent")
     assert resp.status_code == 404
+    assert resp.json()["error"]["code"] == "account_not_found"
 
 
 def test_connect_account_not_found(test_client, setup_mailbox_and_account):
     mid, _ = setup_mailbox_and_account(test_client)
     resp = test_client.post(f"{_MAILBOX_URL}/{mid}/accounts/nonexistent/connect")
     assert resp.status_code == 404
+    assert resp.json()["error"]["code"] == "account_not_found"
 
 
 def test_send_account_not_found(test_client, setup_mailbox_and_account):
@@ -105,6 +120,7 @@ def test_send_account_not_found(test_client, setup_mailbox_and_account):
         },
     )
     assert resp.status_code == 404
+    assert resp.json()["error"]["code"] == "account_not_found"
 
 
 # ==================================================================
@@ -123,3 +139,62 @@ def test_create_account_empty_provider(test_client):
         json={"provider": "", "display_label": "x"},
     )
     assert resp.status_code == 422
+
+
+# ==================================================================
+# 3C: EmailSendRequest 422 validation
+# ==================================================================
+
+def test_send_email_empty_recipients(test_client, setup_mailbox_and_account):
+    mid, aid = setup_mailbox_and_account(test_client)
+    resp = test_client.post(
+        f"{_MAILBOX_URL}/{mid}/emails/send",
+        json={"account_id": aid, "subject": "S", "body": "B", "recipients": []},
+    )
+    assert resp.status_code == 422
+
+
+def test_send_email_empty_subject(test_client, setup_mailbox_and_account):
+    mid, aid = setup_mailbox_and_account(test_client)
+    resp = test_client.post(
+        f"{_MAILBOX_URL}/{mid}/emails/send",
+        json={"account_id": aid, "subject": "", "body": "B", "recipients": ["a@b.com"]},
+    )
+    assert resp.status_code == 422
+
+
+def test_send_email_empty_body(test_client, setup_mailbox_and_account):
+    mid, aid = setup_mailbox_and_account(test_client)
+    resp = test_client.post(
+        f"{_MAILBOX_URL}/{mid}/emails/send",
+        json={"account_id": aid, "subject": "S", "body": "", "recipients": ["a@b.com"]},
+    )
+    assert resp.status_code == 422
+
+
+def test_send_email_missing_account_id(test_client, setup_mailbox_and_account):
+    mid, _ = setup_mailbox_and_account(test_client)
+    resp = test_client.post(
+        f"{_MAILBOX_URL}/{mid}/emails/send",
+        json={"subject": "S", "body": "B", "recipients": ["a@b.com"]},
+    )
+    assert resp.status_code == 422
+
+
+# ==================================================================
+# 3G: handle_unexpected_error — bare RuntimeError → 500 + api_error
+# ==================================================================
+
+def test_unexpected_runtime_error_returns_500(test_client, setup_mailbox_and_account, monkeypatch, app):
+    mid, _ = setup_mailbox_and_account(test_client)
+
+    def _boom(*_a, **_kw):
+        raise RuntimeError("totally unexpected")
+
+    monkeypatch.setattr(emails_service, "sync_email_metadata", _boom)
+    # TestClient defaults to raise_server_exceptions=True, so we need a
+    # non-raising client to verify the 500 JSON response from the handler.
+    with TestClient(app, raise_server_exceptions=False) as client:
+        resp = client.post(f"{_MAILBOX_URL}/{mid}/emails/sync-metadata")
+    assert resp.status_code == 500
+    assert resp.json()["error"]["code"] == "api_error"

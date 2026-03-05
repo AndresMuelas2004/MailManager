@@ -2,6 +2,8 @@
 Database error hierarchy re-exports.
 """
 
+from __future__ import annotations
+
 from database.errors.exceptions import (
     ConnectionPoolError,
     CredentialReadError,

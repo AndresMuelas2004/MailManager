@@ -77,4 +77,47 @@ class PgEmailMetadataStore(EmailMetadataStore):
             ) from exc
 
 
+    def delete_batch_by_message_ids(self, account_id: str, message_ids: list[str]) -> int:
+        if not message_ids:
+            return 0
+        try:
+            with connection.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        queries.DELETE_BATCH_BY_MESSAGE_IDS,
+                        {"account_id": account_id, "message_ids": message_ids},
+                    )
+                    return cur.rowcount
+        except DatabaseError:
+            raise
+        except psycopg2.Error as exc:
+            raise QueryError("Failed to delete email metadata batch by message IDs.") from exc
+        except Exception as exc:
+            raise QueryError(
+                f"Unexpected email metadata delete batch error ({type(exc).__name__}): {exc}"
+            ) from exc
+
+    def update_labels_batch(self, account_id: str, rows: list[tuple]) -> int:
+        if not rows:
+            return 0
+        try:
+            with connection.get_connection() as conn:
+                with conn.cursor() as cur:
+                    psycopg2.extras.execute_values(
+                        cur,
+                        queries.UPDATE_LABELS_BATCH,
+                        rows,
+                        page_size=500,
+                    )
+                    return cur.rowcount
+        except DatabaseError:
+            raise
+        except psycopg2.Error as exc:
+            raise QueryError("Failed to update email metadata labels batch.") from exc
+        except Exception as exc:
+            raise QueryError(
+                f"Unexpected email metadata label update error ({type(exc).__name__}): {exc}"
+            ) from exc
+
+
 email_metadata_store = PgEmailMetadataStore()

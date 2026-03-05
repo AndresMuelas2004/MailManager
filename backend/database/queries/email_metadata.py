@@ -2,6 +2,8 @@
 Email metadata SQL statements.
 """
 
+from __future__ import annotations
+
 UPSERT_EMAIL_METADATA_BATCH = """
     INSERT INTO email_metadata
         (provider_message_id, account_id, thread_id, from_email, from_name,
@@ -22,4 +24,19 @@ LIST_BY_ACCOUNT = """
 
 DELETE_BY_ACCOUNT = """
     DELETE FROM email_metadata WHERE account_id = %(account_id)s
+"""
+
+DELETE_BATCH_BY_MESSAGE_IDS = """
+    DELETE FROM email_metadata
+    WHERE account_id = %(account_id)s
+      AND provider_message_id = ANY(%(message_ids)s)
+"""
+
+UPDATE_LABELS_BATCH = """
+    UPDATE email_metadata AS em
+       SET is_read = v.is_read,
+           box     = v.box
+      FROM (VALUES %s) AS v(provider_message_id, account_id, is_read, box)
+     WHERE em.provider_message_id = v.provider_message_id::VARCHAR
+       AND em.account_id          = v.account_id::UUID
 """

@@ -31,6 +31,11 @@ def load_app_credentials(provider: str) -> dict[str, Any]:
         raise CredentialReadError(
             "Failed to read config storage file.", {"path": str(config_path)}
         ) from exc
+    except Exception as exc:
+        raise CredentialReadError(
+            f"Unexpected credential read error ({type(exc).__name__}): {exc}",
+            {"path": str(config_path)},
+        ) from exc
 
     if not isinstance(data, dict):
         raise CredentialReadError(

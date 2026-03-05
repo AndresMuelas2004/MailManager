@@ -252,7 +252,7 @@ def test_google_login_settings_unexpected_error(monkeypatch, mock_response):
 
     monkeypatch.setattr(auth_service, "get_auth_settings", _raise)
 
-    with pytest.raises(EnvVarError, match="RuntimeError"):
+    with pytest.raises(EnvVarError, match="Failed to load auth settings"):
         auth_service.google_login("some-token", mock_response)
 
 

@@ -2,6 +2,8 @@
 Account SQL statements.
 """
 
+from __future__ import annotations
+
 LIST_ACCOUNTS_BY_MAILBOX = """
     SELECT account_id, mailbox_id, provider, display_label, config, created_at
     FROM accounts

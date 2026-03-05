@@ -32,9 +32,8 @@ def _load_auth_settings() -> AuthSettings:
     except AuthError as exc:
         raise translate_auth_error(exc) from exc
     except Exception as exc:
-        raise EnvVarError(
-            f"Failed to load auth settings ({type(exc).__name__}): {exc}"
-        ) from exc
+        logger.warning("Unexpected auth settings error (%s): %s", type(exc).__name__, exc)
+        raise EnvVarError("Failed to load auth settings.") from exc
 
 
 def _set_session_cookie(response: Response, session_id: str, settings: AuthSettings) -> None:
@@ -73,10 +72,8 @@ def google_login(raw_id_token: str, response: Response) -> AuthResponse:
         logger.debug("Google token verification failed: %s", exc)
         raise translate_auth_error(exc) from exc
     except Exception as exc:
-        logger.debug("Google token verification unexpected error: %s", exc)
-        raise Unauthorized(
-            "Token verification failed."
-        ) from exc
+        logger.warning("Google token verification unexpected error (%s): %s", type(exc).__name__, exc)
+        raise Unauthorized("Token verification failed.") from exc
 
     google_sub = id_info.get("sub")
     if not google_sub:

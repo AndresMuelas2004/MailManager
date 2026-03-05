@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from core.email import EmailClient, EmailMetadata
+from core.email import EmailClient, EmailMetadata, LabelUpdate, SyncResult
 
 
 DEFAULT_RECEIVED_AT = datetime(2024, 1, 1, 12, 0, 0)
@@ -53,6 +53,8 @@ class FakeEmailClient(EmailClient):
         sync_cursor_return: str = DEFAULT_SYNC_CURSOR,
         auth_return: dict | None = None,
         auth_silent_return: dict | None = None,
+        deletes: list[str] | None = None,
+        label_updates: list[LabelUpdate] | None = None,
     ) -> None:
         self._account_label = account_label
         self._auth_exc = auth_exc
@@ -63,6 +65,8 @@ class FakeEmailClient(EmailClient):
         self._sync_cursor_return = sync_cursor_return
         self._auth_return = auth_return
         self._auth_silent_return = auth_silent_return
+        self._deletes = list(deletes or [])
+        self._label_updates = list(label_updates or [])
         self.authenticate_calls = 0
         self.authenticate_silent_calls = 0
         self.fetch_calls = 0
@@ -90,12 +94,17 @@ class FakeEmailClient(EmailClient):
         self,
         sync_cursor: str | None = None,
         max_total: int = 500,
-    ) -> tuple[list[EmailMetadata], str]:
+    ) -> SyncResult:
         self.fetch_calls += 1
         self.last_sync_cursor = sync_cursor
         if self._fetch_exc:
             raise self._fetch_exc
-        return list(self._metadata), self._sync_cursor_return
+        return SyncResult(
+            upserts=list(self._metadata),
+            new_cursor=self._sync_cursor_return,
+            deletes=list(self._deletes),
+            label_updates=list(self._label_updates),
+        )
 
     def send_email(self, subject: str, body: str, recipients: list[str]) -> None:
         if self._send_exc:

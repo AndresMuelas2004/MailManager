@@ -60,7 +60,12 @@ def encrypt_token(value: str | None) -> str | None:
     if value is None:
         return None
     fernet = get_fernet(required=True)
-    encrypted = fernet.encrypt(value.encode("utf-8"))
+    try:
+        encrypted = fernet.encrypt(value.encode("utf-8"))
+    except Exception as exc:
+        raise TokenDecryptError(
+            f"Failed to encrypt account token ({type(exc).__name__}): {exc}"
+        ) from exc
     return encrypted.decode("utf-8")
 
 

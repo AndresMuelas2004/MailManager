@@ -246,7 +246,15 @@ class PgAccountStore(AccountStore):
         if row is None:
             return None
 
-        result = _token_payload_from_row(row)
+        try:
+            result = _token_payload_from_row(row)
+        except DatabaseError:
+            raise
+        except Exception as exc:
+            raise QueryError(
+                f"Unexpected token parsing error ({type(exc).__name__}): {exc}"
+            ) from exc
+
         if result is None:
             return None
 

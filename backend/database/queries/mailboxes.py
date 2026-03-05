@@ -2,6 +2,8 @@
 Mailbox SQL statements.
 """
 
+from __future__ import annotations
+
 INSERT_MAILBOX = """
     INSERT INTO mailboxes (mailbox_id, display_name, owner_user_id)
     VALUES (%(mailbox_id)s, %(display_name)s, %(owner_user_id)s)

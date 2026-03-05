@@ -9,7 +9,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from core.email.email_client import SyncResult
 from core.email.errors import (
+    EmailExternalAPIError,
     EmailMissingAppCredentialsError,
     EmailMissingRefreshTokenError,
     EmailMissingTokenError,
@@ -120,60 +122,30 @@ class TestFetchEmailMetadata:
 
     def test_no_cursor_calls_bootstrap(self, client: GmailClient):
         client.service = MagicMock()
-        fake_result = ([], "hist123")
+        fake_result = SyncResult(upserts=[], new_cursor="hist123")
         with patch.object(client, "_bootstrap_email_metadata", return_value=fake_result) as mock_bs:
             result = client.fetch_email_metadata(sync_cursor=None)
         mock_bs.assert_called_once_with(500)
-        assert result == fake_result
+        assert result is fake_result
 
-    def test_valid_cursor_falls_back_to_bootstrap(self, client: GmailClient):
-        """With a valid cursor, Camino 2 is not yet implemented, falls back to bootstrap."""
+    def test_valid_cursor_calls_incremental(self, client: GmailClient):
+        """With a valid cursor, Path 2 incremental is called."""
         client.service = MagicMock()
-        fake_result = ([], "hist456")
-        with patch.object(client, "_is_sync_cursor_valid", return_value=True), \
+        fake_result = SyncResult(upserts=[], new_cursor="hist456")
+        with patch.object(client, "_incremental_email_metadata", return_value=fake_result) as mock_inc:
+            result = client.fetch_email_metadata(sync_cursor="old_cursor")
+        mock_inc.assert_called_once_with("old_cursor")
+        assert result is fake_result
+
+    def test_incremental_failure_falls_back_to_bootstrap(self, client: GmailClient):
+        """If incremental raises EmailExternalAPIError, bootstrap is used as fallback."""
+        client.service = MagicMock()
+        fake_result = SyncResult(upserts=[], new_cursor="hist456")
+        with patch.object(client, "_incremental_email_metadata", side_effect=EmailExternalAPIError("fail")), \
              patch.object(client, "_bootstrap_email_metadata", return_value=fake_result) as mock_bs:
             result = client.fetch_email_metadata(sync_cursor="old_cursor")
         mock_bs.assert_called_once_with(500)
-        assert result == fake_result
-
-    def test_invalid_cursor_falls_back_to_bootstrap(self, client: GmailClient):
-        """With an invalid cursor, falls back to bootstrap."""
-        client.service = MagicMock()
-        fake_result = ([], "hist789")
-        with patch.object(client, "_is_sync_cursor_valid", return_value=False), \
-             patch.object(client, "_bootstrap_email_metadata", return_value=fake_result) as mock_bs:
-            result = client.fetch_email_metadata(sync_cursor="expired_cursor")
-        mock_bs.assert_called_once_with(500)
-        assert result == fake_result
-
-
-# ── _is_sync_cursor_valid ────────────────────────────────────────────
-
-
-class TestIsSyncCursorValid:
-    def test_valid_history_id_returns_true(self, client: GmailClient):
-        mock_service = MagicMock()
-        mock_service.users().history().list().execute.return_value = {"history": []}
-        client.service = mock_service
-        assert client._is_sync_cursor_valid("12345") is True
-
-    def test_http_error_returns_false(self, client: GmailClient):
-        mock_service = MagicMock()
-        from googleapiclient.errors import HttpError
-        from unittest.mock import PropertyMock
-        resp = MagicMock()
-        type(resp).status = PropertyMock(return_value=404)
-        mock_service.users().history().list().execute.side_effect = HttpError(
-            resp=resp, content=b"not found"
-        )
-        client.service = mock_service
-        assert client._is_sync_cursor_valid("99999") is False
-
-    def test_generic_exception_returns_false(self, client: GmailClient):
-        mock_service = MagicMock()
-        mock_service.users().history().list().execute.side_effect = RuntimeError("boom")
-        client.service = mock_service
-        assert client._is_sync_cursor_valid("12345") is False
+        assert result is fake_result
 
 
 # ── _parse_metadata_response ─────────────────────────────────────────
@@ -250,3 +222,322 @@ class TestParseMetadataResponse:
         result = GmailClient._parse_metadata_response(msg)
         assert result.from_email == "bare@example.com"
         assert result.from_name == ""
+
+
+# ── _resolve_labels ──────────────────────────────────────────────────
+
+
+class TestResolveLabels:
+    def test_read_all_mail(self):
+        is_read, box = GmailClient._resolve_labels(["INBOX"])
+        assert is_read is True
+        assert box == "ALL_MAIL"
+
+    def test_unread(self):
+        is_read, box = GmailClient._resolve_labels(["INBOX", "UNREAD"])
+        assert is_read is False
+        assert box == "ALL_MAIL"
+
+    def test_spam(self):
+        is_read, box = GmailClient._resolve_labels(["SPAM"])
+        assert is_read is True
+        assert box == "SPAM"
+
+    def test_trash(self):
+        is_read, box = GmailClient._resolve_labels(["TRASH", "UNREAD"])
+        assert is_read is False
+        assert box == "TRASH"
+
+    def test_empty_labels(self):
+        is_read, box = GmailClient._resolve_labels([])
+        assert is_read is True
+        assert box == "ALL_MAIL"
+
+
+# ── _incremental_email_metadata ─────────────────────────────────────
+
+
+def _make_history_response(history=None, history_id="999", next_page_token=None):
+    """Helper to build a Gmail history.list response."""
+    resp = {"historyId": history_id}
+    if history is not None:
+        resp["history"] = history
+    if next_page_token:
+        resp["nextPageToken"] = next_page_token
+    return resp
+
+
+class TestIncrementalEmailMetadata:
+    def test_empty_history_returns_empty_result(self, client: GmailClient):
+        mock_service = MagicMock()
+        mock_service.users().history().list().execute.return_value = (
+            _make_history_response(history=[], history_id="100")
+        )
+        client.service = mock_service
+        result = client._incremental_email_metadata("50")
+        assert isinstance(result, SyncResult)
+        assert result.upserts == []
+        assert result.deletes == []
+        assert result.label_updates == []
+        assert result.new_cursor == "100"
+
+    def test_messages_added_goes_to_upserts(self, client: GmailClient):
+        mock_service = MagicMock()
+        history = [{"messagesAdded": [
+            {"message": {"id": "m1"}},
+            {"message": {"id": "m2"}},
+        ]}]
+        mock_service.users().history().list().execute.return_value = (
+            _make_history_response(history=history, history_id="200")
+        )
+        # _batch_fetch_metadata returns metadata for the requested IDs
+        client.service = mock_service
+        with patch.object(client, "_batch_fetch_metadata", return_value=["meta1", "meta2"]) as mock_batch:
+            result = client._incremental_email_metadata("100")
+        assert set(mock_batch.call_args[0][0]) == {"m1", "m2"}
+        assert result.upserts == ["meta1", "meta2"]
+        assert result.deletes == []
+
+    def test_messages_deleted_confirmed_goes_to_deletes(self, client: GmailClient):
+        """When .get() fails for a deleted message, it is confirmed as delete."""
+        mock_service = MagicMock()
+        history = [{"messagesDeleted": [{"message": {"id": "d1"}}]}]
+        mock_service.users().history().list().execute.return_value = (
+            _make_history_response(history=history, history_id="200")
+        )
+        from googleapiclient.errors import HttpError
+        resp = MagicMock()
+        type(resp).status = 404
+        mock_service.users().messages().get().execute.side_effect = HttpError(
+            resp=resp, content=b"not found"
+        )
+        client.service = mock_service
+        with patch.object(client, "_batch_fetch_metadata", return_value=[]):
+            result = client._incremental_email_metadata("100")
+        assert "d1" in result.deletes
+        assert result.upserts == []
+
+    def test_messages_deleted_still_exists_goes_to_upserts(self, client: GmailClient):
+        """When .get() succeeds for a 'deleted' message, it moves to need_get."""
+        mock_service = MagicMock()
+        history = [{"messagesDeleted": [{"message": {"id": "d1"}}]}]
+        mock_service.users().history().list().execute.return_value = (
+            _make_history_response(history=history, history_id="200")
+        )
+        mock_service.users().messages().get().execute.return_value = {"id": "d1"}
+        client.service = mock_service
+        with patch.object(client, "_batch_fetch_metadata", return_value=["meta_d1"]) as mock_batch:
+            result = client._incremental_email_metadata("100")
+        assert "d1" in mock_batch.call_args[0][0]
+        assert result.upserts == ["meta_d1"]
+        assert result.deletes == []
+
+    def test_label_changes_not_in_get_or_delete_go_to_label_updates(self, client: GmailClient):
+        """labelsAdded/Removed for messages not already in need_get/deletes → label_updates."""
+        mock_service = MagicMock()
+        history = [{
+            "labelsAdded": [{"message": {"id": "la1"}, "labelIds": ["INBOX"]}],
+            "labelsRemoved": [{"message": {"id": "lr1"}, "labelIds": ["UNREAD"]}],
+        }]
+        mock_service.users().history().list().execute.return_value = (
+            _make_history_response(history=history, history_id="200")
+        )
+        client.service = mock_service
+        fake_updates = [MagicMock(), MagicMock()]
+        with patch.object(client, "_batch_fetch_metadata", return_value=[]), \
+             patch.object(client, "_batch_fetch_label_updates", return_value=fake_updates) as mock_lu:
+            result = client._incremental_email_metadata("100")
+        called_ids = set(mock_lu.call_args[0][0])
+        assert called_ids == {"la1", "lr1"}
+        assert result.label_updates == fake_updates
+
+    def test_label_change_deduped_if_in_need_get(self, client: GmailClient):
+        """A message in both messagesAdded and labelsAdded only appears in upserts."""
+        mock_service = MagicMock()
+        history = [{
+            "messagesAdded": [{"message": {"id": "m1"}}],
+            "labelsAdded": [{"message": {"id": "m1"}, "labelIds": ["INBOX"]}],
+        }]
+        mock_service.users().history().list().execute.return_value = (
+            _make_history_response(history=history, history_id="200")
+        )
+        client.service = mock_service
+        with patch.object(client, "_batch_fetch_metadata", return_value=["meta1"]), \
+             patch.object(client, "_batch_fetch_label_updates", return_value=[]) as mock_lu:
+            result = client._incremental_email_metadata("100")
+        # _batch_fetch_label_updates called with empty list (m1 already in need_get)
+        assert mock_lu.call_count == 0 or mock_lu.call_args[0][0] == []
+        assert result.upserts == ["meta1"]
+
+    def test_pagination_aggregates_all_pages(self, client: GmailClient):
+        """Paginates through multiple history.list pages."""
+        mock_service = MagicMock()
+        page1 = _make_history_response(
+            history=[{"messagesAdded": [{"message": {"id": "m1"}}]}],
+            history_id="150",
+            next_page_token="token2",
+        )
+        page2 = _make_history_response(
+            history=[{"messagesAdded": [{"message": {"id": "m2"}}]}],
+            history_id="200",
+        )
+        mock_service.users().history().list().execute.side_effect = [page1, page2]
+        client.service = mock_service
+        with patch.object(client, "_batch_fetch_metadata", return_value=["meta1", "meta2"]) as mock_batch:
+            result = client._incremental_email_metadata("100")
+        called_ids = set(mock_batch.call_args[0][0])
+        assert called_ids == {"m1", "m2"}
+        assert result.new_cursor == "200"
+
+    def test_history_list_http_error_raises(self, client: GmailClient):
+        mock_service = MagicMock()
+        from googleapiclient.errors import HttpError
+        resp = MagicMock()
+        type(resp).status = 410
+        mock_service.users().history().list().execute.side_effect = HttpError(
+            resp=resp, content=b"gone"
+        )
+        client.service = mock_service
+        with pytest.raises(EmailExternalAPIError, match="history.list failed"):
+            client._incremental_email_metadata("100")
+
+
+# ── _batch_fetch_label_updates ──────────────────────────────────────
+
+
+class TestBatchFetchLabelUpdates:
+    def test_parses_labels_to_label_update(self, client: GmailClient):
+        mock_service = MagicMock()
+        batch_instance = MagicMock()
+        mock_service.new_batch_http_request.return_value = batch_instance
+
+        def fake_execute():
+            cb = mock_service.new_batch_http_request.call_args[1]["callback"]
+            cb("m1", {"id": "m1", "labelIds": ["INBOX", "UNREAD"]}, None)
+            cb("m2", {"id": "m2", "labelIds": ["SPAM"]}, None)
+        batch_instance.execute.side_effect = fake_execute
+
+        client.service = mock_service
+        result = client._batch_fetch_label_updates(["m1", "m2"])
+
+        assert len(result) == 2
+        lu1 = next(lu for lu in result if lu.provider_message_id == "m1")
+        assert lu1.is_read is False
+        assert lu1.box == "ALL_MAIL"
+        lu2 = next(lu for lu in result if lu.provider_message_id == "m2")
+        assert lu2.is_read is True
+        assert lu2.box == "SPAM"
+
+    def test_skips_failed_messages(self, client: GmailClient):
+        mock_service = MagicMock()
+        batch_instance = MagicMock()
+        mock_service.new_batch_http_request.return_value = batch_instance
+
+        def fake_execute():
+            cb = mock_service.new_batch_http_request.call_args[1]["callback"]
+            cb("m1", None, Exception("not found"))
+            cb("m2", {"id": "m2", "labelIds": ["TRASH"]}, None)
+        batch_instance.execute.side_effect = fake_execute
+
+        client.service = mock_service
+        result = client._batch_fetch_label_updates(["m1", "m2"])
+
+        assert len(result) == 1
+        assert result[0].provider_message_id == "m2"
+        assert result[0].box == "TRASH"
+
+
+# ── _list_message_ids ─────────────────────────────────────────────
+
+
+class TestListMessageIds:
+    def test_single_page(self, client: GmailClient):
+        mock_service = MagicMock()
+        mock_service.users().messages().list().execute.return_value = {
+            "messages": [{"id": "m1"}, {"id": "m2"}],
+        }
+        client.service = mock_service
+        ids = client._list_message_ids(500)
+        assert ids == ["m1", "m2"]
+
+    def test_pagination_with_max_total(self, client: GmailClient):
+        mock_service = MagicMock()
+        page1 = {
+            "messages": [{"id": f"m{i}"} for i in range(3)],
+            "nextPageToken": "tok2",
+        }
+        page2 = {
+            "messages": [{"id": f"m{i}"} for i in range(3, 6)],
+        }
+        mock_service.users().messages().list().execute.side_effect = [page1, page2]
+        client.service = mock_service
+        ids = client._list_message_ids(4)
+        assert len(ids) == 4
+
+    def test_http_error_raises_external_api_error(self, client: GmailClient):
+        from googleapiclient.errors import HttpError
+        mock_service = MagicMock()
+        resp = MagicMock()
+        type(resp).status = 500
+        mock_service.users().messages().list().execute.side_effect = HttpError(
+            resp=resp, content=b"fail"
+        )
+        client.service = mock_service
+        with pytest.raises(EmailExternalAPIError, match="fetch message list"):
+            client._list_message_ids(500)
+
+    def test_generic_exception_raises_external_api_error(self, client: GmailClient):
+        mock_service = MagicMock()
+        mock_service.users().messages().list().execute.side_effect = RuntimeError("boom")
+        client.service = mock_service
+        with pytest.raises(EmailExternalAPIError, match="RuntimeError"):
+            client._list_message_ids(500)
+
+
+# ── _get_current_history_id ───────────────────────────────────────
+
+
+class TestGetCurrentHistoryId:
+    def test_happy_path(self, client: GmailClient):
+        mock_service = MagicMock()
+        mock_service.users().getProfile().execute.return_value = {"historyId": "12345"}
+        client.service = mock_service
+        assert client._get_current_history_id() == "12345"
+
+    def test_http_error_raises_external_api_error(self, client: GmailClient):
+        from googleapiclient.errors import HttpError
+        mock_service = MagicMock()
+        resp = MagicMock()
+        type(resp).status = 500
+        mock_service.users().getProfile().execute.side_effect = HttpError(
+            resp=resp, content=b"fail"
+        )
+        client.service = mock_service
+        with pytest.raises(EmailExternalAPIError, match="historyId"):
+            client._get_current_history_id()
+
+    def test_generic_exception_raises_external_api_error(self, client: GmailClient):
+        mock_service = MagicMock()
+        mock_service.users().getProfile().execute.side_effect = RuntimeError("boom")
+        client.service = mock_service
+        with pytest.raises(EmailExternalAPIError, match="RuntimeError"):
+            client._get_current_history_id()
+
+
+# ── _bootstrap_email_metadata ─────────────────────────────────────
+
+
+class TestBootstrapEmailMetadata:
+    def test_calls_list_batch_history_and_returns_sync_result(self, client: GmailClient):
+        client.service = MagicMock()
+        with patch.object(client, "_list_message_ids", return_value=["m1", "m2"]) as mock_list, \
+             patch.object(client, "_batch_fetch_metadata", return_value=["meta1", "meta2"]) as mock_batch, \
+             patch.object(client, "_get_current_history_id", return_value="hist99") as mock_hist:
+            result = client._bootstrap_email_metadata(500)
+
+        mock_list.assert_called_once_with(500)
+        mock_batch.assert_called_once_with(["m1", "m2"])
+        mock_hist.assert_called_once()
+        assert isinstance(result, SyncResult)
+        assert result.upserts == ["meta1", "meta2"]
+        assert result.new_cursor == "hist99"

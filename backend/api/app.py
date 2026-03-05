@@ -7,9 +7,12 @@ entrypoint in backend/main.py unchanged.
 
 from __future__ import annotations
 
+import logging
 from contextlib import asynccontextmanager
 import os
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -50,8 +53,12 @@ load_dotenv(Path(__file__).resolve().parents[1] / ".env", override=False)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Initialise the database connection on startup and close pool on shutdown."""
-    run_startup_migrations_if_enabled()
-    warmup_connection()
+    try:
+        run_startup_migrations_if_enabled()
+        warmup_connection()
+    except Exception as exc:
+        logger.critical("Startup failed (%s): %s", type(exc).__name__, exc)
+        raise
     yield
     close_pool()
 

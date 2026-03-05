@@ -450,3 +450,85 @@ def test_upsert_tokens_raises_query_error_on_psycopg2_failure(monkeypatch):
             provider="gmail",
             token_data={"access_token": "at", "refresh_token": "rt"},
         )
+
+
+# ===== get_sync_cursor =====
+
+
+def test_get_sync_cursor_happy_path(monkeypatch):
+    cursor = FakeCursor(fetchone_results=[{"sync_cursor": "hist123"}])
+    patch_connection(monkeypatch, account_module, [cursor])
+
+    result = account_module.account_store.get_sync_cursor("mb1", "acc1")
+    assert result == "hist123"
+
+
+def test_get_sync_cursor_returns_none_when_no_row(monkeypatch):
+    cursor = FakeCursor(fetchone_results=[None])
+    patch_connection(monkeypatch, account_module, [cursor])
+
+    assert account_module.account_store.get_sync_cursor("mb1", "acc1") is None
+
+
+def test_get_sync_cursor_returns_none_on_invalid_text(monkeypatch):
+    cursor = FakeCursor(execute_side_effect=psycopg2.errors.InvalidTextRepresentation())
+    patch_connection(monkeypatch, account_module, [cursor])
+
+    assert account_module.account_store.get_sync_cursor("mb1", "not-a-uuid") is None
+
+
+def test_get_sync_cursor_raises_query_error_on_psycopg2(monkeypatch):
+    cursor = FakeCursor(execute_side_effect=psycopg2.OperationalError("fail"))
+    patch_connection(monkeypatch, account_module, [cursor])
+
+    with pytest.raises(QueryError, match="Failed to read sync cursor"):
+        account_module.account_store.get_sync_cursor("mb1", "acc1")
+
+
+def test_get_sync_cursor_raises_query_error_on_generic(monkeypatch):
+    cursor = FakeCursor(execute_side_effect=RuntimeError("boom"))
+    patch_connection(monkeypatch, account_module, [cursor])
+
+    with pytest.raises(QueryError, match="RuntimeError"):
+        account_module.account_store.get_sync_cursor("mb1", "acc1")
+
+
+def test_get_sync_cursor_propagates_connection_pool_error(monkeypatch):
+    patch_connection_error(monkeypatch, account_module, ConnectionPoolError("pool down"))
+
+    with pytest.raises(ConnectionPoolError, match="pool down"):
+        account_module.account_store.get_sync_cursor("mb1", "acc1")
+
+
+# ===== update_sync_cursor =====
+
+
+def test_update_sync_cursor_happy_path(monkeypatch):
+    cursor = FakeCursor()
+    patch_connection(monkeypatch, account_module, [cursor])
+
+    account_module.account_store.update_sync_cursor("mb1", "acc1", "hist456")
+    assert len(cursor.executed) == 1
+
+
+def test_update_sync_cursor_raises_query_error_on_psycopg2(monkeypatch):
+    cursor = FakeCursor(execute_side_effect=psycopg2.OperationalError("fail"))
+    patch_connection(monkeypatch, account_module, [cursor])
+
+    with pytest.raises(QueryError, match="Failed to update sync cursor"):
+        account_module.account_store.update_sync_cursor("mb1", "acc1", "hist456")
+
+
+def test_update_sync_cursor_raises_query_error_on_generic(monkeypatch):
+    cursor = FakeCursor(execute_side_effect=RuntimeError("boom"))
+    patch_connection(monkeypatch, account_module, [cursor])
+
+    with pytest.raises(QueryError, match="RuntimeError"):
+        account_module.account_store.update_sync_cursor("mb1", "acc1", "hist456")
+
+
+def test_update_sync_cursor_propagates_connection_pool_error(monkeypatch):
+    patch_connection_error(monkeypatch, account_module, ConnectionPoolError("pool down"))
+
+    with pytest.raises(ConnectionPoolError, match="pool down"):
+        account_module.account_store.update_sync_cursor("mb1", "acc1", "hist456")

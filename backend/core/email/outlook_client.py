@@ -8,7 +8,7 @@ import urllib.request
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from .email_client import EmailClient, EmailMetadata
+from .email_client import EmailClient, EmailMetadata, SyncResult
 from .errors import (
     EmailExternalAPIError,
     EmailMissingAppCredentialsError,
@@ -317,8 +317,10 @@ class OutlookClient(EmailClient):
         self,
         sync_cursor: str | None = None,
         max_total: int = 500,
-    ) -> tuple[list[EmailMetadata], str]:
+    ) -> SyncResult:
         """Outlook metadata sync is not yet implemented."""
+        if self._access_token is None:
+            raise EmailNotAuthenticatedError("Outlook fetch_email_metadata requires authentication.")
         raise EmailExternalAPIError("Outlook metadata sync not yet implemented.")
 
     def send_email(

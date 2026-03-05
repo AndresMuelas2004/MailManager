@@ -2,6 +2,8 @@
 Concrete repository exports.
 """
 
+from __future__ import annotations
+
 from database.repositories.account_repository import account_store
 from database.repositories.email_metadata_repository import email_metadata_store
 from database.repositories.mailbox_repository import mailbox_store

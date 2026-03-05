@@ -2,7 +2,7 @@
 Core email package public surface.
 """
 
-from core.email.email_client import EmailClient, EmailMetadata
+from core.email.email_client import EmailClient, EmailMetadata, LabelUpdate, SyncResult
 from core.email.email_manager import EmailManager
 from core.email.errors import (
     CoreError,
@@ -40,6 +40,7 @@ __all__ = [
     "EmailInvalidTokenDataError",
     "EmailManager",
     "EmailMetadata",
+    "LabelUpdate",
     "EmailMissingAppCredentialsError",
     "EmailMissingRefreshTokenError",
     "EmailMissingTokenError",
@@ -47,4 +48,5 @@ __all__ = [
     "EmailProviderConfigError",
     "EmailRecipientsMissingError",
     "EmailRefreshFailedError",
+    "SyncResult",
 ]

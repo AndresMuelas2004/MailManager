@@ -2,6 +2,8 @@
 Database package public surface.
 """
 
+from __future__ import annotations
+
 from database.connection import close_pool
 from database.errors import (
     ConnectionPoolError,

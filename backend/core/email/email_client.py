@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
@@ -20,6 +20,30 @@ class EmailMetadata:
     is_read: bool
     box: str  # "ALL_MAIL" | "SPAM" | "TRASH"
     account_id: str = ""  # Stamped by the service layer before persistence
+
+
+@dataclass
+class LabelUpdate:
+    """Partial update carrying only label-derived fields for an existing message."""
+    provider_message_id: str
+    is_read: bool
+    box: str  # "ALL_MAIL" | "SPAM" | "TRASH"
+
+
+@dataclass
+class SyncResult:
+    """
+    Result of fetch_email_metadata, supporting both bootstrap and incremental sync.
+
+    - upserts: full metadata to insert or update.
+    - new_cursor: opaque sync cursor for the next call.
+    - deletes: provider_message_ids to remove from persistence.
+    - label_updates: partial updates (is_read, box) for messages already persisted.
+    """
+    upserts: list[EmailMetadata]
+    new_cursor: str
+    deletes: list[str] = field(default_factory=list)
+    label_updates: list[LabelUpdate] = field(default_factory=list)
 
 
 class EmailClient(ABC):
@@ -54,13 +78,13 @@ class EmailClient(ABC):
         self,
         sync_cursor: str | None = None,
         max_total: int = 500,
-    ) -> tuple[list[EmailMetadata], str]:
+    ) -> SyncResult:
         """
         Fetch email metadata from the provider.
 
-        Returns (metadata_list, new_sync_cursor).
-        - If sync_cursor is None -> bootstrap (Camino 1).
-        - If sync_cursor is not None -> attempt incremental (Camino 2),
+        Returns a SyncResult with upserts, deletes, label_updates and new_cursor.
+        - If sync_cursor is None -> bootstrap (Path 1).
+        - If sync_cursor is not None -> attempt incremental (Path 2),
           fallback to bootstrap on failure.
         """
 

@@ -4,8 +4,11 @@ Shared helpers used across service modules.
 
 from __future__ import annotations
 
+import logging
 from contextlib import contextmanager
 from typing import Any, Iterable
+
+logger = logging.getLogger(__name__)
 
 from pydantic import SecretStr
 
@@ -37,6 +40,7 @@ from core.email import (
     EmailProviderConfigError,
     EmailRecipientsMissingError,
     EmailRefreshFailedError,
+    LabelUpdate,
 )
 
 from api.errors.exceptions import (
@@ -150,7 +154,7 @@ def translate_auth_error(
             if isinstance(exc, auth_type):
                 detail = exc.detail if hasattr(exc, "detail") else {}
                 if context:
-                    detail = {**detail, **(context or {})}
+                    detail = {**detail, **context}
                 detail["auth_code"] = exc.code
                 return api_type(exc.message, detail)
         # Unreachable when AuthError is in the map, but safe fallback.
@@ -175,7 +179,7 @@ def translate_core_error(
             if isinstance(exc, core_type):
                 detail = exc.detail if hasattr(exc, "detail") else {}
                 if context:
-                    detail = {**detail, **(context or {})}
+                    detail = {**detail, **context}
                 detail["core_code"] = exc.code
                 return api_type(exc.message, detail)
         # Unreachable when CoreError is in the map, but safe fallback.
@@ -200,7 +204,7 @@ def translate_database_error(
             if isinstance(exc, db_type):
                 detail = exc.detail if hasattr(exc, "detail") else {}
                 if context:
-                    detail = {**detail, **(context or {})}
+                    detail = {**detail, **context}
                 detail["db_code"] = exc.code
                 return api_type(exc.message, detail)
         # Unreachable when DatabaseError is in the map, but safe fallback.
@@ -222,8 +226,9 @@ def catch_database_errors(
     except DatabaseError as exc:
         raise translate_database_error(exc, fallback=fallback, context=context) from exc
     except Exception as exc:
+        logger.warning("Unexpected database operation error (%s): %s", type(exc).__name__, exc)
         raise fallback(
-            f"Unexpected database operation error ({type(exc).__name__}): {exc}",
+            "Unexpected database operation error.",
             context or {},
         ) from exc
 
@@ -274,13 +279,18 @@ def build_manager_for_accounts(accounts: Iterable[dict[str, Any]]) -> EmailManag
         except CoreError as exc:
             raise translate_core_error(exc, fallback=AccountMisconfigured) from exc
         except Exception as exc:
+            logger.warning("Failed to register account in manager (%s): %s", type(exc).__name__, exc)
             raise AccountMisconfigured(
-                f"Failed to register account in manager ({type(exc).__name__}): {exc}"
+                "Failed to register account in manager."
             ) from exc
     return manager
 
 
-def raise_on_silent_auth_errors(errors: dict[str, Exception]) -> None:
+def raise_on_silent_auth_errors(
+    errors: dict[str, Exception],
+    *,
+    fallback: type[ApiError] = ApiError,
+) -> None:
     """
     Inspect the per-account errors collected during EmailManager.authenticate_all_silent().
 
@@ -300,7 +310,7 @@ def raise_on_silent_auth_errors(errors: dict[str, Exception]) -> None:
             if reason:
                 reasons[label] = reason
         else:
-            raise translate_core_error(error) from error
+            raise translate_core_error(error, fallback=fallback) from error
 
     if auth_labels:
         detail: dict[str, Any] = {"account_labels": auth_labels}
@@ -387,12 +397,38 @@ def persist_email_metadata_batch(
 def load_sync_cursors(
     label_lookup: dict[str, tuple[str, str, str]],
 ) -> dict[str, str | None]:
-    """Load sync_cursor for each account, keyed by account_label, is to know what path choose in the client"""
+    """Load the sync cursor for each account, keyed by account label."""
     cursors: dict[str, str | None] = {}
     for label, (mailbox_id, account_id, _provider) in label_lookup.items():
         with catch_database_errors():
             cursors[label] = account_store.get_sync_cursor(mailbox_id, account_id)
     return cursors
+
+
+def delete_email_metadata_batch(
+    account_id: str,
+    message_ids: list[str],
+) -> int:
+    """Delete email metadata by provider_message_ids. Returns rows deleted."""
+    if not message_ids:
+        return 0
+    with catch_database_errors():
+        return email_metadata_store.delete_batch_by_message_ids(account_id, message_ids)
+
+
+def update_email_metadata_labels_batch(
+    account_id: str,
+    label_updates: list[LabelUpdate],
+) -> int:
+    """Update only is_read and box for specific messages. Returns rows updated."""
+    if not label_updates:
+        return 0
+    rows = [
+        (lu.provider_message_id, account_id, lu.is_read, lu.box)
+        for lu in label_updates
+    ]
+    with catch_database_errors():
+        return email_metadata_store.update_labels_batch(account_id, rows)
 
 
 def update_sync_cursor(mailbox_id: str, account_id: str, cursor: str) -> None:

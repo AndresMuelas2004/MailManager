@@ -22,11 +22,11 @@ Every provider client must implement the `EmailClient` abstract methods:
 |---|---|---|
 | `authenticate(app_credentials)` | Interactive account connection flow. | `dict[str, Any] \| None` |
 | `authenticate_silent(app_credentials, user_tokens)` | Non-interactive auth and refresh path. | `dict[str, Any] \| None` |
-| `fetch_email_metadata(sync_cursor, max_total)` | Fetch email metadata from provider. | `tuple[list[EmailMetadata], str]` |
+| `fetch_email_metadata(sync_cursor, max_total)` | Fetch email metadata from provider. | `SyncResult` |
 | `send_email(subject, body, recipients)` | Send plain-text email. | `None` |
 | `get_account_label()` | Stable account identifier in manager. | `str` |
 
-`EmailMetadata` is the normalized provider-agnostic metadata dataclass used by the service layer for persistence.
+`EmailMetadata` is the normalized provider-agnostic metadata dataclass used by the service layer for persistence. `SyncResult` and `LabelUpdate` are companion dataclasses used to carry incremental sync results.
 
 ## 2. Account Label Convention
 
@@ -120,13 +120,13 @@ Signature:
 ```python
 def fetch_email_metadata(
     self, sync_cursor: str | None = None, max_total: int = 500,
-) -> tuple[list[EmailMetadata], str]:
+) -> SyncResult:
 ```
 
 Requirements:
 
 - Fail fast if client is not authenticated (`EmailNotAuthenticatedError`).
-- Return `(metadata_list, new_sync_cursor)`.
+- Return a `SyncResult` containing `upserts`, `deletes`, `label_updates`, and `new_cursor`.
 - If `sync_cursor` is `None` → bootstrap (Camino 1): fetch up to `max_total` messages.
 - If `sync_cursor` is not `None` → attempt incremental (Camino 2), fall back to bootstrap on failure or if not yet implemented.
 - `account_id` field on `EmailMetadata` is left empty (`""`) — stamped by the service layer before persistence.
@@ -147,6 +147,32 @@ class EmailMetadata:
     account_id: str = ""
 ```
 
+#### `SyncResult` dataclass
+
+```python
+@dataclass
+class SyncResult:
+    upserts: list[EmailMetadata]
+    new_cursor: str
+    deletes: list[str] = field(default_factory=list)
+    label_updates: list[LabelUpdate] = field(default_factory=list)
+```
+
+- `upserts` — full metadata for new or changed messages (bootstrap and incremental).
+- `new_cursor` — opaque sync cursor for the next incremental call.
+- `deletes` — provider message IDs confirmed deleted (incremental only).
+- `label_updates` — lightweight label-only changes (incremental only).
+
+#### `LabelUpdate` dataclass
+
+```python
+@dataclass
+class LabelUpdate:
+    provider_message_id: str
+    is_read: bool
+    box: str
+```
+
 #### Box mapping (label → box)
 
 ```
@@ -164,8 +190,8 @@ otherwise                 → box = "ALL_MAIL"
 
 #### Sync cursor (Gmail)
 
-- Bootstrap: `sync_cursor=None` → Camino 1 → returns `historyId` as new cursor.
-- Incremental: `sync_cursor` present → validates via `users.history.list` probe. Currently falls back to bootstrap (Camino 2 not yet implemented).
+- Bootstrap: `sync_cursor=None` → Path 1 → returns `historyId` as new cursor.
+- Incremental: `sync_cursor` present → validates via `users.history.list` probe. If valid, performs incremental sync via History API (Path 2): paginate history, resolve deletes, filter label changes, batch-fetch metadata, batch-fetch label updates. Falls back to bootstrap on invalid cursor.
 
 #### Outlook
 

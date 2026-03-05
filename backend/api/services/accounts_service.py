@@ -4,7 +4,10 @@ Service layer for account operations.
 
 from __future__ import annotations
 
+import logging
 from uuid import uuid4
+
+logger = logging.getLogger(__name__)
 
 from api.errors.exceptions import (
     AccountConnectAuthError,
@@ -125,9 +128,8 @@ def connect_account(mailbox_id: str, account_id: str, user_id: str) -> AccountCo
     except CoreError as exc:
         raise translate_connect_error(exc, context=connect_context) from exc
     except Exception as exc:
-        raise AccountConnectAuthError(
-            "Failed to connect account."
-        ) from exc
+        logger.warning("Unexpected connect error (%s): %s", type(exc).__name__, exc)
+        raise AccountConnectAuthError("Failed to connect account.") from exc
 
     token_payload = dict(wrapped_tokens or {})
     token_payload["access_token"] = unwrap_secret(token_payload.get("access_token"))

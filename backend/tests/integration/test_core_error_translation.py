@@ -15,7 +15,12 @@ from api.services import accounts_service, emails_service, services_helpers
 from core.email import (
     EmailAuthError,
     EmailExternalAPIError,
+    EmailInvalidCredentialsDataError,
+    EmailMissingAppCredentialsError,
+    EmailMissingTokenError,
+    EmailNotAuthenticatedError,
     EmailProviderConfigError,
+    EmailRecipientsMissingError,
 )
 
 
@@ -36,6 +41,7 @@ def test_connect_auth_failure(failing_test_client, setup_mailbox_and_account):
     mid, aid = setup_mailbox_and_account(failing_test_client)
     resp = failing_test_client.post(f"{_MAILBOX_URL}/{mid}/accounts/{aid}/connect")
     assert resp.status_code == 401
+    assert resp.json()["error"]["code"] == "account_connect_auth_error"
 
 
 # ==================================================================
@@ -52,6 +58,7 @@ def test_sync_metadata_account_not_connected(failing_test_client, setup_mailbox_
     mid, _ = setup_mailbox_and_account(failing_test_client)
     resp = failing_test_client.post(f"{_MAILBOX_URL}/{mid}/emails/sync-metadata")
     assert resp.status_code == 409
+    assert resp.json()["error"]["code"] == "account_not_connected"
 
 
 @pytest.mark.parametrize(
@@ -72,6 +79,7 @@ def test_send_account_not_connected(failing_test_client, setup_mailbox_and_accou
         },
     )
     assert resp.status_code == 409
+    assert resp.json()["error"]["code"] == "account_not_connected"
 
 
 # ==================================================================
@@ -88,6 +96,7 @@ def test_sync_metadata_fetch_failure(failing_test_client, setup_mailbox_and_acco
     mid, _ = setup_mailbox_and_account(failing_test_client)
     resp = failing_test_client.post(f"{_MAILBOX_URL}/{mid}/emails/sync-metadata")
     assert resp.status_code == 502
+    assert resp.json()["error"]["code"] == "external_api_error"
 
 
 # ==================================================================
@@ -112,6 +121,7 @@ def test_send_failure(failing_test_client, setup_mailbox_and_account):
         },
     )
     assert resp.status_code == 502
+    assert resp.json()["error"]["code"] == "external_api_error"
 
 
 # ==================================================================
@@ -128,6 +138,7 @@ def test_connect_unexpected_exception(failing_test_client, setup_mailbox_and_acc
     mid, aid = setup_mailbox_and_account(failing_test_client)
     resp = failing_test_client.post(f"{_MAILBOX_URL}/{mid}/accounts/{aid}/connect")
     assert resp.status_code == 401
+    assert resp.json()["error"]["code"] == "account_connect_auth_error"
 
 
 def test_connect_account_misconfigured(test_client, setup_mailbox_and_account, monkeypatch):
@@ -150,3 +161,116 @@ def test_connect_account_misconfigured(test_client, setup_mailbox_and_account, m
 
     resp = test_client.post(f"{_MAILBOX_URL}/{mid}/accounts/{aid}/connect")
     assert resp.status_code == 400
+    assert resp.json()["error"]["code"] == "account_misconfigured"
+
+
+# ==================================================================
+# 3B: Additional core→API translations via send_exc path
+# ==================================================================
+
+@pytest.mark.parametrize(
+    "failing_test_client",
+    [{"send_exc": EmailRecipientsMissingError("No recipients")}],
+    indirect=True,
+)
+def test_send_recipients_missing(failing_test_client, setup_mailbox_and_account):
+    mid, aid = setup_mailbox_and_account(failing_test_client)
+    resp = failing_test_client.post(
+        f"{_MAILBOX_URL}/{mid}/emails/send",
+        json={"account_id": aid, "subject": "S", "body": "B", "recipients": ["a@b.com"]},
+    )
+    assert resp.status_code == 400
+    assert resp.json()["error"]["code"] == "recipients_missing"
+
+
+@pytest.mark.parametrize(
+    "failing_test_client",
+    [{"send_exc": EmailMissingTokenError("Missing token")}],
+    indirect=True,
+)
+def test_send_missing_token(failing_test_client, setup_mailbox_and_account):
+    mid, aid = setup_mailbox_and_account(failing_test_client)
+    resp = failing_test_client.post(
+        f"{_MAILBOX_URL}/{mid}/emails/send",
+        json={"account_id": aid, "subject": "S", "body": "B", "recipients": ["a@b.com"]},
+    )
+    assert resp.status_code == 409
+    assert resp.json()["error"]["code"] == "account_not_connected"
+
+
+@pytest.mark.parametrize(
+    "failing_test_client",
+    [{"send_exc": EmailNotAuthenticatedError("Not authenticated")}],
+    indirect=True,
+)
+def test_send_not_authenticated(failing_test_client, setup_mailbox_and_account):
+    mid, aid = setup_mailbox_and_account(failing_test_client)
+    resp = failing_test_client.post(
+        f"{_MAILBOX_URL}/{mid}/emails/send",
+        json={"account_id": aid, "subject": "S", "body": "B", "recipients": ["a@b.com"]},
+    )
+    assert resp.status_code == 409
+    assert resp.json()["error"]["code"] == "account_not_connected"
+
+
+@pytest.mark.parametrize(
+    "failing_test_client",
+    [{"send_exc": EmailInvalidCredentialsDataError("Bad creds")}],
+    indirect=True,
+)
+def test_send_invalid_credentials_data(failing_test_client, setup_mailbox_and_account):
+    mid, aid = setup_mailbox_and_account(failing_test_client)
+    resp = failing_test_client.post(
+        f"{_MAILBOX_URL}/{mid}/emails/send",
+        json={"account_id": aid, "subject": "S", "body": "B", "recipients": ["a@b.com"]},
+    )
+    assert resp.status_code == 500
+    assert resp.json()["error"]["code"] == "app_credentials_invalid"
+
+
+@pytest.mark.parametrize(
+    "failing_test_client",
+    [{"send_exc": EmailMissingAppCredentialsError("Missing creds")}],
+    indirect=True,
+)
+def test_send_missing_app_credentials(failing_test_client, setup_mailbox_and_account):
+    mid, aid = setup_mailbox_and_account(failing_test_client)
+    resp = failing_test_client.post(
+        f"{_MAILBOX_URL}/{mid}/emails/send",
+        json={"account_id": aid, "subject": "S", "body": "B", "recipients": ["a@b.com"]},
+    )
+    assert resp.status_code == 500
+    assert resp.json()["error"]["code"] == "app_credentials_missing"
+
+
+# ==================================================================
+# 3F: except Exception fallback in sync/send
+# ==================================================================
+
+@pytest.mark.parametrize(
+    "failing_test_client",
+    [{"fetch_exc": RuntimeError("unexpected fetch crash")}],
+    indirect=True,
+)
+def test_sync_generic_exception_fallback(failing_test_client, setup_mailbox_and_account):
+    """RuntimeError during fetch → EmailFetchError (502)."""
+    mid, _ = setup_mailbox_and_account(failing_test_client)
+    resp = failing_test_client.post(f"{_MAILBOX_URL}/{mid}/emails/sync-metadata")
+    assert resp.status_code == 502
+    assert resp.json()["error"]["code"] == "email_fetch_error"
+
+
+@pytest.mark.parametrize(
+    "failing_test_client",
+    [{"send_exc": RuntimeError("unexpected send crash")}],
+    indirect=True,
+)
+def test_send_generic_exception_fallback(failing_test_client, setup_mailbox_and_account):
+    """RuntimeError during send → EmailSendError (502)."""
+    mid, aid = setup_mailbox_and_account(failing_test_client)
+    resp = failing_test_client.post(
+        f"{_MAILBOX_URL}/{mid}/emails/send",
+        json={"account_id": aid, "subject": "S", "body": "B", "recipients": ["a@b.com"]},
+    )
+    assert resp.status_code == 502
+    assert resp.json()["error"]["code"] == "email_send_error"

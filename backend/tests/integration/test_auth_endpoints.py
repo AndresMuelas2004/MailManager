@@ -56,6 +56,7 @@ def test_google_login_invalid_token(test_client_base, isolated_db, monkeypatch, 
 
     resp = test_client_base.post("/auth/google", json={"id_token": "bad-token"})
     assert resp.status_code == 401
+    assert resp.json()["error"]["code"] == "unauthorized"
 
 
 # ------------------------------------------------------------------
@@ -309,3 +310,56 @@ def test_null_owner_mailbox_not_listed(test_client, isolated_db):
     assert resp.status_code == 200
     ids = [m["mailbox_id"] for m in resp.json()]
     assert orphan_id not in ids
+
+
+# ------------------------------------------------------------------
+# 3E: 403 on endpoints accessing another user's mailbox
+# ------------------------------------------------------------------
+
+def _create_foreign_mailbox(isolated_db) -> str:
+    """Create a mailbox owned by another user and return its ID."""
+    other_user_id = str(uuid4())
+    other_mailbox_id = str(uuid4())
+    with isolated_db.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO users (user_id, google_sub, email)
+            VALUES (%(user_id)s, %(google_sub)s, %(email)s)
+            """,
+            {"user_id": other_user_id, "google_sub": f"sub-{other_user_id[:8]}", "email": "other@e.com"},
+        )
+        cur.execute(
+            """
+            INSERT INTO mailboxes (mailbox_id, display_name, owner_user_id)
+            VALUES (%(mailbox_id)s, %(display_name)s, %(owner_user_id)s)
+            """,
+            {"mailbox_id": other_mailbox_id, "display_name": "Foreign", "owner_user_id": other_user_id},
+        )
+    return other_mailbox_id
+
+
+def test_create_account_on_foreign_mailbox_forbidden(test_client, isolated_db):
+    mid = _create_foreign_mailbox(isolated_db)
+    resp = test_client.post(
+        f"{_MAILBOX_URL}/{mid}/accounts",
+        json={"provider": "gmail", "display_label": "x"},
+    )
+    assert resp.status_code == 403
+    assert resp.json()["error"]["code"] == "forbidden"
+
+
+def test_send_email_on_foreign_mailbox_forbidden(test_client, isolated_db):
+    mid = _create_foreign_mailbox(isolated_db)
+    resp = test_client.post(
+        f"{_MAILBOX_URL}/{mid}/emails/send",
+        json={"account_id": "x", "subject": "S", "body": "B", "recipients": ["a@b.com"]},
+    )
+    assert resp.status_code == 403
+    assert resp.json()["error"]["code"] == "forbidden"
+
+
+def test_delete_foreign_mailbox_forbidden(test_client, isolated_db):
+    mid = _create_foreign_mailbox(isolated_db)
+    resp = test_client.delete(f"{_MAILBOX_URL}/{mid}")
+    assert resp.status_code == 403
+    assert resp.json()["error"]["code"] == "forbidden"

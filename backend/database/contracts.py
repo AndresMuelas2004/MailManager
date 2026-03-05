@@ -85,6 +85,14 @@ class EmailMetadataStore(ABC):
     def delete_by_account(self, account_id: str) -> None:
         raise NotImplementedError
 
+    @abstractmethod
+    def delete_batch_by_message_ids(self, account_id: str, message_ids: list[str]) -> int:
+        raise NotImplementedError
+
+    @abstractmethod
+    def update_labels_batch(self, account_id: str, rows: list[tuple]) -> int:
+        raise NotImplementedError
+
 
 class UserStore(ABC):
     """

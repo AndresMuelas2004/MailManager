@@ -127,14 +127,16 @@ def test_sync_email_metadata(test_client, setup_mailbox_and_account):
     resp = test_client.post(f"{_MAILBOX_URL}/{mid}/emails/sync-metadata")
     assert resp.status_code == 200
     data = resp.json()
-    assert "total_synced" in data
-    assert "accounts" in data
+    assert isinstance(data["total_synced"], int)
+    assert data["total_synced"] >= 0
     assert isinstance(data["accounts"], list)
     assert len(data["accounts"]) == 1
     detail = data["accounts"][0]
     assert "account_id" in detail
     assert "provider" in detail
-    assert "emails_synced" in detail
+    assert isinstance(detail["emails_synced"], int)
+    assert detail["emails_synced"] >= 0
+    assert data["total_synced"] == detail["emails_synced"]
 
 
 def test_send_email(test_client, setup_mailbox_and_account):
@@ -197,11 +199,18 @@ def test_multi_account_send_targets_specific_account(test_client):
 # Delete mailbox cascade
 # ==================================================================
 
-def test_delete_mailbox_removes_accounts(test_client):
+def test_delete_mailbox_removes_accounts(test_client, isolated_db):
     mid, aid1, aid2 = _setup_mailbox_with_two_accounts(test_client)
     test_client.delete(f"{_MAILBOX_URL}/{mid}")
     assert test_client.get(f"{_MAILBOX_URL}/{mid}/accounts/{aid1}").status_code == 404
     assert test_client.get(f"{_MAILBOX_URL}/{mid}/accounts/{aid2}").status_code == 404
+
+    # 3H: Verify accounts are actually gone at DB level (CASCADE).
+    with isolated_db.cursor() as cur:
+        cur.execute(
+            "SELECT count(*) FROM accounts WHERE mailbox_id = %s::uuid", (mid,),
+        )
+        assert cur.fetchone()[0] == 0
 
 
 # ==================================================================

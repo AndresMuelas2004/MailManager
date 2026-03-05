@@ -40,3 +40,54 @@ def test_token_plaintext_fallback_rejects_invalid_boolean(monkeypatch):
 
     with pytest.raises(SettingsError):
         settings.is_token_plaintext_fallback_enabled()
+
+
+# ===== get_database_url =====
+
+
+def test_get_database_url_missing_raises_settings_error(monkeypatch):
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    with pytest.raises(SettingsError, match="DATABASE_URL"):
+        settings.get_database_url()
+
+
+def test_get_database_url_happy_path(monkeypatch):
+    monkeypatch.setenv("DATABASE_URL", "postgresql://host/db")
+    assert settings.get_database_url() == "postgresql://host/db"
+
+
+# ===== get_token_encryption_key =====
+
+
+def test_get_token_encryption_key_required_missing_raises(monkeypatch):
+    monkeypatch.delenv("TOKEN_ENCRYPTION_KEY", raising=False)
+    with pytest.raises(SettingsError, match="TOKEN_ENCRYPTION_KEY"):
+        settings.get_token_encryption_key(required=True)
+
+
+def test_get_token_encryption_key_optional_missing_returns_none(monkeypatch):
+    monkeypatch.delenv("TOKEN_ENCRYPTION_KEY", raising=False)
+    assert settings.get_token_encryption_key(required=False) is None
+
+
+def test_get_token_encryption_key_present(monkeypatch):
+    monkeypatch.setenv("TOKEN_ENCRYPTION_KEY", "my-key")
+    assert settings.get_token_encryption_key(required=True) == "my-key"
+
+
+# ===== get_provider_credentials_path =====
+
+
+def test_get_provider_credentials_path_unknown_provider():
+    assert settings.get_provider_credentials_path("unknown") is None
+
+
+def test_get_provider_credentials_path_missing_env(monkeypatch):
+    monkeypatch.delenv("MIA_GMAIL_CREDENTIALS_PATH", raising=False)
+    with pytest.raises(SettingsError, match="MIA_GMAIL_CREDENTIALS_PATH"):
+        settings.get_provider_credentials_path("gmail")
+
+
+def test_get_provider_credentials_path_happy_path(monkeypatch):
+    monkeypatch.setenv("MIA_GMAIL_CREDENTIALS_PATH", "/path/to/creds.json")
+    assert settings.get_provider_credentials_path("gmail") == "/path/to/creds.json"

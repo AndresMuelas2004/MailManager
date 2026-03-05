@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from typing import Any
-from .email_client import EmailClient, EmailMetadata
+from .email_client import EmailClient, EmailMetadata, SyncResult
 from .errors import (
     EmailAccountNotFoundError,
     EmailAccountRecordError,
@@ -118,13 +118,13 @@ class EmailManager:
     def fetch_all_email_metadata(
         self,
         sync_cursors: dict[str, str | None] | None = None,
-    ) -> dict[str, tuple[list[EmailMetadata], str]]:
+    ) -> dict[str, SyncResult]:
         """
         Fetch email metadata from all clients.
-        Returns {account_label: (metadata_list, new_sync_cursor)}.
+        Returns {account_label: SyncResult}.
         """
         self._last_errors = {}
-        results: dict[str, tuple[list[EmailMetadata], str]] = {}
+        results: dict[str, SyncResult] = {}
         for client in self._clients:
             label = client.get_account_label()
             cursor = (sync_cursors or {}).get(label)

@@ -19,6 +19,11 @@ from .errors import (
 )
 
 
+def http_error_detail(exc: Any) -> tuple[str, str]:
+    """Extract (status, reason) from a googleapiclient HttpError."""
+    return getattr(getattr(exc, "resp", None), "status", "unknown"), getattr(exc, "reason", "unknown")
+
+
 def parse_expiry(value: Any) -> datetime | None:
     """Parse an expiry value (datetime, timestamp, or ISO string) into a naive UTC datetime."""
     if value is None:

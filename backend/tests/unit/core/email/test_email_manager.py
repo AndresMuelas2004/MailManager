@@ -136,8 +136,8 @@ def test_fetch_all_email_metadata_aggregates_from_all_clients(
     results = manager.fetch_all_email_metadata()
     assert "acct1" in results
     assert "acct2" in results
-    assert len(results["acct1"][0]) == 2
-    assert len(results["acct2"][0]) == 1
+    assert len(results["acct1"].upserts) == 2
+    assert len(results["acct2"].upserts) == 1
 
 
 def test_fetch_all_email_metadata_records_errors_and_continues(
