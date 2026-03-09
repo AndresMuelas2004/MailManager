@@ -1,101 +1,103 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository. **Read this document in full before writing or reviewing any code.**
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Project Overview
+---
 
-MailManager is a multi-account email management application with a FastAPI backend and a React (Vite + TypeScript + Tailwind) frontend. It supports **Gmail** and **Outlook** (both fully implemented). The project language for code (identifiers, docstrings, comments) is English. The scope of this document covers the backend FastAPI and `core/email`; the frontend is only mentioned when it affects backend contracts.
+## Section 1: General Architecture (do not modify)
 
-## Commands
+This section describes the layered architecture, structural rules, and conventions that apply to any project following this pattern. It is project-agnostic and should not be modified for domain-specific changes.
 
-### Backend
+### 1.1 On-Demand Loading
 
-```bash
-# Run the API server (from backend/)
-python main.py                       # starts uvicorn on 0.0.0.0:8000
+Before modifying, planning or think about any layer, read **only** its `general_*_rules.md`. Do not load rules for layers unrelated to the current task.
 
-# Run all tests (from project root, with .venv activated)
-python -m pytest backend/tests
+| Layer | General Rules |
+|---|---|
+| API | [`backend/api/general_api_rules.md`](backend/api/general_api_rules.md) |
+| Auth | [`backend/auth/general_auth_rules.md`](backend/auth/general_auth_rules.md) |
+| Database | [`backend/database/general_database_rules.md`](backend/database/general_database_rules.md) |
+| Core | [`backend/core/general_core_rules.md`](backend/core/general_core_rules.md) |
+| Unit Tests | [`backend/tests/unit/general_unit_rules.md`](backend/tests/unit/general_unit_rules.md) |
+| Integration Tests | [`backend/tests/integration/general_integration_rules.md`](backend/tests/integration/general_integration_rules.md) |
+| E2E Tests | [`backend/tests/e2e/general_e2e_rules.md`](backend/tests/e2e/general_e2e_rules.md) |
 
-# Run only unit tests
-python -m pytest backend/tests/unit
+These files are project-agnostic and transferable. Each one references internally a `*_guide.md` with project-specific details.
 
-# Run only integration tests
-python -m pytest backend/tests/integration
+**Hard rule**: these general rules are non-negotiable and override any conflicting project-specific guidance.
 
-# Run a single test file
-python -m pytest backend/tests/unit/core/email/test_email_manager.py
+### 1.2 Monorepo Structure
 
-# Run a single test by name
-python -m pytest backend/tests -k "test_name"
+- `backend/` — API server organized in layers (FastAPI + Python).
+- `frontend/` — Client application (React + Vite + TypeScript + Tailwind).
+- Docker Compose orchestrates both services plus the database.
+
+### 1.3 Backend Layers and Relationships
+
+```
+API (routers → services)
+  → Auth       (identity verification, session management)
+  → Database   (persistence)
+  → Core       (domain logic, provider clients)
 ```
 
-### Frontend
+Communication rules:
 
-```bash
-cd frontend
-npm run dev          # Vite dev server (port 5173)
-npm run build        # TypeScript check + Vite production build
-npm run lint         # ESLint
-```
+- Only **Services** (inside API) talk to Auth, Database, and Core.
+- Auth, Database, and Core are **independent** — none imports from another.
+- No lower layer imports from API.
+- Database does not communicate with Core.
 
-### Docker
+Each layer defines its own error hierarchy. Services translate lower-layer errors into API-layer errors. For specifics, read the relevant `general_*_rules.md`.
 
-```bash
-docker compose up --build       # build and start all services
-docker compose down             # stop all services
-docker compose down -v          # stop and delete database volume
-```
+### 1.4 Two-Level Documentation Pattern
 
-## Architecture — STRICT, DO NOT VIOLATE
+Each layer has two documentation files:
 
-The layered architecture below is **mandatory**. Every change must preserve it. Never skip layers, never put business logic in routers, never import API exceptions from core, never instantiate provider clients outside of `build_manager_for_accounts()`.
+- `general_*_rules.md` — general, transferable rules. Not modified for project changes.
+- `*_guide.md` — project-specific details. Claude updates these when the project changes.
 
-### Request Flow
+The general rules file references its guide. This CLAUDE.md references the general rules files.
+
+### 1.5 Style and Code Quality
+
+- Python: PEP 8, FastAPI conventions, `from __future__ import annotations` in all modules.
+- TypeScript: ESLint config in `frontend/eslint.config.js`.
+- Code language: English (identifiers, comments, docstrings).
+- Comments only where they clarify non-obvious logic; avoid noise or redundancy.
+
+---
+
+## Section 2: Project-Specific (maintained by Claude)
+
+This section contains details specific to MailManager. Update it when the project changes (new providers, new endpoints, architectural shifts). Do not modify Section 1.
+
+### 2.1 Project Overview
+
+**MailManager** is a multi-account email management application.
+
+- **Backend**: FastAPI (Python).
+- **Frontend**: React + Vite + TypeScript + Tailwind.
+- **Email providers**: Gmail and Outlook (both fully implemented).
+- **Authentication**: Google OIDC.
+- **Database**: PostgreSQL with Alembic migrations.
+
+### 2.3 Request Flow
 
 ```
 Routers (FastAPI)
-  → Routers helpers (api/routers/routers_helpers.py)  — e.g. require_session → user_id
+  → routers_helpers.py (require_session → user_id)
   → Services (api/services/)
-    → Auth layer (auth/)      — Google OIDC verification, auth settings
-    → Database (database/)    — PostgreSQL persistence (independent layer)
+    → Auth (auth/)            — Google OIDC verification
+    → Database (database/)    — PostgreSQL persistence
     → Core (core/)
       → EmailManager (core/email/email_manager.py)
-        → EmailClients (GmailClient, OutlookClient)
+        → GmailClient, OutlookClient
 ```
 
-Only Services can talk with manager, Database, or Auth. `core/`, `database/`, and `auth/` are three symmetric, framework-agnostic layers under `backend/` — none of them import from `api/`. Database cannot communicate with core.
 
-### Layer Rules
 
-- **Routers** (`api/routers/`) — thin HTTP surface. Zero business logic. Each endpoint declares Pydantic schemas and contains a single service call. Cookie management is handled by the service layer. See `backend/api/API_GUIDE.md` § 4.
-- **Router helpers** (`api/routers/routers_helpers.py`) — shared `Depends` callables. `require_session` validates the session cookie and returns `user_id`. All routes use it except `/health`, `/auth/google`, and `/auth/logout`.
-- **Services** (`api/services/`) — orchestration, validation, error mapping. Always call `ensure_mailbox_access(mailbox_id, user_id)` before any mailbox-scoped action. Build provider clients exclusively via `build_manager_for_accounts()`. See `backend/api/API_GUIDE.md` § 5–7.
-- **Auth** (`auth/`) — framework-agnostic authentication layer. Uses `AuthError` hierarchy. No imports from `api/`. See `backend/auth/AUTH_GUIDE.md`.
-- **Database** (`database/`) — framework-agnostic PostgreSQL persistence layer. Uses `DatabaseError` hierarchy. No imports from `api/`. See `backend/database/DATABASE.md`.
-- **Core** (`core/email/`) — provider-specific logic, multi-account orchestration. Uses `CoreError` hierarchy. No imports from `api/`. See `backend/core/email/CLIENT_GUIDE.md`.
-
-### Layer Documentation
-
-| Layer | Guide | Key sections |
-|---|---|---|
-| API | `backend/api/API_GUIDE.md` | Endpoints, service conventions, error hierarchy, capture technique, translation maps |
-| Auth | `backend/auth/AUTH_GUIDE.md` | Error hierarchy, capture technique, Google OIDC, provider extension |
-| Database | `backend/database/DATABASE.md` | Error hierarchy, capture technique, contracts, migrations, token security |
-| Core | `backend/core/email/CLIENT_GUIDE.md` | Client contract, error hierarchy, capture technique, provider extension |
-
-### Error Hierarchy — Four Separate Trees
-
-Each layer defines its own error hierarchy. Services translate lower-layer errors to `ApiError` subclasses via mapping tables in `services_helpers.py`:
-
-- **API** (`api/errors/exceptions.py`): `ApiError` → HTTP-facing errors. Mapped to status codes via `_STATUS_MAP`. Full table in `API_GUIDE.md` § 6.
-- **Auth** (`auth/errors/errors.py`): `AuthError` → `AuthSettingsError`, `AuthTokenError` subtree. Translated via `_AUTH_TO_API_MAP`. Full table in `AUTH_GUIDE.md` § 4.
-- **Database** (`database/errors/exceptions.py`): `DatabaseError` → `ConnectionPoolError`, `QueryError`, etc. Translated via `_DB_TO_API_MAP` / `catch_database_errors`. Full table in `DATABASE.md` § Error Handling.
-- **Core** (`core/email/errors.py`): `CoreError` → `EmailError` subtree. Translated via `_CORE_TO_API_MAP`. Full table in `CLIENT_GUIDE.md` § 7.
-
-**Hard rules**: only raise `ApiError` subclasses from `api/services/` — never from routers, `database/`, `auth/`, or `core/`. Core must never import API, auth, or database exceptions. Database must never import API, auth, or core exceptions. Auth must never import API, database, or core exceptions. API must never raise `CoreError`, `AuthError`, or `DatabaseError` directly to the client. Every `try` block in services must include an `except Exception` fallback — see `API_GUIDE.md` § 7 for the full capture technique. Pydantic 422 validation errors are framework-managed.
-
-### Key Identifiers
+### 2.4 Key Identifiers
 
 - `mailbox_id` — groups accounts under a mailbox.
 - `account_id` — unique per account record.
@@ -104,54 +106,30 @@ Each layer defines its own error hierarchy. Services translate lower-layer error
 - `user_id` — UUID identifying an authenticated user (from `users` table).
 - `owner_user_id` — FK on `mailboxes` linking to the owning user (NOT NULL, CASCADE on user delete).
 
-### Environment Variables
-
-| Var | Layer | Default | Purpose |
-|---|---|---|---|
-| `DATABASE_URL` | database | *(required)* | PostgreSQL connection string |
-| `GOOGLE_CLIENT_ID` | auth | *(required)* | Google OAuth client ID for OIDC |
-| `AUTH_SESSION_LIFETIME_DAYS` | auth | `7` | Session duration in days |
-| `AUTH_COOKIE_SECURE` | auth | `false` | HTTPS-only session cookies |
-| `MIA_GMAIL_CREDENTIALS_PATH` | database | *(required)* | Path to Gmail OAuth client JSON |
-| `MIA_OUTLOOK_CREDENTIALS_PATH` | database | *(required)* | Path to Outlook app credentials JSON |
-| `CORS_ALLOWED_ORIGINS` | api | `http://localhost:5173` | Comma-separated CORS origins |
-| `VITE_API_BASE_URL` | frontend | `http://localhost:8000` | Backend URL for frontend |
-
-Missing required env vars must raise `EnvVarError` (api), `SettingsError` (database → translated to `EnvVarError`), or `AuthSettingsError` (auth → translated to `EnvVarError`). The backend loads `backend/.env` via `python-dotenv` (`override=False`). See `DATABASE.md` § Operational Env Vars for database-specific tuning and encryption vars.
-
-### Testing
+### 2.5 Testing
 
 - **Unit tests** (`backend/tests/unit/`) — use `FakeEmailClient` from `tests/shared/email_fakes.py`. Cover service logic, auth settings, error translation.
-- **Integration tests** (`backend/tests/integration/`) — use `FastAPI TestClient`, monkeypatch `build_manager_for_accounts` with fakes, isolate via `isolated_db` (transaction rollback). `require_session` overridden to return a fixed test user_id. Split across `test_endpoints.py`, `test_api_layer_errors.py`, `test_core_error_translation.py`, `test_auth_endpoints.py`.
+- **Integration tests** (`backend/tests/integration/`) — use `FastAPI TestClient`, monkeypatch `build_manager_for_accounts` with fakes, isolate via `isolated_db` (transaction rollback). `require_session` overridden to return a fixed test user_id.
 - Both test layers share `FakeEmailClient` and `build_metadata` via `tests/shared/`.
-- **E2E tests** — NEVER run E2E tests. They require manual execution by the developer.
+- **E2E tests** — NEVER run E2E tests automatically. They require manual execution by the developer.
 
-### Frontend Structure
+### 2.6 Frontend
+
+Stack: React + Vite + TypeScript + Tailwind. Structure:
 
 - `src/api/` — HTTP client, typed endpoints, DTOs.
-- `src/features/`, `src/pages/`, `src/components/` — feature-based React organization.
+- `src/features/`, `src/pages/`, `src/components/` — feature-based organization.
 
-### Docker
+### 2.7 Docker
 
-- `docker-compose.yml` — orchestrates `db` (PostgreSQL 16) and `backend` (port 8000). The frontend service is currently commented out. Backend waits for database via `service_healthy`. OAuth credentials mounted from `./credentials/`.
+`docker-compose.yml` orchestrates `db` (PostgreSQL 16) and `backend` (port 8000). The frontend service is currently commented out. Backend waits for database via `service_healthy`. OAuth credentials mounted from `./credentials/`.
 
-## Extensibility
+### 2.8 Extensibility
 
-- **New email provider**: follow `backend/core/email/CLIENT_GUIDE.md` § 9.
-- **New identity provider**: follow `backend/auth/AUTH_GUIDE.md` § 9.
-- **New API endpoint**: follow `backend/api/API_GUIDE.md` § 10.
+- **New email provider**: follow the Core layer's `*_guide.md` (referenced from `general_core_rules.md`).
+- **New identity provider**: follow the Auth layer's `*_guide.md` (referenced from `general_auth_rules.md`).
+- **New API endpoint**: follow the API layer's `*_guide.md` (referenced from `general_api_rules.md`).
 
-## Style and Code Quality — STRICT
+### 2.9 Document Maintenance
 
-Code must meet a **senior-level standard**: clear, efficient, and readable.
-
-- Python: PEP 8, FastAPI conventions, `from __future__ import annotations` in all modules.
-- TypeScript: ESLint config in `frontend/eslint.config.js`.
-- Identifiers, comments, and docstrings in English.
-- Comments only where they clarify non-obvious logic; avoid noise or redundancy.
-- Explicit error handling with meaningful messages consistent with each layer's error patterns.
-- Preserve the naming conventions and layered architecture described above at all times.
-
-## Document Maintenance
-
-Update this file when architecture layers change, environment variables are added, new providers are introduced, or error mapping changes. Detailed per-layer documentation lives in the layer guides referenced in the Layer Documentation table above.
+Update this section when: architecture layers change, new providers are introduced, commands change, or key identifiers are added. Do not modify Section 1 or the `general_*_rules.md` files.

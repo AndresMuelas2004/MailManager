@@ -226,7 +226,7 @@ Auth:
 - `POST /auth/logout`
 - `DELETE /auth/me`
 
-Detailed endpoint contracts: `backend/api/API_ENDPOINTS.md`
+Detailed endpoint contracts: `backend/api/api_guide.md`
 
 ## Error Response Format
 
@@ -285,16 +285,30 @@ python -m pytest backend/tests/e2e -v -s
 
 Testing docs:
 
-- `backend/tests/unit/UNIT_TESTS.md`
-- `backend/tests/integration/INTEGRATION_TESTS.md`
-- `backend/tests/e2e/E2E_TESTS.md`
+- `backend/tests/unit/unit_guide.md`
+- `backend/tests/integration/integration_guide.md`
+- `backend/tests/e2e/e2e_guide.md`
 
 ## Additional Documentation
 
-- API endpoints: `backend/api/API_ENDPOINTS.md`
-- API layer guide: `backend/api/API_GUIDE.md`
-- Auth layer guide: `backend/auth/AUTH_GUIDE.md`
-- Database package: `backend/database/DATABASE.md`
-- Email client implementation guide: `backend/core/email/CLIENT_GUIDE.md`
+### Layer guides (project-specific)
+
+- API layer guide: `backend/api/api_guide.md`
+- Auth layer guide: `backend/auth/auth_guide.md`
+- Database guide: `backend/database/database_guide.md`
+- Core (email) guide: `backend/core/core_guide.md`
+
+### General rules (architecture standards)
+
+- `backend/api/general_api_rules.md`
+- `backend/auth/general_auth_rules.md`
+- `backend/database/general_database_rules.md`
+- `backend/core/general_core_rules.md`
+- `backend/tests/unit/general_unit_rules.md`
+- `backend/tests/integration/general_integration_rules.md`
+- `backend/tests/e2e/general_e2e_rules.md`
+
+### Other
+
 - Frontend setup: `frontend/README.md`
 - Agent guidance: `CLAUDE.md`
