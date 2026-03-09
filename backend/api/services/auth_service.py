@@ -17,10 +17,10 @@ from auth import (
     verify_google_token,
 )
 
-from database import session_store, user_store
-from api.errors.exceptions import EnvVarError, Unauthorized, UserNotFound
+from database import DatabaseError, session_store, user_store
+from api.errors.exceptions import ApiError, EnvVarError, Unauthorized, UserNotFound
 from api.schemas.auth import AuthResponse, UserOut
-from api.services.services_helpers import catch_database_errors, translate_auth_error
+from api.services.services_helpers import translate_auth_error, translate_database_error
 
 logger = logging.getLogger(__name__)
 
@@ -85,7 +85,7 @@ def google_login(raw_id_token: str, response: Response) -> AuthResponse:
 
     # Only used for new users; the UPSERT returns the existing user_id for returning users.
     user_id = str(uuid4())
-    with catch_database_errors():
+    try:
         user = user_store.upsert({
             "user_id": user_id,
             "google_sub": google_sub,
@@ -93,15 +93,25 @@ def google_login(raw_id_token: str, response: Response) -> AuthResponse:
             "name": id_info.get("name"),
             "avatar_url": id_info.get("picture"),
         })
+    except DatabaseError as exc:
+        raise translate_database_error(exc) from exc
+    except Exception as exc:
+        logger.warning("Unexpected user upsert error (%s): %s", type(exc).__name__, exc)
+        raise ApiError("Failed to upsert user.") from exc
 
     session_id = str(uuid4())
     expires_at = datetime.now(timezone.utc) + timedelta(days=settings.session_lifetime_days)
-    with catch_database_errors():
+    try:
         session_store.create({
             "session_id": session_id,
             "user_id": user["user_id"],
             "expires_at": expires_at.isoformat(),
         })
+    except DatabaseError as exc:
+        raise translate_database_error(exc) from exc
+    except Exception as exc:
+        logger.warning("Unexpected session creation error (%s): %s", type(exc).__name__, exc)
+        raise ApiError("Failed to create session.") from exc
 
     _set_session_cookie(response, session_id, settings)
     _cleanup_expired_sessions()
@@ -116,8 +126,13 @@ def validate_session(session_id: str | None) -> str:
     """
     if not session_id:
         raise Unauthorized("Authentication required.")
-    with catch_database_errors():
+    try:
         session = session_store.get(session_id)
+    except DatabaseError as exc:
+        raise translate_database_error(exc) from exc
+    except Exception as exc:
+        logger.warning("Unexpected session validation error (%s): %s", type(exc).__name__, exc)
+        raise ApiError("Failed to validate session.") from exc
     if session is None:
         raise Unauthorized("Session expired or invalid.")
     return session["user_id"]
@@ -128,8 +143,13 @@ def logout(session_id: str | None, response: Response) -> dict[str, str]:
     Delete the session identified by *session_id* and clear the cookie.
     """
     if session_id:
-        with catch_database_errors():
+        try:
             session_store.delete(session_id)
+        except DatabaseError as exc:
+            raise translate_database_error(exc) from exc
+        except Exception as exc:
+            logger.warning("Unexpected session deletion error (%s): %s", type(exc).__name__, exc)
+            raise ApiError("Failed to delete session.") from exc
     settings = _load_auth_settings()
     _clear_session_cookie(response, settings)
     return {"status": "logged_out"}
@@ -142,8 +162,13 @@ def delete_account(user_id: str, response: Response) -> dict[str, str]:
 
     Raises ``UserNotFound`` when the user does not exist.
     """
-    with catch_database_errors():
+    try:
         deleted = user_store.delete(user_id)
+    except DatabaseError as exc:
+        raise translate_database_error(exc) from exc
+    except Exception as exc:
+        logger.warning("Unexpected user deletion error (%s): %s", type(exc).__name__, exc)
+        raise ApiError("Failed to delete user.") from exc
     if not deleted:
         raise UserNotFound("User not found.", {"user_id": user_id})
     settings = _load_auth_settings()
@@ -165,8 +190,13 @@ def get_current_user(user_id: str) -> UserOut:
 
     Raises ``UserNotFound`` when the user no longer exists.
     """
-    with catch_database_errors():
+    try:
         user = user_store.get_by_id(user_id)
+    except DatabaseError as exc:
+        raise translate_database_error(exc) from exc
+    except Exception as exc:
+        logger.warning("Unexpected user lookup error (%s): %s", type(exc).__name__, exc)
+        raise ApiError("Failed to look up user.") from exc
     if user is None:
         raise UserNotFound("User not found.", {"user_id": user_id})
     return UserOut(**user)

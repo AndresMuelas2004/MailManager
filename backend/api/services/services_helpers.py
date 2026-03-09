@@ -5,7 +5,6 @@ Shared helpers used across service modules.
 from __future__ import annotations
 
 import logging
-from contextlib import contextmanager
 from typing import Any, Iterable
 
 logger = logging.getLogger(__name__)
@@ -212,26 +211,6 @@ def translate_database_error(
     return fallback(str(exc) or "Unexpected database error.", context or {})
 
 
-@contextmanager
-def catch_database_errors(
-    *,
-    fallback: type[ApiError] = ApiError,
-    context: dict[str, Any] | None = None,
-):
-    """
-    Context manager that catches ``DatabaseError`` and re-raises as ``ApiError``.
-    """
-    try:
-        yield
-    except DatabaseError as exc:
-        raise translate_database_error(exc, fallback=fallback, context=context) from exc
-    except Exception as exc:
-        logger.warning("Unexpected database operation error (%s): %s", type(exc).__name__, exc)
-        raise fallback(
-            "Unexpected database operation error.",
-            context or {},
-        ) from exc
-
 
 def translate_connect_error(
     exc: Exception,
@@ -259,8 +238,13 @@ def ensure_mailbox_access(mailbox_id: str, user_id: str) -> dict[str, Any]:
 
     Returns the mailbox record so callers can reuse it without a second fetch.
     """
-    with catch_database_errors():
+    try:
         record = mailbox_store.get(mailbox_id)
+    except DatabaseError as exc:
+        raise translate_database_error(exc) from exc
+    except Exception as exc:
+        logger.warning("Unexpected mailbox lookup error (%s): %s", type(exc).__name__, exc)
+        raise ApiError("Failed to look up mailbox.") from exc
     if record is None:
         raise MailboxNotFound(f"Mailbox '{mailbox_id}' not found.")
     if record.get("owner_user_id") != user_id:
@@ -347,8 +331,13 @@ def load_wrapped_app_credentials(provider: str) -> dict[str, Any]:
     """
     Load app credentials for *provider* and wrap the client_secret as SecretStr.
     """
-    with catch_database_errors():
+    try:
         credentials = load_app_credentials(provider)
+    except DatabaseError as exc:
+        raise translate_database_error(exc) from exc
+    except Exception as exc:
+        logger.warning("Unexpected credentials load error (%s): %s", type(exc).__name__, exc)
+        raise ApiError("Failed to load app credentials.") from exc
     payload = dict(credentials) if isinstance(credentials, dict) else {}
     if "client_secret" in payload:
         payload["client_secret"] = _wrap_secret(payload.get("client_secret"))
@@ -361,8 +350,13 @@ def load_wrapped_account_tokens(
     """
     Load account tokens for *provider* and wrap access/refresh tokens as SecretStr.
     """
-    with catch_database_errors():
+    try:
         token_data = account_store.get_tokens(mailbox_id, account_id, provider)
+    except DatabaseError as exc:
+        raise translate_database_error(exc) from exc
+    except Exception as exc:
+        logger.warning("Unexpected token load error (%s): %s", type(exc).__name__, exc)
+        raise ApiError("Failed to load account tokens.") from exc
     payload = dict(token_data) if isinstance(token_data, dict) else {}
     if "access_token" in payload:
         payload["access_token"] = _wrap_secret(payload.get("access_token"))
@@ -390,8 +384,13 @@ def persist_email_metadata_batch(
         )
         for m in metadata_list
     ]
-    with catch_database_errors():
+    try:
         return email_metadata_store.upsert_batch(account_id, rows)
+    except DatabaseError as exc:
+        raise translate_database_error(exc) from exc
+    except Exception as exc:
+        logger.warning("Unexpected metadata persist error (%s): %s", type(exc).__name__, exc)
+        raise ApiError("Failed to persist email metadata.") from exc
 
 
 def load_sync_cursors(
@@ -400,8 +399,13 @@ def load_sync_cursors(
     """Load the sync cursor for each account, keyed by account label."""
     cursors: dict[str, str | None] = {}
     for label, (mailbox_id, account_id, _provider) in label_lookup.items():
-        with catch_database_errors():
+        try:
             cursors[label] = account_store.get_sync_cursor(mailbox_id, account_id)
+        except DatabaseError as exc:
+            raise translate_database_error(exc) from exc
+        except Exception as exc:
+            logger.warning("Unexpected sync cursor load error (%s): %s", type(exc).__name__, exc)
+            raise ApiError("Failed to load sync cursor.") from exc
     return cursors
 
 
@@ -412,8 +416,13 @@ def delete_email_metadata_batch(
     """Delete email metadata by provider_message_ids. Returns rows deleted."""
     if not message_ids:
         return 0
-    with catch_database_errors():
+    try:
         return email_metadata_store.delete_batch_by_message_ids(account_id, message_ids)
+    except DatabaseError as exc:
+        raise translate_database_error(exc) from exc
+    except Exception as exc:
+        logger.warning("Unexpected metadata delete error (%s): %s", type(exc).__name__, exc)
+        raise ApiError("Failed to delete email metadata.") from exc
 
 
 def update_email_metadata_labels_batch(
@@ -427,11 +436,21 @@ def update_email_metadata_labels_batch(
         (lu.provider_message_id, account_id, lu.is_read, lu.box)
         for lu in label_updates
     ]
-    with catch_database_errors():
+    try:
         return email_metadata_store.update_labels_batch(account_id, rows)
+    except DatabaseError as exc:
+        raise translate_database_error(exc) from exc
+    except Exception as exc:
+        logger.warning("Unexpected metadata labels update error (%s): %s", type(exc).__name__, exc)
+        raise ApiError("Failed to update email metadata labels.") from exc
 
 
 def update_sync_cursor(mailbox_id: str, account_id: str, cursor: str) -> None:
     """Persist the new sync_cursor for an account."""
-    with catch_database_errors():
+    try:
         account_store.update_sync_cursor(mailbox_id, account_id, cursor)
+    except DatabaseError as exc:
+        raise translate_database_error(exc) from exc
+    except Exception as exc:
+        logger.warning("Unexpected sync cursor update error (%s): %s", type(exc).__name__, exc)
+        raise ApiError("Failed to update sync cursor.") from exc

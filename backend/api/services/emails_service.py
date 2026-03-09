@@ -19,7 +19,6 @@ from core.email import CoreError
 from api.schemas.email import AccountSyncDetail, EmailSendRequest, SyncResultOut
 from api.services.services_helpers import (
     build_manager_for_accounts,
-    catch_database_errors,
     delete_email_metadata_batch,
     ensure_mailbox_access,
     load_sync_cursors,
@@ -28,11 +27,12 @@ from api.services.services_helpers import (
     persist_email_metadata_batch,
     raise_on_silent_auth_errors,
     translate_core_error,
+    translate_database_error,
     unwrap_secret,
     update_email_metadata_labels_batch,
     update_sync_cursor,
 )
-from database import account_store
+from database import account_store, DatabaseError
 
 
 def _persist_refreshed_tokens(
@@ -47,8 +47,13 @@ def _persist_refreshed_tokens(
         payload = dict(token_payload or {})
         payload["access_token"] = unwrap_secret(payload.get("access_token"))
         payload["refresh_token"] = unwrap_secret(payload.get("refresh_token"))
-        with catch_database_errors():
+        try:
             account_store.upsert_tokens(mailbox_id, account_id, provider, payload)
+        except DatabaseError as exc:
+            raise translate_database_error(exc) from exc
+        except Exception as exc:
+            logger.warning("Unexpected token refresh persist error (%s): %s", type(exc).__name__, exc)
+            raise ApiError("Failed to persist refreshed tokens.") from exc
 
 
 def _build_auth_context(
@@ -82,8 +87,13 @@ def sync_email_metadata(mailbox_id: str, user_id: str) -> SyncResultOut:
     """Fetch and persist email metadata for all accounts under a mailbox."""
     ensure_mailbox_access(mailbox_id, user_id)
 
-    with catch_database_errors():
+    try:
         accounts = account_store.list_by_mailbox(mailbox_id)
+    except DatabaseError as exc:
+        raise translate_database_error(exc) from exc
+    except Exception as exc:
+        logger.warning("Unexpected account listing error (%s): %s", type(exc).__name__, exc)
+        raise ApiError("Failed to list accounts.") from exc
 
     try:
         auth_payloads, label_lookup = _build_auth_context(accounts, mailbox_id)
@@ -137,8 +147,13 @@ def sync_email_metadata(mailbox_id: str, user_id: str) -> SyncResultOut:
 
 def send_email(mailbox_id: str, payload: EmailSendRequest, user_id: str) -> dict[str, str]:
     ensure_mailbox_access(mailbox_id, user_id)
-    with catch_database_errors():
+    try:
         account = account_store.get(mailbox_id, payload.account_id)
+    except DatabaseError as exc:
+        raise translate_database_error(exc) from exc
+    except Exception as exc:
+        logger.warning("Unexpected account lookup error (%s): %s", type(exc).__name__, exc)
+        raise ApiError("Failed to look up account.") from exc
     if account is None:
         raise AccountNotFound(f"Account '{payload.account_id}' not found.")
 

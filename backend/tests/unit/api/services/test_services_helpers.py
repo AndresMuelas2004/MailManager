@@ -13,14 +13,12 @@ from api.errors.exceptions import (
     AccountMisconfigured,
     AccountNotConnected,
     ApiError,
-    DatabaseQueryError,
     ExternalAPIError,
     Forbidden,
     MailboxNotFound,
 )
 from api.services.services_helpers import (
     build_manager_for_accounts,
-    catch_database_errors,
     ensure_mailbox_access,
     raise_on_silent_auth_errors,
     translate_connect_error,
@@ -92,25 +90,6 @@ class TestBuildManagerUnexpectedException:
             )
             with pytest.raises(AccountMisconfigured, match="Failed to register account"):
                 build_manager_for_accounts([account])
-
-
-# ------------------------------------------------------------------
-# catch_database_errors — except Exception fallback
-# ------------------------------------------------------------------
-
-class TestCatchDatabaseErrorsGenericFallback:
-
-    def test_generic_exception_uses_default_fallback(self):
-        """A non-DatabaseError inside catch_database_errors → default ApiError."""
-        with pytest.raises(ApiError, match="Unexpected database operation error"):
-            with catch_database_errors():
-                raise RuntimeError("unexpected db boom")
-
-    def test_generic_exception_uses_custom_fallback(self):
-        """A non-DatabaseError with fallback=DatabaseQueryError → that type."""
-        with pytest.raises(DatabaseQueryError, match="Unexpected database operation error"):
-            with catch_database_errors(fallback=DatabaseQueryError):
-                raise ValueError("bad value")
 
 
 # ------------------------------------------------------------------

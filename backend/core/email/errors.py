@@ -44,57 +44,57 @@ class EmailProviderConfigError(EmailConfigError):
 
 
 class EmailInvalidExpiryError(EmailConfigError):
-    code = "email_invalid_expiry"
+    code = "email_invalid_expiry_error"
     default_message = "Invalid or unparseable expiry value."
 
 
 class EmailInvalidCredentialsDataError(EmailConfigError):
-    code = "email_invalid_credentials_data"
+    code = "email_invalid_credentials_data_error"
     default_message = "App credentials data is structurally invalid."
 
 
 class EmailInvalidTokenDataError(EmailConfigError):
-    code = "email_invalid_token_data"
+    code = "email_invalid_token_data_error"
     default_message = "Token data is structurally invalid."
 
 
 class EmailMissingAppCredentialsError(EmailConfigError):
-    code = "email_missing_app_credentials"
+    code = "email_missing_app_credentials_error"
     default_message = "Missing app credentials."
 
 
 class EmailDuplicateAccountLabelError(EmailConfigError):
-    code = "email_duplicate_account_label"
+    code = "email_duplicate_account_label_error"
     default_message = "Account label already exists."
 
 
 class EmailAccountNotFoundError(EmailError):
-    code = "email_account_not_found"
+    code = "email_account_not_found_error"
     default_message = "Account not found."
 
 
 class EmailMissingTokenError(EmailAuthError):
-    code = "email_missing_token"
+    code = "email_missing_token_error"
     default_message = "Access token is missing."
 
 
 class EmailMissingRefreshTokenError(EmailAuthError):
-    code = "email_missing_refresh_token"
+    code = "email_missing_refresh_token_error"
     default_message = "Refresh token is missing."
 
 
 class EmailRefreshFailedError(EmailAuthError):
-    code = "email_refresh_failed"
+    code = "email_refresh_failed_error"
     default_message = "Token refresh failed."
 
 
 class EmailNotAuthenticatedError(EmailAuthError):
-    code = "email_not_authenticated"
+    code = "email_not_authenticated_error"
     default_message = "Client is not authenticated."
 
 
 class EmailRecipientsMissingError(EmailError):
-    code = "email_recipients_missing"
+    code = "email_recipients_missing_error"
     default_message = "At least one recipient is required."
 
 

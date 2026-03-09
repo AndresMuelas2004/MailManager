@@ -12,6 +12,7 @@ logger = logging.getLogger(__name__)
 from api.errors.exceptions import (
     AccountConnectAuthError,
     AccountNotFound,
+    ApiError,
 )
 from core.email import CoreError
 from api.schemas.account import (
@@ -22,13 +23,13 @@ from api.schemas.account import (
 )
 from api.services.services_helpers import (
     build_manager_for_accounts,
-    catch_database_errors,
     ensure_mailbox_access,
     load_wrapped_app_credentials,
     translate_connect_error,
+    translate_database_error,
     unwrap_secret,
 )
-from database import account_store
+from database import account_store, DatabaseError
 
 
 def _resolve_display_label(record: dict) -> str:
@@ -48,8 +49,13 @@ def _build_response(record: dict) -> AccountOut:
 
 def list_accounts(mailbox_id: str, user_id: str) -> list[AccountOut]:
     ensure_mailbox_access(mailbox_id, user_id)
-    with catch_database_errors():
+    try:
         accounts = account_store.list_by_mailbox(mailbox_id)
+    except DatabaseError as exc:
+        raise translate_database_error(exc) from exc
+    except Exception as exc:
+        logger.warning("Unexpected list accounts error (%s): %s", type(exc).__name__, exc)
+        raise ApiError("Failed to list accounts.") from exc
     return [_build_response(account) for account in accounts]
 
 
@@ -63,15 +69,25 @@ def create_account(mailbox_id: str, payload: AccountCreate, user_id: str) -> Acc
         "display_label": payload.display_label,
         "config": payload.config,
     }
-    with catch_database_errors():
+    try:
         created = account_store.upsert(record)
+    except DatabaseError as exc:
+        raise translate_database_error(exc) from exc
+    except Exception as exc:
+        logger.warning("Unexpected account creation error (%s): %s", type(exc).__name__, exc)
+        raise ApiError("Failed to create account.") from exc
     return _build_response(created)
 
 
 def get_account(mailbox_id: str, account_id: str, user_id: str) -> AccountOut:
     ensure_mailbox_access(mailbox_id, user_id)
-    with catch_database_errors():
+    try:
         record = account_store.get(mailbox_id, account_id)
+    except DatabaseError as exc:
+        raise translate_database_error(exc) from exc
+    except Exception as exc:
+        logger.warning("Unexpected account lookup error (%s): %s", type(exc).__name__, exc)
+        raise ApiError("Failed to look up account.") from exc
     if record is None:
         raise AccountNotFound(f"Account '{account_id}' not found.")
     return _build_response(record)
@@ -79,8 +95,13 @@ def get_account(mailbox_id: str, account_id: str, user_id: str) -> AccountOut:
 
 def update_account(mailbox_id: str, account_id: str, payload: AccountUpdate, user_id: str) -> AccountOut:
     ensure_mailbox_access(mailbox_id, user_id)
-    with catch_database_errors():
+    try:
         record = account_store.get(mailbox_id, account_id)
+    except DatabaseError as exc:
+        raise translate_database_error(exc) from exc
+    except Exception as exc:
+        logger.warning("Unexpected account lookup error (%s): %s", type(exc).__name__, exc)
+        raise ApiError("Failed to look up account.") from exc
     if record is None:
         raise AccountNotFound(f"Account '{account_id}' not found.")
 
@@ -89,27 +110,47 @@ def update_account(mailbox_id: str, account_id: str, payload: AccountUpdate, use
     if payload.config is not None:
         record["config"] = payload.config
 
-    with catch_database_errors():
+    try:
         updated = account_store.upsert(record)
+    except DatabaseError as exc:
+        raise translate_database_error(exc) from exc
+    except Exception as exc:
+        logger.warning("Unexpected account update error (%s): %s", type(exc).__name__, exc)
+        raise ApiError("Failed to update account.") from exc
     return _build_response(updated)
 
 
 def delete_account(mailbox_id: str, account_id: str, user_id: str) -> dict[str, str]:
     ensure_mailbox_access(mailbox_id, user_id)
-    with catch_database_errors():
+    try:
         record = account_store.get(mailbox_id, account_id)
+    except DatabaseError as exc:
+        raise translate_database_error(exc) from exc
+    except Exception as exc:
+        logger.warning("Unexpected account lookup error (%s): %s", type(exc).__name__, exc)
+        raise ApiError("Failed to look up account.") from exc
     if record is None:
         raise AccountNotFound(f"Account '{account_id}' not found.")
     # ON DELETE CASCADE removes associated tokens automatically.
-    with catch_database_errors():
+    try:
         account_store.delete(mailbox_id, account_id)
+    except DatabaseError as exc:
+        raise translate_database_error(exc) from exc
+    except Exception as exc:
+        logger.warning("Unexpected account deletion error (%s): %s", type(exc).__name__, exc)
+        raise ApiError("Failed to delete account.") from exc
     return {"status": "deleted"}
 
 
 def connect_account(mailbox_id: str, account_id: str, user_id: str) -> AccountConnectResponse:
     ensure_mailbox_access(mailbox_id, user_id)
-    with catch_database_errors():
+    try:
         record = account_store.get(mailbox_id, account_id)
+    except DatabaseError as exc:
+        raise translate_database_error(exc) from exc
+    except Exception as exc:
+        logger.warning("Unexpected account lookup error (%s): %s", type(exc).__name__, exc)
+        raise ApiError("Failed to look up account.") from exc
     if record is None:
         raise AccountNotFound(f"Account '{account_id}' not found.")
 
@@ -134,8 +175,13 @@ def connect_account(mailbox_id: str, account_id: str, user_id: str) -> AccountCo
     token_payload = dict(wrapped_tokens or {})
     token_payload["access_token"] = unwrap_secret(token_payload.get("access_token"))
     token_payload["refresh_token"] = unwrap_secret(token_payload.get("refresh_token"))
-    with catch_database_errors():
+    try:
         account_store.upsert_tokens(mailbox_id, account_id, provider, token_payload)
+    except DatabaseError as exc:
+        raise translate_database_error(exc) from exc
+    except Exception as exc:
+        logger.warning("Unexpected token persist error (%s): %s", type(exc).__name__, exc)
+        raise ApiError("Failed to persist tokens.") from exc
 
     return AccountConnectResponse(
         connected=True,
