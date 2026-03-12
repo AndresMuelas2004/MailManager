@@ -36,15 +36,15 @@ except ModuleNotFoundError:  # pragma: no cover - fallback for offline environme
     Config = None
 
 
-_MAILBOX_URL = "/mailboxes"
+MAILBOX_URL = "/mailboxes"
 
 
 def _setup_mailbox_and_account(client, provider: str = "gmail") -> tuple[str, str]:
     """Create a mailbox + account and return ``(mailbox_id, account_id)``."""
-    mb = client.post(_MAILBOX_URL, json={"display_name": "Test MB"})
+    mb = client.post(MAILBOX_URL, json={"display_name": "Test MB"})
     mailbox_id = mb.json()["mailbox_id"]
     acc = client.post(
-        f"{_MAILBOX_URL}/{mailbox_id}/accounts",
+        f"{MAILBOX_URL}/{mailbox_id}/accounts",
         json={"provider": provider, "display_label": f"test-{provider}"},
     )
     account_id = acc.json()["account_id"]
@@ -183,7 +183,7 @@ def _apply_test_monkeypatches(monkeypatch, build_manager_fn):
         lambda _mb, _acc, _prov: _fake_account_tokens,
     )
 
-    _noop_upsert = lambda *_a, **_kw: None
+    _noop_upsert = lambda *_args, **_kwargs: None
     monkeypatch.setattr(accounts_service.account_store, "upsert_tokens", _noop_upsert)
     monkeypatch.setattr(emails_service.account_store, "upsert_tokens", _noop_upsert)
 

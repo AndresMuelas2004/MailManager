@@ -5,6 +5,7 @@ Shared helper tests (parse_expiry, unwrap/wrap) live in ``test_helpers.py``.
 
 from __future__ import annotations
 
+import base64
 from unittest.mock import MagicMock, call, patch
 
 import pytest
@@ -252,6 +253,28 @@ class TestResolveLabels:
         is_read, box = GmailClient._resolve_labels([])
         assert is_read is True
         assert box == "ALL_MAIL"
+
+    def test_sent(self):
+        is_read, box = GmailClient._resolve_labels(["SENT"])
+        assert is_read is True
+        assert box == "SENT"
+
+    def test_sent_with_inbox(self):
+        is_read, box = GmailClient._resolve_labels(["SENT", "INBOX"])
+        assert is_read is True
+        assert box == "SENT"
+
+    def test_trash_beats_spam(self):
+        _, box = GmailClient._resolve_labels(["TRASH", "SPAM"])
+        assert box == "TRASH"
+
+    def test_trash_beats_sent(self):
+        _, box = GmailClient._resolve_labels(["TRASH", "SENT"])
+        assert box == "TRASH"
+
+    def test_spam_beats_sent(self):
+        _, box = GmailClient._resolve_labels(["SPAM", "SENT"])
+        assert box == "SPAM"
 
 
 # ── _incremental_email_metadata ─────────────────────────────────────
@@ -542,8 +565,8 @@ class TestBootstrapEmailMetadata:
 # ── _execute_batch_get retry logic ──────────────────────────────────
 
 
-class TestExecuteBatchGetRetry:
-    """Tests for the retry logic inside _execute_batch_get."""
+class TestExecuteBatchGetSequentialFallback:
+    """Tests for the sequential fallback when _credentials is None."""
 
     def test_no_failures_no_retry(self, client: GmailClient):
         """All messages succeed on the first attempt — batch.execute() called once."""
@@ -558,6 +581,7 @@ class TestExecuteBatchGetRetry:
         batch_instance.execute.side_effect = fake_execute
 
         client.service = mock_service
+        assert client._credentials is None
         result = client._execute_batch_get(
             ["m1", "m2"], fmt="metadata", error_context="test",
         )
@@ -605,7 +629,6 @@ class TestExecuteBatchGetRetry:
 
         def fake_execute():
             cb = mock_service.new_batch_http_request.call_args[1]["callback"]
-            # Only callback IDs that were added to this batch attempt
             added_ids = [c.kwargs["request_id"] for c in batch_instance.add.call_args_list]
             batch_instance.add.call_args_list.clear()
             for rid in added_ids:
@@ -621,7 +644,6 @@ class TestExecuteBatchGetRetry:
         )
         assert "m1" in result
         assert "m2" not in result
-        # 1 initial + 3 retries = 4 total execute calls
         assert batch_instance.execute.call_count == 4
         assert mock_sleep.call_count == 3
 
@@ -641,8 +663,8 @@ class TestExecuteBatchGetRetry:
         client._execute_batch_get(["m1"], fmt="metadata", error_context="test")
         assert mock_sleep.call_args_list == [call(1.0), call(1.0), call(1.0)]
 
-    def test_batch_execute_exception_still_raises(self, client: GmailClient):
-        """HttpError from batch.execute() raises EmailExternalAPIError without retry."""
+    def test_batch_execute_exception_raises(self, client: GmailClient):
+        """HttpError from batch.execute() raises EmailExternalAPIError."""
         from googleapiclient.errors import HttpError
 
         mock_service = MagicMock()
@@ -655,3 +677,280 @@ class TestExecuteBatchGetRetry:
         client.service = mock_service
         with pytest.raises(EmailExternalAPIError, match="test failed"):
             client._execute_batch_get(["m1"], fmt="metadata", error_context="test")
+
+    def test_empty_message_ids_returns_empty(self, client: GmailClient):
+        """Empty input returns empty dict without calling the service."""
+        client.service = MagicMock()
+        result = client._execute_batch_get([], fmt="metadata", error_context="test")
+        assert result == {}
+
+
+class TestExecuteBatchGetParallel:
+    """Tests for the parallel path (when _credentials is set)."""
+
+    @patch("core.email.gmail_client.build")
+    @patch("core.email.gmail_client.google_auth_httplib2.AuthorizedHttp")
+    def test_success_all_chunks(self, mock_auth_http, mock_build, client: GmailClient):
+        """All messages succeed on first attempt via parallel path."""
+        client.service = MagicMock()
+        client._credentials = MagicMock()
+
+        thread_service = MagicMock()
+        mock_build.return_value = thread_service
+        batch_instance = MagicMock()
+        thread_service.new_batch_http_request.return_value = batch_instance
+
+        def fake_execute():
+            cb = thread_service.new_batch_http_request.call_args[1]["callback"]
+            cb("m1", {"id": "m1"}, None)
+            cb("m2", {"id": "m2"}, None)
+        batch_instance.execute.side_effect = fake_execute
+
+        result = client._execute_batch_get(
+            ["m1", "m2"], fmt="metadata", error_context="test",
+        )
+        assert set(result.keys()) == {"m1", "m2"}
+
+    @patch("core.email.gmail_client.time.sleep")
+    @patch("core.email.gmail_client.build")
+    @patch("core.email.gmail_client.google_auth_httplib2.AuthorizedHttp")
+    def test_partial_failure_retries(self, mock_auth_http, mock_build, mock_sleep, client: GmailClient):
+        """Failed IDs are retried in subsequent attempts."""
+        client.service = MagicMock()
+        client._credentials = MagicMock()
+
+        thread_service = MagicMock()
+        mock_build.return_value = thread_service
+        batch_instance = MagicMock()
+        thread_service.new_batch_http_request.return_value = batch_instance
+
+        call_count = 0
+
+        def fake_execute():
+            nonlocal call_count
+            call_count += 1
+            cb = thread_service.new_batch_http_request.call_args[1]["callback"]
+            if call_count == 1:
+                cb("m1", {"id": "m1"}, None)
+                cb("m2", None, Exception("rate limited"))
+            else:
+                cb("m2", {"id": "m2"}, None)
+        batch_instance.execute.side_effect = fake_execute
+
+        result = client._execute_batch_get(
+            ["m1", "m2"], fmt="metadata", error_context="test",
+        )
+        assert set(result.keys()) == {"m1", "m2"}
+        mock_sleep.assert_called_once_with(1.0)
+
+    @patch("core.email.gmail_client.time.sleep")
+    @patch("core.email.gmail_client.build")
+    @patch("core.email.gmail_client.google_auth_httplib2.AuthorizedHttp")
+    def test_all_retries_exhausted(self, mock_auth_http, mock_build, mock_sleep, client: GmailClient):
+        """A message that always fails is lost after all retries."""
+        client.service = MagicMock()
+        client._credentials = MagicMock()
+
+        thread_service = MagicMock()
+        mock_build.return_value = thread_service
+        batch_instance = MagicMock()
+        thread_service.new_batch_http_request.return_value = batch_instance
+
+        def fake_execute():
+            cb = thread_service.new_batch_http_request.call_args[1]["callback"]
+            added_ids = [c.kwargs["request_id"] for c in batch_instance.add.call_args_list]
+            batch_instance.add.call_args_list.clear()
+            for rid in added_ids:
+                if rid == "m2":
+                    cb(rid, None, Exception("always fails"))
+                else:
+                    cb(rid, {"id": rid}, None)
+        batch_instance.execute.side_effect = fake_execute
+
+        result = client._execute_batch_get(
+            ["m1", "m2"], fmt="metadata", error_context="test",
+        )
+        assert "m1" in result
+        assert "m2" not in result
+        assert mock_sleep.call_count == 3
+
+    @patch("core.email.gmail_client.build")
+    @patch("core.email.gmail_client.google_auth_httplib2.AuthorizedHttp")
+    def test_chunk_level_exception_marks_all_failed(self, mock_auth_http, mock_build, client: GmailClient):
+        """An exception in batch.execute() marks all chunk IDs as failed (no raise)."""
+        client.service = MagicMock()
+        client._credentials = MagicMock()
+
+        thread_service = MagicMock()
+        mock_build.return_value = thread_service
+        batch_instance = MagicMock()
+        thread_service.new_batch_http_request.return_value = batch_instance
+        batch_instance.execute.side_effect = RuntimeError("connection reset")
+
+        result = client._execute_batch_get(
+            ["m1"], fmt="metadata", error_context="test",
+        )
+        assert "m1" not in result
+
+
+class TestExecuteSingleChunk:
+    """Tests for _execute_single_chunk."""
+
+    @patch("core.email.gmail_client.build")
+    @patch("core.email.gmail_client.google_auth_httplib2.AuthorizedHttp")
+    def test_success(self, mock_auth_http, mock_build, client: GmailClient):
+        thread_service = MagicMock()
+        mock_build.return_value = thread_service
+        batch_instance = MagicMock()
+        thread_service.new_batch_http_request.return_value = batch_instance
+
+        def fake_execute():
+            cb = thread_service.new_batch_http_request.call_args[1]["callback"]
+            cb("m1", {"id": "m1"}, None)
+        batch_instance.execute.side_effect = fake_execute
+
+        successes, failed, elapsed = client._execute_single_chunk(
+            ["m1"], 0, fmt="metadata",
+            credentials=MagicMock(),
+        )
+        assert successes == {"m1": {"id": "m1"}}
+        assert failed == []
+        assert elapsed >= 0
+
+    @patch("core.email.gmail_client.build")
+    @patch("core.email.gmail_client.google_auth_httplib2.AuthorizedHttp")
+    def test_partial_failure(self, mock_auth_http, mock_build, client: GmailClient):
+        thread_service = MagicMock()
+        mock_build.return_value = thread_service
+        batch_instance = MagicMock()
+        thread_service.new_batch_http_request.return_value = batch_instance
+
+        def fake_execute():
+            cb = thread_service.new_batch_http_request.call_args[1]["callback"]
+            cb("m1", {"id": "m1"}, None)
+            cb("m2", None, Exception("fail"))
+        batch_instance.execute.side_effect = fake_execute
+
+        successes, failed, elapsed = client._execute_single_chunk(
+            ["m1", "m2"], 0, fmt="metadata",
+            credentials=MagicMock(),
+        )
+        assert successes == {"m1": {"id": "m1"}}
+        assert failed == ["m2"]
+
+    @patch("core.email.gmail_client.build")
+    @patch("core.email.gmail_client.google_auth_httplib2.AuthorizedHttp")
+    def test_total_exception(self, mock_auth_http, mock_build, client: GmailClient):
+        """batch.execute() raises — all IDs marked failed, no exception propagated."""
+        thread_service = MagicMock()
+        mock_build.return_value = thread_service
+        batch_instance = MagicMock()
+        thread_service.new_batch_http_request.return_value = batch_instance
+        batch_instance.execute.side_effect = RuntimeError("connection reset")
+
+        successes, failed, elapsed = client._execute_single_chunk(
+            ["m1", "m2"], 0, fmt="metadata",
+            credentials=MagicMock(),
+        )
+        assert successes == {}
+        assert set(failed) == {"m1", "m2"}
+
+
+# ── authenticate ─────────────────────────────────────────────────
+
+
+class TestAuthenticate:
+    @patch("core.email.gmail_client.build")
+    @patch("core.email.gmail_client.InstalledAppFlow")
+    def test_builds_flow_and_returns_wrapped_tokens(self, mock_flow_cls, mock_build, client: GmailClient):
+        """Happy path: flow runs, service is set, and wrapped tokens are returned."""
+        mock_creds = MagicMock()
+        mock_creds.token = "access-tok"
+        mock_creds.refresh_token = "refresh-tok"
+        mock_creds.expiry = None
+        mock_creds.scopes = ["https://mail.google.com/"]
+
+        mock_flow = MagicMock()
+        mock_flow.run_local_server.return_value = mock_creds
+        mock_flow_cls.from_client_config.return_value = mock_flow
+
+        result = client.authenticate(app_credentials={"client_id": "id", "client_secret": "secret"})
+
+        mock_flow_cls.from_client_config.assert_called_once()
+        mock_flow.run_local_server.assert_called_once_with(port=0)
+        mock_build.assert_called_once_with("gmail", "v1", credentials=mock_creds)
+        assert client.service is not None
+        assert result["access_token"].get_secret_value() == "access-tok"
+        assert result["refresh_token"].get_secret_value() == "refresh-tok"
+
+    @patch("core.email.gmail_client.InstalledAppFlow")
+    def test_flow_build_failure_raises_missing_credentials(self, mock_flow_cls, client: GmailClient):
+        mock_flow_cls.from_client_config.side_effect = ValueError("bad config")
+
+        with pytest.raises(EmailMissingAppCredentialsError, match="failed to build OAuth flow"):
+            client.authenticate(app_credentials={"client_id": "id", "client_secret": "secret"})
+
+    @patch("core.email.gmail_client.InstalledAppFlow")
+    def test_server_os_error_raises_external_api(self, mock_flow_cls, client: GmailClient):
+        mock_flow = MagicMock()
+        mock_flow.run_local_server.side_effect = OSError("port in use")
+        mock_flow_cls.from_client_config.return_value = mock_flow
+
+        with pytest.raises(EmailExternalAPIError, match="local OAuth callback server"):
+            client.authenticate(app_credentials={"client_id": "id", "client_secret": "secret"})
+
+    @patch("core.email.gmail_client.InstalledAppFlow")
+    def test_server_unexpected_error_raises_external_api(self, mock_flow_cls, client: GmailClient):
+        mock_flow = MagicMock()
+        mock_flow.run_local_server.side_effect = RuntimeError("unexpected")
+        mock_flow_cls.from_client_config.return_value = mock_flow
+
+        with pytest.raises(EmailExternalAPIError, match="unexpected OAuth flow error"):
+            client.authenticate(app_credentials={"client_id": "id", "client_secret": "secret"})
+
+
+# ── send_email ───────────────────────────────────────────────────
+
+
+class TestSendEmail:
+    def test_constructs_mime_and_calls_api(self, client: GmailClient):
+        """Verify MIME message structure and API call."""
+        mock_service = MagicMock()
+        client.service = mock_service
+
+        client.send_email("Test Subject", "Test Body", ["a@b.com"])
+
+        send_call = mock_service.users().messages().send
+        send_call.assert_called_once()
+        call_kwargs = send_call.call_args
+        body = call_kwargs[1]["body"] if "body" in (call_kwargs[1] or {}) else call_kwargs[0][0] if call_kwargs[0] else call_kwargs[1].get("body")
+        raw_bytes = base64.urlsafe_b64decode(body["raw"])
+        raw_text = raw_bytes.decode("utf-8")
+        assert "Test Subject" in raw_text
+        assert "Test Body" in raw_text
+        assert "a@b.com" in raw_text
+
+    def test_http_error_raises_external_api(self, client: GmailClient):
+        mock_service = MagicMock()
+        client.service = mock_service
+
+        from googleapiclient.errors import HttpError
+        from unittest.mock import PropertyMock
+
+        mock_resp = MagicMock()
+        mock_resp.status = 403
+        mock_resp.reason = "Forbidden"
+        http_err = HttpError(resp=mock_resp, content=b"forbidden")
+
+        mock_service.users().messages().send().execute.side_effect = http_err
+
+        with pytest.raises(EmailExternalAPIError, match="Gmail failed to send email"):
+            client.send_email("S", "B", ["a@b.com"])
+
+    def test_unexpected_error_raises_external_api(self, client: GmailClient):
+        mock_service = MagicMock()
+        client.service = mock_service
+        mock_service.users().messages().send().execute.side_effect = RuntimeError("boom")
+
+        with pytest.raises(EmailExternalAPIError, match="Gmail unexpected send email error"):
+            client.send_email("S", "B", ["a@b.com"])

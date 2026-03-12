@@ -13,6 +13,8 @@ import pytest
 
 from auth import AuthError, AuthTokenInvalidError, AuthTokenNetworkError
 
+from database.errors.exceptions import DatabaseError, QueryError
+
 from api.errors.exceptions import ApiError, EnvVarError, ExternalAPIError, Unauthorized, UserNotFound
 from api.schemas.auth import AuthResponse, UserOut
 from api.services import auth_service
@@ -268,6 +270,26 @@ def test_google_login_verify_unexpected_error(monkeypatch, mock_response):
         auth_service.google_login("some-token", mock_response)
 
 
+def test_google_login_succeeds_when_cleanup_fails(monkeypatch, mock_response):
+    """_cleanup_expired_sessions failure is silent — login still returns AuthResponse."""
+    class FailingSessionStore(FakeSessionStore):
+        def delete_expired(self):
+            raise RuntimeError("cleanup boom")
+
+    fake_id_info = {"sub": "cleanup-sub", "email": "cleanup@example.com", "name": "Cleanup"}
+    monkeypatch.setattr(
+        auth_service, "verify_google_token",
+        lambda *_a, **_kw: fake_id_info,
+    )
+    monkeypatch.setattr(auth_service, "user_store", FakeUserStore())
+    monkeypatch.setattr(auth_service, "session_store", FailingSessionStore())
+    monkeypatch.setenv("GOOGLE_CLIENT_ID", "cid")
+
+    result = auth_service.google_login("valid-token", mock_response)
+    assert isinstance(result, AuthResponse)
+    assert result.user.email == "cleanup@example.com"
+
+
 def test_google_login_auth_base_error(monkeypatch, mock_response):
     """AuthError base class from verify → translated via _AUTH_TO_API_MAP → ApiError."""
     def _raise(*_a, **_kw):
@@ -278,3 +300,55 @@ def test_google_login_auth_base_error(monkeypatch, mock_response):
 
     with pytest.raises(ApiError, match="generic auth failure"):
         auth_service.google_login("some-token", mock_response)
+
+
+# ------------------------------------------------------------------
+# validate_session — DatabaseError + Exception fallbacks
+# ------------------------------------------------------------------
+
+def test_validate_session_database_error_raises_translated(monkeypatch):
+    """DatabaseError from session_store.get → translated API error."""
+    class FailingSessionStore(FakeSessionStore):
+        def get(self, session_id):
+            raise QueryError("DB fail")
+
+    monkeypatch.setattr(auth_service, "session_store", FailingSessionStore())
+    with pytest.raises(ApiError):
+        auth_service.validate_session("some-session-id")
+
+
+def test_validate_session_unexpected_error_raises_api_error(monkeypatch):
+    """RuntimeError from session_store.get → ApiError."""
+    class FailingSessionStore(FakeSessionStore):
+        def get(self, session_id):
+            raise RuntimeError("unexpected")
+
+    monkeypatch.setattr(auth_service, "session_store", FailingSessionStore())
+    with pytest.raises(ApiError, match="Failed to validate session"):
+        auth_service.validate_session("some-session-id")
+
+
+# ------------------------------------------------------------------
+# get_current_user — DatabaseError + Exception fallbacks
+# ------------------------------------------------------------------
+
+def test_get_current_user_database_error_raises_translated(monkeypatch):
+    """DatabaseError from user_store.get_by_id → translated API error."""
+    class FailingUserStore(FakeUserStore):
+        def get_by_id(self, user_id):
+            raise QueryError("DB fail")
+
+    monkeypatch.setattr(auth_service, "user_store", FailingUserStore())
+    with pytest.raises(ApiError):
+        auth_service.get_current_user("some-user-id")
+
+
+def test_get_current_user_unexpected_error_raises_api_error(monkeypatch):
+    """RuntimeError from user_store.get_by_id → ApiError."""
+    class FailingUserStore(FakeUserStore):
+        def get_by_id(self, user_id):
+            raise RuntimeError("unexpected")
+
+    monkeypatch.setattr(auth_service, "user_store", FailingUserStore())
+    with pytest.raises(ApiError, match="Failed to look up user"):
+        auth_service.get_current_user("some-user-id")

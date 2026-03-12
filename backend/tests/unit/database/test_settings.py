@@ -91,3 +91,61 @@ def test_get_provider_credentials_path_missing_env(monkeypatch):
 def test_get_provider_credentials_path_happy_path(monkeypatch):
     monkeypatch.setenv("MIA_GMAIL_CREDENTIALS_PATH", "/path/to/creds.json")
     assert settings.get_provider_credentials_path("gmail") == "/path/to/creds.json"
+
+
+# ===== get_token_settings =====
+
+
+class TestGetTokenSettings:
+    def test_defaults(self, monkeypatch):
+        monkeypatch.delenv("TOKEN_ENCRYPTION_KEY", raising=False)
+        monkeypatch.delenv("TOKEN_ENCRYPTION_KEY_ID", raising=False)
+        monkeypatch.delenv("TOKEN_PLAINTEXT_FALLBACK_ENABLED", raising=False)
+        ts = settings.get_token_settings()
+        assert ts.encryption_key is None
+        assert ts.encryption_key_id == "v1"
+        assert ts.plaintext_fallback_enabled is True
+
+    def test_custom_values(self, monkeypatch):
+        monkeypatch.setenv("TOKEN_ENCRYPTION_KEY", "my-key")
+        monkeypatch.setenv("TOKEN_ENCRYPTION_KEY_ID", "k42")
+        monkeypatch.setenv("TOKEN_PLAINTEXT_FALLBACK_ENABLED", "false")
+        ts = settings.get_token_settings()
+        assert ts.encryption_key == "my-key"
+        assert ts.encryption_key_id == "k42"
+        assert ts.plaintext_fallback_enabled is False
+
+    def test_strips_whitespace_from_key(self, monkeypatch):
+        monkeypatch.setenv("TOKEN_ENCRYPTION_KEY", "  key  ")
+        monkeypatch.delenv("TOKEN_ENCRYPTION_KEY_ID", raising=False)
+        monkeypatch.delenv("TOKEN_PLAINTEXT_FALLBACK_ENABLED", raising=False)
+        ts = settings.get_token_settings()
+        assert ts.encryption_key == "key"
+
+
+# ===== is_startup_auto_migrate_enabled =====
+
+
+class TestIsStartupAutoMigrateEnabled:
+    def test_default_false(self, monkeypatch):
+        monkeypatch.delenv("DB_AUTO_MIGRATE", raising=False)
+        assert settings.is_startup_auto_migrate_enabled() is False
+
+    def test_enabled(self, monkeypatch):
+        monkeypatch.setenv("DB_AUTO_MIGRATE", "true")
+        assert settings.is_startup_auto_migrate_enabled() is True
+
+
+# ===== get_alembic_ini_path =====
+
+
+class TestGetAlembicIniPath:
+    def test_default_path(self, monkeypatch):
+        monkeypatch.delenv("DB_ALEMBIC_INI_PATH", raising=False)
+        result = settings.get_alembic_ini_path()
+        assert str(result).endswith("database/alembic.ini") or str(result).endswith("database\\alembic.ini")
+
+    def test_custom_path(self, monkeypatch):
+        monkeypatch.setenv("DB_ALEMBIC_INI_PATH", "/custom/alembic.ini")
+        from pathlib import Path
+        assert settings.get_alembic_ini_path() == Path("/custom/alembic.ini")

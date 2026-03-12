@@ -11,6 +11,24 @@ from database.errors.exceptions import ConnectionPoolError, MigrationError
 from tests.shared.database_fakes import FakeCursor
 
 
+def test_warmup_connection_success(monkeypatch):
+    """Happy path: SELECT 1 succeeds without error."""
+    cursor = FakeCursor()
+
+    class _FakeConn:
+        def cursor(self, *a, **kw):
+            return cursor
+
+    @contextlib.contextmanager
+    def _get_connection() -> Iterator[_FakeConn]:
+        yield _FakeConn()
+
+    monkeypatch.setattr(lifecycle_module, "get_connection", _get_connection)
+    lifecycle_module.warmup_connection()  # should not raise
+    assert len(cursor.executed) == 1
+    assert cursor.executed[0][0] == "SELECT 1"
+
+
 def test_warmup_raises_connection_pool_error_on_psycopg2(monkeypatch):
     cursor = FakeCursor(execute_side_effect=psycopg2.OperationalError("connection refused"))
 

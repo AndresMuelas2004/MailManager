@@ -8,6 +8,7 @@ from unittest.mock import MagicMock
 import pytest
 from pydantic import SecretStr
 
+from core.email.errors import EmailInvalidTokenDataError
 from core.email.helpers import (
     http_error_detail,
     parse_expiry,
@@ -132,6 +133,10 @@ class TestUnwrapUserTokens:
         assert result["access_token"] == "at"
         assert result["refresh_token"] == "rt"
 
+    def test_none_returns_empty_dict(self):
+        result = unwrap_user_tokens(None)
+        assert result == {}
+
 
 # ── wrap_account_tokens ─────────────────────────────────────────────
 
@@ -151,3 +156,11 @@ class TestWrapAccountTokens:
         result = wrap_account_tokens(token_data)
         assert isinstance(result["access_token"], SecretStr)
         assert result["refresh_token"] is None
+
+    def test_invalid_input_type_raises_invalid_token_data(self):
+        with pytest.raises(EmailInvalidTokenDataError):
+            wrap_account_tokens(42)
+
+    def test_string_input_raises_invalid_token_data(self):
+        with pytest.raises(EmailInvalidTokenDataError):
+            wrap_account_tokens("not-a-dict")

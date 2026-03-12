@@ -18,7 +18,7 @@ class EmailMetadata:
     subject: str
     received_at: datetime
     is_read: bool
-    box: str  # "ALL_MAIL" | "SPAM" | "TRASH"
+    box: str  # "ALL_MAIL" | "SENT" | "SPAM" | "TRASH"
     account_id: str = ""  # Stamped by the service layer before persistence
 
 
@@ -27,7 +27,7 @@ class LabelUpdate:
     """Partial update carrying only label-derived fields for an existing message."""
     provider_message_id: str
     is_read: bool
-    box: str  # "ALL_MAIL" | "SPAM" | "TRASH"
+    box: str  # "ALL_MAIL" | "SENT" | "SPAM" | "TRASH"
 
 
 @dataclass

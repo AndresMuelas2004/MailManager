@@ -84,6 +84,20 @@ class TestEnsureMailboxAccess:
             result = ensure_mailbox_access("mb-1", "owner-a")
         assert result == fake_record
 
+    def test_database_error_translated(self):
+        """QueryError from mailbox_store.get → DatabaseQueryError."""
+        with patch("api.services.services_helpers.mailbox_store") as mock_store:
+            mock_store.get.side_effect = QueryError("DB fail")
+            with pytest.raises(DatabaseQueryError):
+                ensure_mailbox_access("mb-1", "some-user-id")
+
+    def test_generic_exception_raises_api_error(self):
+        """RuntimeError from mailbox_store.get → ApiError fallback."""
+        with patch("api.services.services_helpers.mailbox_store") as mock_store:
+            mock_store.get.side_effect = RuntimeError("boom")
+            with pytest.raises(ApiError, match="Failed to look up mailbox"):
+                ensure_mailbox_access("mb-1", "some-user-id")
+
 
 # ------------------------------------------------------------------
 # build_manager_for_accounts — except Exception fallback

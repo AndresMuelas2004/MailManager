@@ -46,8 +46,9 @@ Used before fetch/send. Returns `None` if token is still valid (no refresh neede
 ### Box mapping convention
 
 ```
-labelIds contains "SPAM"  → box = "SPAM"
 labelIds contains "TRASH" → box = "TRASH"
+labelIds contains "SPAM"  → box = "SPAM"
+labelIds contains "SENT"  → box = "SENT"
 otherwise                 → box = "ALL_MAIL"
 ```
 
@@ -61,9 +62,19 @@ List message IDs (paginated `messages.list`, `includeSpamTrash=True`) → batch-
 
 When `sync_cursor` is present and valid: paginate history, resolve deletes, filter label changes, batch-fetch metadata for added/changed messages, batch-fetch label updates. Falls back to bootstrap on invalid `historyId`.
 
-### Outlook
+### Outlook metadata sync (Delta Query)
 
-`fetch_email_metadata()` raises `EmailExternalAPIError("Outlook metadata sync not yet implemented.")`. Full implementation is planned for a future iteration.
+Delta queries are **per folder** — Microsoft Graph v1.0 does not support delta at the mailbox level. The client iterates over `_DELTA_FOLDERS` (`inbox`, `sentitems`, `drafts`, `deleteditems`, `junkemail`), issuing `/me/mailFolders/{folder}/messages/delta` for each.
+
+Bootstrap: for each folder, paginate until `@odata.deltaLink`. All messages become upserts. The cursor stored is a JSON object encoding per-folder deltaLinks: `{"v": 1, "folders": {"inbox": "https://...", ...}}`.
+
+Incremental: decode the JSON cursor. For each folder that has a deltaLink, re-issue it. Messages with `@removed` become deletes; all others become upserts. `label_updates` always empty (Graph delta returns full objects for any change, so all modifications go to upserts).
+
+Cursor format and legacy detection: the cursor is a JSON string with `{"v": 1, "folders": {...}}`. If `_decode_folder_cursors` encounters a non-JSON or differently versioned cursor (legacy format from old single-URL approach), it returns `None`, which triggers `EmailExternalAPIError` in `_incremental_email_metadata`, causing fallback to bootstrap.
+
+Folder-to-box mapping: determined by folder name via `_FOLDER_TO_BOX` (`deleteditems`→TRASH, `junkemail`→SPAM, `sentitems`→SENT, all others→ALL_MAIL). No runtime folder ID resolution needed.
+
+Fault tolerance: if a folder fails during bootstrap, it is skipped (logged) and excluded from the cursor. During incremental sync, a failed folder keeps its previous deltaLink in the new cursor. If **all** folders fail during incremental, an error is raised to trigger bootstrap fallback.
 
 ## Extension
 

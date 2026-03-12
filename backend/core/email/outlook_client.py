@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from .email_client import EmailClient, EmailMetadata, SyncResult
+from .email_client import EmailClient, EmailMetadata, LabelUpdate, SyncResult
 from .errors import (
     EmailExternalAPIError,
     EmailMissingAppCredentialsError,
@@ -33,6 +34,19 @@ OUTLOOK_SCOPES = [
 ]
 
 GRAPH_BASE_URL = "https://graph.microsoft.com/v1.0"
+
+logger = logging.getLogger(__name__)
+
+_DELTA_SELECT_FIELDS = "id,conversationId,from,subject,receivedDateTime,isRead"
+_DELTA_PAGE_SIZE = 100
+
+_DELTA_FOLDERS = ("inbox", "sentitems", "drafts", "deleteditems", "junkemail")
+
+_FOLDER_TO_BOX: dict[str, str] = {
+    "deleteditems": "TRASH",
+    "junkemail": "SPAM",
+    "sentitems": "SENT",
+}
 
 
 class OutlookClient(EmailClient):
@@ -115,6 +129,7 @@ class OutlookClient(EmailClient):
             "state": state,
             "code_challenge": code_challenge,
             "code_challenge_method": "S256",
+            "prompt": "select_account",
         }
         auth_url = f"{authorize_url}?{urllib.parse.urlencode(auth_query)}"
 
@@ -318,10 +333,170 @@ class OutlookClient(EmailClient):
         sync_cursor: str | None = None,
         max_total: int = 500,
     ) -> SyncResult:
-        """Outlook metadata sync is not yet implemented."""
+        """Fetch email metadata from Outlook using Microsoft Graph Delta Query."""
         if self._access_token is None:
             raise EmailNotAuthenticatedError("Outlook fetch_email_metadata requires authentication.")
-        raise EmailExternalAPIError("Outlook metadata sync not yet implemented.")
+
+        if sync_cursor is not None:
+            try:
+                return self._incremental_email_metadata(sync_cursor)
+            except EmailExternalAPIError:
+                pass  # Fallback to bootstrap (e.g. expired deltaLink)
+
+        return self._bootstrap_email_metadata(max_total)
+
+    # ------------------------------------------------------------------
+    # Metadata sync — private helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _encode_folder_cursors(folder_cursors: dict[str, str]) -> str:
+        """Serialize per-folder deltaLinks into a JSON cursor string."""
+        return json.dumps({"v": 1, "folders": folder_cursors})
+
+    @staticmethod
+    def _decode_folder_cursors(sync_cursor: str) -> dict[str, str] | None:
+        """Deserialize a JSON cursor string. Returns None if invalid or legacy format."""
+        try:
+            data = json.loads(sync_cursor)
+            if isinstance(data, dict) and data.get("v") == 1 and isinstance(data.get("folders"), dict):
+                return data["folders"]
+        except (json.JSONDecodeError, TypeError, ValueError):
+            pass
+        return None
+
+    @staticmethod
+    def _parse_graph_message(msg: dict[str, Any], box: str) -> EmailMetadata:
+        """Parse a Microsoft Graph message resource into EmailMetadata."""
+        from_obj = msg.get("from") or {}
+        email_address = from_obj.get("emailAddress") or {}
+
+        received_raw = msg.get("receivedDateTime", "")
+        if received_raw:
+            try:
+                received_at = datetime.fromisoformat(received_raw.replace("Z", "+00:00"))
+            except (ValueError, TypeError):
+                received_at = datetime.now(timezone.utc)
+        else:
+            received_at = datetime.now(timezone.utc)
+
+        return EmailMetadata(
+            provider_message_id=msg.get("id", ""),
+            thread_id=msg.get("conversationId") or "",
+            from_email=email_address.get("address") or "",
+            from_name=email_address.get("name") or "",
+            subject=msg.get("subject") or "",
+            received_at=received_at,
+            is_read=msg.get("isRead", False),
+            box=box,
+        )
+
+    def _fetch_folder_delta(
+        self,
+        folder_name: str,
+        url: str,
+        upserts: list[EmailMetadata],
+        deletes: list[str],
+        max_collect: int | None = None,
+    ) -> str:
+        """Paginate a single folder's delta query until deltaLink is obtained.
+
+        Appends parsed messages to *upserts* and removed IDs to *deletes*.
+        When *max_collect* is set, stops collecting messages after the limit
+        but continues paginating to obtain the deltaLink.
+        Returns the deltaLink.
+        """
+        box = _FOLDER_TO_BOX.get(folder_name, "ALL_MAIL")
+        collected_enough = False
+
+        while True:
+            response = self._graph_request("GET", url)
+            if not collected_enough:
+                for msg in response.get("value", []):
+                    if max_collect is not None and len(upserts) >= max_collect:
+                        collected_enough = True
+                        break
+                    if msg.get("@removed"):
+                        msg_id = msg.get("id", "")
+                        if msg_id:
+                            deletes.append(msg_id)
+                    else:
+                        try:
+                            upserts.append(self._parse_graph_message(msg, box))
+                        except Exception:
+                            logger.warning(
+                                "Outlook delta (%s): skipping unparseable message %s",
+                                folder_name,
+                                msg.get("id", "?"),
+                            )
+
+            next_link = response.get("@odata.nextLink")
+            delta_link = response.get("@odata.deltaLink")
+
+            if delta_link:
+                return delta_link
+
+            if not next_link:
+                logger.warning("Outlook delta (%s): response has neither nextLink nor deltaLink", folder_name)
+                return ""
+
+            url = next_link
+
+    def _bootstrap_email_metadata(self, max_total: int) -> SyncResult:
+        """Path 1: Full bootstrap fetch via per-folder delta queries."""
+        upserts: list[EmailMetadata] = []
+        folder_cursors: dict[str, str] = {}
+
+        for folder in _DELTA_FOLDERS:
+            url = (
+                f"{GRAPH_BASE_URL}/me/mailFolders/{folder}/messages/delta"
+                f"?$select={_DELTA_SELECT_FIELDS}&$top={_DELTA_PAGE_SIZE}"
+            )
+            try:
+                delta_link = self._fetch_folder_delta(
+                    folder, url, upserts, [],  # deletes irrelevant during bootstrap
+                    max_collect=max_total,
+                )
+                if delta_link:
+                    folder_cursors[folder] = delta_link
+            except EmailExternalAPIError:
+                logger.warning("Outlook bootstrap: folder '%s' failed, skipping.", folder)
+
+        return SyncResult(
+            upserts=upserts[:max_total],
+            new_cursor=self._encode_folder_cursors(folder_cursors),
+        )
+
+    def _incremental_email_metadata(self, sync_cursor: str) -> SyncResult:
+        """Path 2: Incremental sync via per-folder stored deltaLinks."""
+        folder_cursors = self._decode_folder_cursors(sync_cursor)
+        if folder_cursors is None:
+            raise EmailExternalAPIError("Outlook: invalid or legacy sync cursor, falling back to bootstrap.")
+
+        upserts: list[EmailMetadata] = []
+        deletes: list[str] = []
+        new_cursors: dict[str, str] = {}
+        all_failed = True
+
+        for folder, delta_link in folder_cursors.items():
+            try:
+                new_delta = self._fetch_folder_delta(
+                    folder, delta_link, upserts, deletes,
+                )
+                new_cursors[folder] = new_delta if new_delta else delta_link
+                all_failed = False
+            except EmailExternalAPIError:
+                logger.warning("Outlook incremental: folder '%s' failed, keeping previous cursor.", folder)
+                new_cursors[folder] = delta_link
+
+        if all_failed and folder_cursors:
+            raise EmailExternalAPIError("Outlook: all folder delta queries failed.")
+
+        return SyncResult(
+            upserts=upserts,
+            new_cursor=self._encode_folder_cursors(new_cursors),
+            deletes=deletes,
+        )
 
     def send_email(
         self,

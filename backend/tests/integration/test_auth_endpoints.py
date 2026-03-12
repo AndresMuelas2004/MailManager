@@ -9,14 +9,12 @@ from uuid import uuid4
 
 import pytest
 
-from auth import AuthTokenInvalidError
+from auth import AuthSettingsError, AuthTokenInvalidError, AuthTokenNetworkError, AuthTokenProviderError
 
 from api.routers.routers_helpers import require_session
 from api.services import auth_service
-from tests.integration.conftest import TEST_USER_ID
-
-
-_MAILBOX_URL = "/mailboxes"
+from database import QueryError, session_store
+from tests.integration.conftest import MAILBOX_URL as _MAILBOX_URL, TEST_USER_ID
 
 
 # ------------------------------------------------------------------
@@ -55,6 +53,44 @@ def test_google_login_invalid_token(test_client_base, isolated_db, monkeypatch, 
     monkeypatch.setenv("GOOGLE_CLIENT_ID", "test-client-id")
 
     resp = test_client_base.post("/auth/google", json={"id_token": "bad-token"})
+    assert resp.status_code == 401
+    assert resp.json()["error"]["code"] == "unauthorized"
+
+
+def test_google_login_auth_settings_error(test_client_base, isolated_db, monkeypatch, app):
+    """AuthSettingsError from get_auth_settings -> 500 env_var_error."""
+    def _raise():
+        raise AuthSettingsError("missing GOOGLE_CLIENT_ID")
+
+    monkeypatch.setattr(auth_service, "get_auth_settings", _raise)
+
+    resp = test_client_base.post("/auth/google", json={"id_token": "any-token"})
+    assert resp.status_code == 500
+    assert resp.json()["error"]["code"] == "env_var_error"
+
+
+def test_google_login_network_error(test_client_base, isolated_db, monkeypatch, app):
+    """AuthTokenNetworkError from verify_google_token -> 502 external_api_error."""
+    def _raise(*_a, **_kw):
+        raise AuthTokenNetworkError("connection refused")
+
+    monkeypatch.setattr(auth_service, "verify_google_token", _raise)
+    monkeypatch.setenv("GOOGLE_CLIENT_ID", "test-client-id")
+
+    resp = test_client_base.post("/auth/google", json={"id_token": "any-token"})
+    assert resp.status_code == 502
+    assert resp.json()["error"]["code"] == "external_api_error"
+
+
+def test_google_login_provider_error(test_client_base, isolated_db, monkeypatch, app):
+    """AuthTokenProviderError from verify_google_token -> 401 unauthorized."""
+    def _raise(*_a, **_kw):
+        raise AuthTokenProviderError("provider rejected")
+
+    monkeypatch.setattr(auth_service, "verify_google_token", _raise)
+    monkeypatch.setenv("GOOGLE_CLIENT_ID", "test-client-id")
+
+    resp = test_client_base.post("/auth/google", json={"id_token": "any-token"})
     assert resp.status_code == 401
     assert resp.json()["error"]["code"] == "unauthorized"
 
@@ -140,6 +176,15 @@ def test_get_me_expired_session(test_client_base, isolated_db, app):
             app.dependency_overrides[require_session] = override
 
 
+def test_get_me_user_deleted_returns_not_found(test_client, isolated_db):
+    """GET /auth/me after the user row is deleted → 404 user_not_found."""
+    with isolated_db.cursor() as cur:
+        cur.execute("DELETE FROM users WHERE user_id = %s", (TEST_USER_ID,))
+    resp = test_client.get("/auth/me")
+    assert resp.status_code == 404
+    assert resp.json()["error"]["code"] == "user_not_found"
+
+
 # ------------------------------------------------------------------
 # POST /auth/logout
 # ------------------------------------------------------------------
@@ -164,6 +209,40 @@ def test_logout(test_client_base, isolated_db, monkeypatch, app):
     logout_resp = test_client_base.post("/auth/logout", cookies={"session_id": session_cookie})
     assert logout_resp.status_code == 200
     assert logout_resp.json() == {"status": "logged_out"}
+
+
+def test_logout_database_error(test_client_base, isolated_db, monkeypatch, app):
+    """DB error during session deletion -> 503 database_query_error."""
+    fake_id_info = {
+        "sub": "google-sub-logout-db-error",
+        "email": "logoutdberr@example.com",
+        "name": "Logout DB Error",
+    }
+    monkeypatch.setattr(
+        auth_service, "verify_google_token",
+        lambda *_a, **_kw: fake_id_info,
+    )
+    monkeypatch.setenv("GOOGLE_CLIENT_ID", "test-client-id")
+
+    login_resp = test_client_base.post("/auth/google", json={"id_token": "tok"})
+    assert login_resp.status_code == 200
+    session_cookie = login_resp.cookies.get("session_id")
+
+    def _raise(session_id):
+        raise QueryError("DB fail")
+
+    monkeypatch.setattr(session_store, "delete", _raise)
+    logout_resp = test_client_base.post("/auth/logout", cookies={"session_id": session_cookie})
+    assert logout_resp.status_code == 503
+    assert logout_resp.json()["error"]["code"] == "database_query_error"
+
+
+def test_logout_without_session_cookie(test_client, monkeypatch):
+    """POST /auth/logout without session cookie → 200 (idempotent)."""
+    monkeypatch.setenv("GOOGLE_CLIENT_ID", "test-client-id")
+    resp = test_client.post("/auth/logout")
+    assert resp.status_code == 200
+    assert resp.json() == {"status": "logged_out"}
 
 
 # ------------------------------------------------------------------
@@ -252,6 +331,17 @@ def test_delete_account_success(test_client, isolated_db, monkeypatch):
     with isolated_db.cursor() as cur:
         cur.execute("SELECT 1 FROM mailboxes WHERE owner_user_id = %s", (TEST_USER_ID,))
         assert cur.fetchone() is None
+
+
+def test_get_me_without_session_override_returns_401(test_client, isolated_db, app):
+    """Without the session override, GET /auth/me returns 401."""
+    override = app.dependency_overrides.pop(require_session, None)
+    try:
+        resp = test_client.get("/auth/me")
+        assert resp.status_code == 401
+    finally:
+        if override is not None:
+            app.dependency_overrides[require_session] = override
 
 
 def test_delete_account_user_gone(test_client, isolated_db):

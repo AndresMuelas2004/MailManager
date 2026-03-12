@@ -2,13 +2,17 @@ from __future__ import annotations
 
 import base64
 import logging
+import os
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from email.utils import parseaddr
 from typing import Any
 
 logger = logging.getLogger(__name__)
 
+import google_auth_httplib2
+import httplib2
 from google.auth.exceptions import RefreshError, TransportError
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
@@ -39,6 +43,15 @@ GMAIL_SCOPES = ["https://www.googleapis.com/auth/gmail.modify"]
 _BATCH_SIZE = 100
 _BATCH_MAX_RETRIES = 3
 _BATCH_RETRY_DELAY = 1.0  # seconds
+def _parse_max_workers() -> int:
+    raw = os.environ.get("GMAIL_BATCH_MAX_WORKERS", "5")
+    try:
+        return max(int(raw), 1)
+    except (ValueError, TypeError):
+        logger.warning("Invalid GMAIL_BATCH_MAX_WORKERS=%r, defaulting to 5", raw)
+        return 5
+
+_PARALLEL_MAX_WORKERS = _parse_max_workers()
 
 
 def _log_skipped_messages(
@@ -60,6 +73,7 @@ class GmailClient(EmailClient):
     def __init__(self, account_label: str = "gmail") -> None:
         self._account_label = account_label
         self.service = None
+        self._credentials: Credentials | None = None
 
     def authenticate(
         self,
@@ -89,6 +103,9 @@ class GmailClient(EmailClient):
             raise EmailExternalAPIError(
                 f"Gmail unexpected OAuth flow error ({type(exc).__name__}): {exc}"
             ) from exc
+
+        self._credentials = creds
+        self.service = build("gmail", "v1", credentials=creds)
 
         token_record = {
             "access_token": creds.token,
@@ -163,6 +180,7 @@ class GmailClient(EmailClient):
             raise EmailExternalAPIError(
                 f"Gmail failed to initialize API service ({type(exc).__name__}): {exc}"
             ) from exc
+        self._credentials = creds
         if refreshed:
             token_record = {
                 "access_token": creds.token,
@@ -257,7 +275,71 @@ class GmailClient(EmailClient):
 
         return ids
 
-    def _execute_batch_get(
+    def _execute_single_chunk(
+        self,
+        chunk_ids: list[str],
+        chunk_index: int,
+        *,
+        fmt: str,
+        extra_kwargs: dict[str, Any] | None = None,
+        credentials: Credentials,
+    ) -> tuple[dict[str, dict[str, Any]], list[str], float]:
+        """Execute a single batch.execute() for one chunk of IDs.
+
+        Each call builds its own thread-local HTTP transport and service
+        because httplib2 is not thread-safe. Never raises — chunk-level
+        errors mark all IDs as failed.
+
+        Returns (successes, failed_ids, elapsed_seconds).
+        """
+        t0 = time.perf_counter()
+        successes: dict[str, dict[str, Any]] = {}
+        failed: list[str] = []
+
+        def _callback(
+            request_id: str, response: Any, exception: Any,
+            _s: dict[str, dict[str, Any]] = successes,
+            _f: list[str] = failed,
+        ) -> None:
+            if exception is not None:
+                _f.append(request_id)
+                return
+            _s[request_id] = response
+
+        try:
+            thread_http = google_auth_httplib2.AuthorizedHttp(
+                credentials, http=httplib2.Http(),
+            )
+            thread_service = build("gmail", "v1", http=thread_http)
+
+            batch = thread_service.new_batch_http_request(callback=_callback)
+            for msg_id in chunk_ids:
+                get_kwargs: dict[str, Any] = {
+                    "userId": "me", "id": msg_id, "format": fmt,
+                    **(extra_kwargs or {}),
+                }
+                batch.add(
+                    thread_service.users().messages().get(**get_kwargs),
+                    request_id=msg_id,
+                )
+            batch.execute()
+        except HttpError as exc:
+            status, reason = http_error_detail(exc)
+            logger.warning(
+                "Chunk %d: batch.execute() HttpError (HTTP %s: %s) — all %d IDs marked failed",
+                chunk_index, status, reason, len(chunk_ids),
+            )
+            return {}, list(chunk_ids), time.perf_counter() - t0
+        except Exception as exc:
+            logger.warning(
+                "Chunk %d: batch.execute() %s: %s — all %d IDs marked failed",
+                chunk_index, type(exc).__name__, exc, len(chunk_ids),
+            )
+            return {}, list(chunk_ids), time.perf_counter() - t0
+
+        return successes, failed, time.perf_counter() - t0
+
+    def _execute_batch_get_sequential(
         self,
         message_ids: list[str],
         *,
@@ -265,7 +347,7 @@ class GmailClient(EmailClient):
         error_context: str,
         extra_kwargs: dict[str, Any] | None = None,
     ) -> dict[str, dict[str, Any]]:
-        """Execute a batched messages.get call; returns {msg_id: response}."""
+        """Fallback: sequential batch execution using self.service directly."""
         all_results: dict[str, dict[str, Any]] = {}
 
         for chunk_start in range(0, len(message_ids), _BATCH_SIZE):
@@ -277,7 +359,6 @@ class GmailClient(EmailClient):
             for attempt in range(_BATCH_MAX_RETRIES + 1):
                 failed_in_attempt: list[str] = []
 
-                # Default args: _r (shared, accumulates successes) and _f (per-attempt failures).
                 def _callback(
                     request_id: str, response: Any, exception: Any,
                     _r: dict[str, dict[str, Any]] = chunk_results,
@@ -311,23 +392,13 @@ class GmailClient(EmailClient):
                     ) from exc
 
                 if not failed_in_attempt:
-                    if attempt > 0:
-                        logger.warning(
-                            "Gmail batch: all %d messages recovered (attempt %d/%d)",
-                            len(pending_ids), attempt + 1, _BATCH_MAX_RETRIES + 1,
-                        )
-                    else:
-                        logger.info(
-                            "Gmail batch: %d messages OK (first attempt)",
-                            len(chunk),
-                        )
                     break
 
                 if attempt < _BATCH_MAX_RETRIES:
                     logger.warning(
-                        "Gmail batch: %d/%d messages failed (attempt %d/%d), retrying in %.1fs",
+                        "Gmail batch: %d/%d messages failed (attempt %d/%d), retrying",
                         len(failed_in_attempt), len(pending_ids),
-                        attempt + 1, _BATCH_MAX_RETRIES + 1, _BATCH_RETRY_DELAY,
+                        attempt + 1, _BATCH_MAX_RETRIES + 1,
                     )
                     time.sleep(_BATCH_RETRY_DELAY)
                     pending_ids = failed_in_attempt
@@ -339,6 +410,95 @@ class GmailClient(EmailClient):
                     )
 
             all_results.update(chunk_results)
+
+        return all_results
+
+    def _execute_batch_get(
+        self,
+        message_ids: list[str],
+        *,
+        fmt: str,
+        error_context: str,
+        extra_kwargs: dict[str, Any] | None = None,
+    ) -> dict[str, dict[str, Any]]:
+        """Execute a batched messages.get call; returns {msg_id: response}.
+
+        When credentials are available, chunks run in parallel via
+        ThreadPoolExecutor. Falls back to sequential execution otherwise.
+        """
+        if not message_ids:
+            return {}
+
+        if self._credentials is None:
+            return self._execute_batch_get_sequential(
+                message_ids, fmt=fmt, error_context=error_context,
+                extra_kwargs=extra_kwargs,
+            )
+
+        all_results: dict[str, dict[str, Any]] = {}
+        chunks: list[list[str]] = [
+            message_ids[i:i + _BATCH_SIZE]
+            for i in range(0, len(message_ids), _BATCH_SIZE)
+        ]
+        num_chunks = len(chunks)
+        workers = min(_PARALLEL_MAX_WORKERS, num_chunks)
+
+        pending_per_chunk: dict[int, list[str]] = {
+            i: list(chunk) for i, chunk in enumerate(chunks)
+        }
+        creds = self._credentials
+
+        logger.info(
+            "Gmail parallel batch: %d chunk(s), %d worker(s), %d total IDs",
+            num_chunks, workers, len(message_ids),
+        )
+
+        for attempt in range(_BATCH_MAX_RETRIES + 1):
+            active_chunks = {
+                i: ids for i, ids in pending_per_chunk.items() if ids
+            }
+            if not active_chunks:
+                break
+
+            if attempt > 0:
+                logger.warning(
+                    "Gmail parallel batch: retry %d/%d — %d IDs pending across %d chunk(s)",
+                    attempt, _BATCH_MAX_RETRIES,
+                    sum(len(ids) for ids in active_chunks.values()),
+                    len(active_chunks),
+                )
+                time.sleep(_BATCH_RETRY_DELAY)
+
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                futures = {
+                    pool.submit(
+                        self._execute_single_chunk,
+                        ids, chunk_idx,
+                        fmt=fmt,
+                        extra_kwargs=extra_kwargs, credentials=creds,
+                    ): chunk_idx
+                    for chunk_idx, ids in active_chunks.items()
+                }
+                for future in as_completed(futures):
+                    chunk_idx = futures[future]
+                    successes, failed, _elapsed = future.result()
+                    all_results.update(successes)
+                    pending_per_chunk[chunk_idx] = failed
+
+            total_pending = sum(len(ids) for ids in pending_per_chunk.values())
+            if total_pending == 0:
+                break
+
+            if attempt == _BATCH_MAX_RETRIES:
+                lost_ids = [
+                    msg_id
+                    for ids in pending_per_chunk.values()
+                    for msg_id in ids
+                ]
+                logger.warning(
+                    "Gmail parallel batch: %d messages lost after %d attempts: %s",
+                    len(lost_ids), _BATCH_MAX_RETRIES + 1, lost_ids[:10],
+                )
 
         return all_results
 
@@ -369,10 +529,12 @@ class GmailClient(EmailClient):
         """Map Gmail label IDs to (is_read, box)."""
         labels = set(label_ids)
         is_read = "UNREAD" not in labels
-        if "SPAM" in labels:
-            box = "SPAM"
-        elif "TRASH" in labels:
+        if "TRASH" in labels:
             box = "TRASH"
+        elif "SPAM" in labels:
+            box = "SPAM"
+        elif "SENT" in labels:
+            box = "SENT"
         else:
             box = "ALL_MAIL"
         return is_read, box

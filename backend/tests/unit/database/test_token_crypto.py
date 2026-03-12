@@ -36,3 +36,42 @@ def test_decrypt_raises_token_decrypt_error_on_invalid_data(monkeypatch):
 
     with pytest.raises(TokenDecryptError, match="Failed to decrypt account token"):
         token_crypto.decrypt_token("not-valid-encrypted-data")
+
+
+# ===== get_active_key_id =====
+
+
+def test_get_active_key_id_returns_configured(monkeypatch):
+    monkeypatch.setenv("TOKEN_ENCRYPTION_KEY_ID", "k42")
+    assert token_crypto.get_active_key_id() == "k42"
+
+
+def test_get_active_key_id_default_v1(monkeypatch):
+    monkeypatch.delenv("TOKEN_ENCRYPTION_KEY_ID", raising=False)
+    assert token_crypto.get_active_key_id() == "v1"
+
+
+# ===== is_plaintext_fallback_enabled =====
+
+
+def test_is_plaintext_fallback_enabled_true(monkeypatch):
+    monkeypatch.setenv("TOKEN_PLAINTEXT_FALLBACK_ENABLED", "true")
+    assert token_crypto.is_plaintext_fallback_enabled() is True
+
+
+def test_is_plaintext_fallback_enabled_false(monkeypatch):
+    monkeypatch.setenv("TOKEN_PLAINTEXT_FALLBACK_ENABLED", "false")
+    assert token_crypto.is_plaintext_fallback_enabled() is False
+
+
+# ===== None passthrough =====
+
+
+def test_encrypt_token_none_returns_none(monkeypatch):
+    monkeypatch.setenv("TOKEN_ENCRYPTION_KEY", Fernet.generate_key().decode("utf-8"))
+    assert token_crypto.encrypt_token(None) is None
+
+
+def test_decrypt_token_none_returns_none(monkeypatch):
+    monkeypatch.setenv("TOKEN_ENCRYPTION_KEY", Fernet.generate_key().decode("utf-8"))
+    assert token_crypto.decrypt_token(None) is None

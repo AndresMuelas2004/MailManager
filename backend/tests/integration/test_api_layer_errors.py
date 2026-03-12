@@ -11,10 +11,19 @@ from __future__ import annotations
 from fastapi.testclient import TestClient
 
 from api.services import emails_service
-from database import account_store, mailbox_store, ConnectionPoolError, QueryError
-
-
-_MAILBOX_URL = "/mailboxes"
+from database import (
+    account_store,
+    mailbox_store,
+    ConnectionPoolError,
+    CredentialReadError,
+    MigrationError,
+    QueryError,
+    SettingsError,
+    TokenDecryptError,
+    TokenValidationError,
+    UnknownProviderError,
+)
+from tests.integration.conftest import MAILBOX_URL as _MAILBOX_URL
 
 
 # ==================================================================
@@ -70,6 +79,27 @@ def test_send_missing_mailbox(test_client):
             "recipients": ["a@b.com"],
         },
     )
+    assert resp.status_code == 404
+    assert resp.json()["error"]["code"] == "mailbox_not_found"
+
+
+def test_get_account_missing_mailbox(test_client):
+    resp = test_client.get(f"{_MAILBOX_URL}/nonexistent/accounts/fake-id")
+    assert resp.status_code == 404
+    assert resp.json()["error"]["code"] == "mailbox_not_found"
+
+
+def test_update_account_missing_mailbox(test_client):
+    resp = test_client.patch(
+        f"{_MAILBOX_URL}/nonexistent/accounts/fake-id",
+        json={"display_label": "x"},
+    )
+    assert resp.status_code == 404
+    assert resp.json()["error"]["code"] == "mailbox_not_found"
+
+
+def test_delete_account_missing_mailbox(test_client):
+    resp = test_client.delete(f"{_MAILBOX_URL}/nonexistent/accounts/fake-id")
     assert resp.status_code == 404
     assert resp.json()["error"]["code"] == "mailbox_not_found"
 
@@ -243,6 +273,48 @@ def test_delete_mailbox_database_query_error(test_client, monkeypatch):
     assert resp.json()["error"]["code"] == "database_query_error"
 
 
+def test_list_mailboxes_migration_error(test_client, monkeypatch):
+    monkeypatch.setattr(mailbox_store, "list_by_owner", lambda uid: (_ for _ in ()).throw(MigrationError("fail")))
+    resp = test_client.get(_MAILBOX_URL)
+    assert resp.status_code == 500
+    assert resp.json()["error"]["code"] == "database_migration_error"
+
+
+def test_list_mailboxes_settings_error(test_client, monkeypatch):
+    monkeypatch.setattr(mailbox_store, "list_by_owner", lambda uid: (_ for _ in ()).throw(SettingsError("fail")))
+    resp = test_client.get(_MAILBOX_URL)
+    assert resp.status_code == 500
+    assert resp.json()["error"]["code"] == "env_var_error"
+
+
+def test_list_mailboxes_token_decrypt_error(test_client, monkeypatch):
+    monkeypatch.setattr(mailbox_store, "list_by_owner", lambda uid: (_ for _ in ()).throw(TokenDecryptError("fail")))
+    resp = test_client.get(_MAILBOX_URL)
+    assert resp.status_code == 500
+    assert resp.json()["error"]["code"] == "token_decryption_error"
+
+
+def test_list_mailboxes_token_validation_error(test_client, monkeypatch):
+    monkeypatch.setattr(mailbox_store, "list_by_owner", lambda uid: (_ for _ in ()).throw(TokenValidationError("fail")))
+    resp = test_client.get(_MAILBOX_URL)
+    assert resp.status_code == 500
+    assert resp.json()["error"]["code"] == "token_integrity_error"
+
+
+def test_list_mailboxes_credential_read_error(test_client, monkeypatch):
+    monkeypatch.setattr(mailbox_store, "list_by_owner", lambda uid: (_ for _ in ()).throw(CredentialReadError("fail")))
+    resp = test_client.get(_MAILBOX_URL)
+    assert resp.status_code == 500
+    assert resp.json()["error"]["code"] == "credential_file_error"
+
+
+def test_list_mailboxes_unknown_provider_error(test_client, monkeypatch):
+    monkeypatch.setattr(mailbox_store, "list_by_owner", lambda uid: (_ for _ in ()).throw(UnknownProviderError("fail")))
+    resp = test_client.get(_MAILBOX_URL)
+    assert resp.status_code == 400
+    assert resp.json()["error"]["code"] == "account_misconfigured"
+
+
 # ==================================================================
 # Additional 422 validation
 # ==================================================================
@@ -256,6 +328,6 @@ def test_update_account_empty_display_label(test_client, setup_mailbox_and_accou
     assert resp.status_code == 422
 
 
-def test_google_login_empty_id_token(test_client):
-    resp = test_client.post("/auth/google", json={"id_token": ""})
+def test_google_login_empty_id_token(test_client_base):
+    resp = test_client_base.post("/auth/google", json={"id_token": ""})
     assert resp.status_code == 422

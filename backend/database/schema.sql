@@ -65,3 +65,26 @@ CREATE INDEX IF NOT EXISTS idx_sessions_user_id
 
 CREATE INDEX IF NOT EXISTS idx_sessions_expires_at
     ON sessions(expires_at);
+
+-- ---------- EMAIL METADATA ----------
+
+CREATE TABLE IF NOT EXISTS email_metadata (
+    provider_message_id  VARCHAR(255) NOT NULL,
+    account_id           UUID         NOT NULL
+                         REFERENCES accounts(account_id) ON DELETE CASCADE,
+    thread_id            VARCHAR(255),
+    from_email           VARCHAR(320) NOT NULL,
+    from_name            VARCHAR(200) DEFAULT '',
+    subject              TEXT         NOT NULL DEFAULT '',
+    received_at          TIMESTAMPTZ  NOT NULL,
+    is_read              BOOLEAN      NOT NULL DEFAULT FALSE,
+    box                  VARCHAR(20)  NOT NULL DEFAULT 'ALL_MAIL'
+                         CHECK (box IN ('ALL_MAIL', 'SENT', 'SPAM', 'TRASH')),
+    PRIMARY KEY (provider_message_id, account_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_email_metadata_account_id
+    ON email_metadata(account_id);
+
+CREATE INDEX IF NOT EXISTS idx_email_metadata_received_at
+    ON email_metadata(received_at DESC);

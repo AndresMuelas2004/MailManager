@@ -11,8 +11,7 @@ Error-path tests live in ``test_api_layer_errors.py`` and
 
 from __future__ import annotations
 
-
-_MAILBOX_URL = "/mailboxes"
+from tests.integration.conftest import MAILBOX_URL as _MAILBOX_URL
 
 
 # ------------------------------------------------------------------
@@ -128,15 +127,32 @@ def test_sync_email_metadata(test_client, setup_mailbox_and_account):
     assert resp.status_code == 200
     data = resp.json()
     assert isinstance(data["total_synced"], int)
-    assert data["total_synced"] >= 0
+    assert data["total_synced"] == 3
     assert isinstance(data["accounts"], list)
     assert len(data["accounts"]) == 1
     detail = data["accounts"][0]
     assert "account_id" in detail
     assert "provider" in detail
     assert isinstance(detail["emails_synced"], int)
-    assert detail["emails_synced"] >= 0
+    assert detail["emails_synced"] == 3
     assert data["total_synced"] == detail["emails_synced"]
+
+
+def test_sync_email_metadata_persists_to_db(test_client, setup_mailbox_and_account, isolated_db):
+    mid, _ = setup_mailbox_and_account(test_client)
+    resp = test_client.post(f"{_MAILBOX_URL}/{mid}/emails/sync-metadata")
+    assert resp.status_code == 200
+    total_synced = resp.json()["total_synced"]
+    assert total_synced > 0
+
+    with isolated_db.cursor() as cur:
+        cur.execute(
+            "SELECT count(*) FROM email_metadata WHERE account_id IN "
+            "(SELECT account_id FROM accounts WHERE mailbox_id = %s::uuid)",
+            (mid,),
+        )
+        row_count = cur.fetchone()[0]
+    assert row_count == total_synced
 
 
 def test_send_email(test_client, setup_mailbox_and_account):

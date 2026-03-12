@@ -32,7 +32,7 @@ from core.email import (
 )
 
 
-_MAILBOX_URL = "/mailboxes"
+from tests.integration.conftest import MAILBOX_URL as _MAILBOX_URL
 
 
 # ==================================================================
@@ -291,6 +291,7 @@ def test_send_generic_exception_fallback(failing_test_client, setup_mailbox_and_
 @pytest.mark.parametrize(
     "failing_test_client, expected_status, expected_code",
     [
+        ({"send_exc": EmailAuthError("auth fail")}, 409, "account_not_connected"),
         ({"send_exc": EmailMissingRefreshTokenError("no RT")}, 409, "account_not_connected"),
         ({"send_exc": EmailRefreshFailedError("refresh fail")}, 409, "account_not_connected"),
         ({"send_exc": EmailInvalidExpiryError("bad expiry")}, 400, "account_misconfigured"),
