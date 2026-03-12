@@ -10,7 +10,15 @@
 
 ### Coverage targets
 
-Unit tests cover: `core/email` (clients, manager, helpers, errors), `database` (settings, token crypto, repositories, credentials, connection, lifecycle), `api/services` (auth, emails, error translation, helpers), and `auth` (settings).
+Unit tests cover: `core/email` (clients, manager, helpers, errors), `database` (settings, token crypto, repositories, credentials, connection, lifecycle), `api/services` (auth, emails, accounts, mailboxes, error translation, helpers), and `auth` (settings).
+
+### Service test pattern: Fake stores with monkeypatch
+
+Tests for service modules (`test_accounts_service.py`, `test_mailboxes_service.py`, `test_auth_service.py`) use inline Fake store classes (e.g. `FakeAccountStore`, `FakeMailboxStore`) combined with `monkeypatch.setattr` to replace the real store module attributes. This avoids database access entirely and allows precise control over success/failure paths. The pattern:
+
+1. Define a `FakeStore` class with the same method signatures as the real store.
+2. Define a `FakeStoreRaising` variant that raises a configurable exception on every method (optionally allowing some methods to succeed).
+3. Use `monkeypatch.setattr(service_module, "store_name", FakeStore(...))` in each test.
 
 ### Database fakes
 

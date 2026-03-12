@@ -29,3 +29,11 @@ finally:
 ```
 
 The `finally` block is essential — without it, a test failure would leave the override removed, breaking all subsequent tests.
+
+### `translate_database_error` coverage via monkeypatched stores
+
+Integration tests for database error translation (`test_api_layer_errors.py`) monkeypatch specific store methods (e.g. `mailbox_store.list_by_owner`, `account_store.upsert`) to raise `QueryError` or `ConnectionPoolError` after initial setup succeeds. This verifies the full path from store failure through `translate_database_error` to the HTTP response.
+
+### Missing claims tests for Google login
+
+`test_auth_endpoints.py` includes integration tests verifying that Google login correctly rejects tokens missing the `sub` or `email` claims with a 401 response. These complement the unit-level claim checks in `test_auth_service.py`.

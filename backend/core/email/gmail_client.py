@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import logging
+import time
 from datetime import datetime, timezone
 from email.utils import parseaddr
 from typing import Any
@@ -36,6 +37,18 @@ from .helpers import (
 GMAIL_SCOPES = ["https://www.googleapis.com/auth/gmail.modify"]
 
 _BATCH_SIZE = 100
+_BATCH_MAX_RETRIES = 3
+_BATCH_RETRY_DELAY = 1.0  # seconds
+
+
+def _log_skipped_messages(
+    operation: str, skipped_ids: list[str], message_ids: list[str],
+) -> None:
+    if skipped_ids:
+        logger.warning(
+            "Gmail %s: %d/%d messages could not be fetched: %s",
+            operation, len(skipped_ids), len(message_ids), skipped_ids[:10],
+        )
 
 
 class GmailClient(EmailClient):
@@ -258,37 +271,72 @@ class GmailClient(EmailClient):
         for chunk_start in range(0, len(message_ids), _BATCH_SIZE):
             chunk = message_ids[chunk_start:chunk_start + _BATCH_SIZE]
             chunk_results: dict[str, dict[str, Any]] = {}
+            pending_ids = list(chunk)
+            resolved_extra = extra_kwargs or {}
 
-            def _callback(
-                request_id: str, response: Any, exception: Any,
-                _r: dict[str, dict[str, Any]] = chunk_results,
-            ) -> None:
-                if exception is not None:
-                    logger.warning("Gmail batch: message %s failed: %s", request_id, exception)
-                    return
-                _r[request_id] = response
+            for attempt in range(_BATCH_MAX_RETRIES + 1):
+                failed_in_attempt: list[str] = []
 
-            try:
-                batch = self.service.new_batch_http_request(callback=_callback)
-                for msg_id in chunk:
-                    get_kwargs: dict[str, Any] = {
-                        "userId": "me", "id": msg_id, "format": fmt,
-                        **(extra_kwargs or {}),
-                    }
-                    batch.add(
-                        self.service.users().messages().get(**get_kwargs),
-                        request_id=msg_id,
+                # Default args: _r (shared, accumulates successes) and _f (per-attempt failures).
+                def _callback(
+                    request_id: str, response: Any, exception: Any,
+                    _r: dict[str, dict[str, Any]] = chunk_results,
+                    _f: list[str] = failed_in_attempt,
+                ) -> None:
+                    if exception is not None:
+                        _f.append(request_id)
+                        return
+                    _r[request_id] = response
+
+                try:
+                    batch = self.service.new_batch_http_request(callback=_callback)
+                    for msg_id in pending_ids:
+                        get_kwargs: dict[str, Any] = {
+                            "userId": "me", "id": msg_id, "format": fmt,
+                            **resolved_extra,
+                        }
+                        batch.add(
+                            self.service.users().messages().get(**get_kwargs),
+                            request_id=msg_id,
+                        )
+                    batch.execute()
+                except HttpError as exc:
+                    status, reason = http_error_detail(exc)
+                    raise EmailExternalAPIError(
+                        f"Gmail {error_context} failed (HTTP {status}: {reason})."
+                    ) from exc
+                except Exception as exc:
+                    raise EmailExternalAPIError(
+                        f"Gmail unexpected {error_context} error ({type(exc).__name__}): {exc}"
+                    ) from exc
+
+                if not failed_in_attempt:
+                    if attempt > 0:
+                        logger.warning(
+                            "Gmail batch: all %d messages recovered (attempt %d/%d)",
+                            len(pending_ids), attempt + 1, _BATCH_MAX_RETRIES + 1,
+                        )
+                    else:
+                        logger.info(
+                            "Gmail batch: %d messages OK (first attempt)",
+                            len(chunk),
+                        )
+                    break
+
+                if attempt < _BATCH_MAX_RETRIES:
+                    logger.warning(
+                        "Gmail batch: %d/%d messages failed (attempt %d/%d), retrying in %.1fs",
+                        len(failed_in_attempt), len(pending_ids),
+                        attempt + 1, _BATCH_MAX_RETRIES + 1, _BATCH_RETRY_DELAY,
                     )
-                batch.execute()
-            except HttpError as exc:
-                status, reason = http_error_detail(exc)
-                raise EmailExternalAPIError(
-                    f"Gmail {error_context} failed (HTTP {status}: {reason})."
-                ) from exc
-            except Exception as exc:
-                raise EmailExternalAPIError(
-                    f"Gmail unexpected {error_context} error ({type(exc).__name__}): {exc}"
-                ) from exc
+                    time.sleep(_BATCH_RETRY_DELAY)
+                    pending_ids = failed_in_attempt
+                else:
+                    logger.warning(
+                        "Gmail batch: %d messages lost after %d attempts: %s",
+                        len(failed_in_attempt), _BATCH_MAX_RETRIES + 1,
+                        failed_in_attempt[:10],
+                    )
 
             all_results.update(chunk_results)
 
@@ -303,14 +351,17 @@ class GmailClient(EmailClient):
             extra_kwargs={"metadataHeaders": ["From", "Subject"]},
         )
         results: list[EmailMetadata] = []
+        skipped_ids: list[str] = []
         for msg_id in message_ids:
             msg = raw.get(msg_id)
             if msg is None:
+                skipped_ids.append(msg_id)
                 continue
             try:
                 results.append(self._parse_metadata_response(msg))
             except Exception:
-                logger.warning("Gmail batch: skipping malformed message %s", msg_id)
+                skipped_ids.append(msg_id)
+        _log_skipped_messages("metadata sync", skipped_ids, message_ids)
         return results
 
     @staticmethod
@@ -436,20 +487,18 @@ class GmailClient(EmailClient):
             if not page_token:
                 break
 
-        # Step 2 — Resolve pending deletes: probe .get() for each
+        # Step 2 — Resolve pending deletes: batch probe in groups of 100
+        probe_ids = list(pending_delete_ids - need_get_ids)
         confirmed_deletes: list[str] = []
-        for msg_id in pending_delete_ids:
-            if msg_id in need_get_ids:
-                continue
-            try:
-                self.service.users().messages().get(
-                    userId="me", id=msg_id, format="minimal",
-                ).execute()
-                need_get_ids.add(msg_id)
-            except HttpError:
-                confirmed_deletes.append(msg_id)
-            except Exception:
-                confirmed_deletes.append(msg_id)
+        if probe_ids:
+            raw = self._execute_batch_get(
+                probe_ids, fmt="minimal", error_context="delete probe",
+            )
+            for msg_id in probe_ids:
+                if msg_id in raw:
+                    need_get_ids.add(msg_id)
+                else:
+                    confirmed_deletes.append(msg_id)
 
         # Step 3 — Filter label changes: exclude messages already in get/delete
         label_only_ids = label_change_ids - need_get_ids - set(confirmed_deletes)
@@ -479,9 +528,11 @@ class GmailClient(EmailClient):
             error_context="batch label fetch",
         )
         results: list[LabelUpdate] = []
+        skipped_ids: list[str] = []
         for msg_id in message_ids:
             msg = raw.get(msg_id)
             if msg is None:
+                skipped_ids.append(msg_id)
                 continue
             is_read, box = self._resolve_labels(msg.get("labelIds") or [])
             results.append(LabelUpdate(
@@ -489,6 +540,7 @@ class GmailClient(EmailClient):
                 is_read=is_read,
                 box=box,
             ))
+        _log_skipped_messages("label sync", skipped_ids, message_ids)
         return results
 
     # ------------------------------------------------------------------

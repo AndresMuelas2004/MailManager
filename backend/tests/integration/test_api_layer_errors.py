@@ -11,6 +11,7 @@ from __future__ import annotations
 from fastapi.testclient import TestClient
 
 from api.services import emails_service
+from database import account_store, mailbox_store, ConnectionPoolError, QueryError
 
 
 _MAILBOX_URL = "/mailboxes"
@@ -198,3 +199,63 @@ def test_unexpected_runtime_error_returns_500(test_client, setup_mailbox_and_acc
         resp = client.post(f"{_MAILBOX_URL}/{mid}/emails/sync-metadata")
     assert resp.status_code == 500
     assert resp.json()["error"]["code"] == "api_error"
+
+
+# ==================================================================
+# DatabaseError translation — monkeypatched store failures
+# ==================================================================
+
+def test_list_mailboxes_database_query_error(test_client, monkeypatch):
+    def _raise(uid):
+        raise QueryError("DB fail")
+
+    monkeypatch.setattr(mailbox_store, "list_by_owner", _raise)
+    resp = test_client.get(_MAILBOX_URL)
+    assert resp.status_code == 503
+    assert resp.json()["error"]["code"] == "database_query_error"
+
+
+def test_create_account_database_connection_error(test_client, setup_mailbox_and_account, monkeypatch):
+    mid, _ = setup_mailbox_and_account(test_client)
+
+    def _raise(rec):
+        raise ConnectionPoolError("Pool exhausted")
+
+    monkeypatch.setattr(account_store, "upsert", _raise)
+    resp = test_client.post(
+        f"{_MAILBOX_URL}/{mid}/accounts",
+        json={"provider": "gmail", "display_label": "x"},
+    )
+    assert resp.status_code == 503
+    assert resp.json()["error"]["code"] == "database_connection_error"
+
+
+def test_delete_mailbox_database_query_error(test_client, monkeypatch):
+    mb = test_client.post(_MAILBOX_URL, json={"display_name": "To Delete"})
+    mid = mb.json()["mailbox_id"]
+
+    def _raise(mailbox_id):
+        raise QueryError("DB fail")
+
+    monkeypatch.setattr(mailbox_store, "delete", _raise)
+    resp = test_client.delete(f"{_MAILBOX_URL}/{mid}")
+    assert resp.status_code == 503
+    assert resp.json()["error"]["code"] == "database_query_error"
+
+
+# ==================================================================
+# Additional 422 validation
+# ==================================================================
+
+def test_update_account_empty_display_label(test_client, setup_mailbox_and_account):
+    mid, aid = setup_mailbox_and_account(test_client)
+    resp = test_client.patch(
+        f"{_MAILBOX_URL}/{mid}/accounts/{aid}",
+        json={"display_label": ""},
+    )
+    assert resp.status_code == 422
+
+
+def test_google_login_empty_id_token(test_client):
+    resp = test_client.post("/auth/google", json={"id_token": ""})
+    assert resp.status_code == 422

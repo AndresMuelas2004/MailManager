@@ -3,16 +3,37 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from unittest.mock import MagicMock
 
 import pytest
 from pydantic import SecretStr
 
 from core.email.helpers import (
+    http_error_detail,
     parse_expiry,
     unwrap_app_credentials,
     unwrap_user_tokens,
     wrap_account_tokens,
 )
+
+
+# ── http_error_detail ───────────────────────────────────────────────
+
+
+class TestHttpErrorDetail:
+    def test_extracts_status_and_reason(self):
+        exc = MagicMock()
+        exc.resp.status = "404"
+        exc.reason = "Not Found"
+        status, reason = http_error_detail(exc)
+        assert status == "404"
+        assert reason == "Not Found"
+
+    def test_missing_attrs_returns_unknown(self):
+        exc = object()
+        status, reason = http_error_detail(exc)
+        assert status == "unknown"
+        assert reason == "unknown"
 
 
 # ── parse_expiry ────────────────────────────────────────────────────

@@ -32,7 +32,11 @@ These files are project-agnostic and transferable. Each one references internall
 - `frontend/` — Client application (React + Vite + TypeScript + Tailwind).
 - Docker Compose orchestrates both services plus the database.
 
-### 1.3 Backend Layers and Relationships
+### 1.3 Excluded Directories
+
+- `backend/Scripts/` — personal developer scripts (manual tests, one-off utilities). Claude must **not** read, edit, or reference files in this directory unless the user explicitly requests it. These scripts are unrelated to the application's business logic.
+
+### 1.4 Backend Layers and Relationships
 
 ```
 API (routers → services)
@@ -50,7 +54,7 @@ Communication rules:
 
 Each layer defines its own error hierarchy. Services translate lower-layer errors into API-layer errors. For specifics, read the relevant `general_*_rules.md`.
 
-### 1.4 Two-Level Documentation Pattern
+### 1.5 Two-Level Documentation Pattern
 
 Each layer has two documentation files:
 
@@ -59,11 +63,11 @@ Each layer has two documentation files:
 
 The general rules file references its guide. This CLAUDE.md references the general rules files.
 
-### 1.5 Style and Code Quality
+### 1.6 Style and Code Quality
 
 - Python: PEP 8, FastAPI conventions, `from __future__ import annotations` in all modules.
 - TypeScript: ESLint config in `frontend/eslint.config.js`.
-- Code language: English (identifiers, comments, docstrings).
+- Code language: English everywhere — identifiers, comments, docstrings, and all `.md` documentation files tracked by git.
 - Comments only where they clarify non-obvious logic; avoid noise or redundancy.
 
 ---

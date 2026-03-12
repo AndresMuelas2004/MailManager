@@ -13,14 +13,22 @@ import pytest
 from api.errors.exceptions import AccountMisconfigured
 from api.services import accounts_service, emails_service, services_helpers
 from core.email import (
+    EmailAccountNotFoundError,
+    EmailAccountRecordError,
     EmailAuthError,
+    EmailConfigError,
+    EmailDuplicateAccountLabelError,
     EmailExternalAPIError,
     EmailInvalidCredentialsDataError,
+    EmailInvalidExpiryError,
+    EmailInvalidTokenDataError,
     EmailMissingAppCredentialsError,
+    EmailMissingRefreshTokenError,
     EmailMissingTokenError,
     EmailNotAuthenticatedError,
     EmailProviderConfigError,
     EmailRecipientsMissingError,
+    EmailRefreshFailedError,
 )
 
 
@@ -274,3 +282,33 @@ def test_send_generic_exception_fallback(failing_test_client, setup_mailbox_and_
     )
     assert resp.status_code == 502
     assert resp.json()["error"]["code"] == "email_send_error"
+
+
+# ==================================================================
+# Additional CoreError → API translations via send_exc path
+# ==================================================================
+
+@pytest.mark.parametrize(
+    "failing_test_client, expected_status, expected_code",
+    [
+        ({"send_exc": EmailMissingRefreshTokenError("no RT")}, 409, "account_not_connected"),
+        ({"send_exc": EmailRefreshFailedError("refresh fail")}, 409, "account_not_connected"),
+        ({"send_exc": EmailInvalidExpiryError("bad expiry")}, 400, "account_misconfigured"),
+        ({"send_exc": EmailInvalidTokenDataError("bad tokens")}, 400, "account_misconfigured"),
+        ({"send_exc": EmailAccountRecordError("bad record")}, 400, "account_misconfigured"),
+        ({"send_exc": EmailDuplicateAccountLabelError("dup")}, 400, "account_misconfigured"),
+        ({"send_exc": EmailConfigError("bad config")}, 400, "account_misconfigured"),
+        ({"send_exc": EmailAccountNotFoundError("not found")}, 404, "account_not_found"),
+    ],
+    indirect=["failing_test_client"],
+)
+def test_send_additional_core_error_translations(
+    failing_test_client, expected_status, expected_code, setup_mailbox_and_account,
+):
+    mid, aid = setup_mailbox_and_account(failing_test_client)
+    resp = failing_test_client.post(
+        f"{_MAILBOX_URL}/{mid}/emails/send",
+        json={"account_id": aid, "subject": "S", "body": "B", "recipients": ["a@b.com"]},
+    )
+    assert resp.status_code == expected_status
+    assert resp.json()["error"]["code"] == expected_code

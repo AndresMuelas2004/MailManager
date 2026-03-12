@@ -55,6 +55,8 @@ otherwise                 → box = "ALL_MAIL"
 
 List message IDs (paginated `messages.list`, `includeSpamTrash=True`) → batch-fetch metadata in chunks of 100 (`format="metadata"`) → get current `historyId` from `getProfile` as `new_sync_cursor`.
 
+> Las constantes de batch (`_BATCH_SIZE`, `_BATCH_MAX_RETRIES`, `_BATCH_RETRY_DELAY`) son reutilizadas por scripts de desarrollo (`backend/Scripts/`) para extensiones como ejecución paralela de chunks.
+
 ### Gmail incremental sync (History API)
 
 When `sync_cursor` is present and valid: paginate history, resolve deletes, filter label changes, batch-fetch metadata for added/changed messages, batch-fetch label updates. Falls back to bootstrap on invalid `historyId`.

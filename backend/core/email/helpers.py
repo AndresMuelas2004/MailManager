@@ -21,7 +21,9 @@ from .errors import (
 
 def http_error_detail(exc: Any) -> tuple[str, str]:
     """Extract (status, reason) from a googleapiclient HttpError."""
-    return getattr(getattr(exc, "resp", None), "status", "unknown"), getattr(exc, "reason", "unknown")
+    status = getattr(getattr(exc, "resp", None), "status", "unknown")
+    reason = getattr(exc, "reason", "unknown")
+    return status, reason
 
 
 def parse_expiry(value: Any) -> datetime | None:

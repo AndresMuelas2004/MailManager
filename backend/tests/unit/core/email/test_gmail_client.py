@@ -5,7 +5,7 @@ Shared helper tests (parse_expiry, unwrap/wrap) live in ``test_helpers.py``.
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
 import pytest
 
@@ -299,34 +299,29 @@ class TestIncrementalEmailMetadata:
         assert result.deletes == []
 
     def test_messages_deleted_confirmed_goes_to_deletes(self, client: GmailClient):
-        """When .get() fails for a deleted message, it is confirmed as delete."""
+        """When batch probe returns empty, the message is confirmed as delete."""
         mock_service = MagicMock()
         history = [{"messagesDeleted": [{"message": {"id": "d1"}}]}]
         mock_service.users().history().list().execute.return_value = (
             _make_history_response(history=history, history_id="200")
         )
-        from googleapiclient.errors import HttpError
-        resp = MagicMock()
-        type(resp).status = 404
-        mock_service.users().messages().get().execute.side_effect = HttpError(
-            resp=resp, content=b"not found"
-        )
         client.service = mock_service
-        with patch.object(client, "_batch_fetch_metadata", return_value=[]):
+        with patch.object(client, "_execute_batch_get", return_value={}), \
+             patch.object(client, "_batch_fetch_metadata", return_value=[]):
             result = client._incremental_email_metadata("100")
         assert "d1" in result.deletes
         assert result.upserts == []
 
     def test_messages_deleted_still_exists_goes_to_upserts(self, client: GmailClient):
-        """When .get() succeeds for a 'deleted' message, it moves to need_get."""
+        """When batch probe returns the message, it moves to need_get."""
         mock_service = MagicMock()
         history = [{"messagesDeleted": [{"message": {"id": "d1"}}]}]
         mock_service.users().history().list().execute.return_value = (
             _make_history_response(history=history, history_id="200")
         )
-        mock_service.users().messages().get().execute.return_value = {"id": "d1"}
         client.service = mock_service
-        with patch.object(client, "_batch_fetch_metadata", return_value=["meta_d1"]) as mock_batch:
+        with patch.object(client, "_execute_batch_get", return_value={"d1": {"id": "d1"}}), \
+             patch.object(client, "_batch_fetch_metadata", return_value=["meta_d1"]) as mock_batch:
             result = client._incremental_email_metadata("100")
         assert "d1" in mock_batch.call_args[0][0]
         assert result.upserts == ["meta_d1"]
@@ -428,7 +423,8 @@ class TestBatchFetchLabelUpdates:
         assert lu2.is_read is True
         assert lu2.box == "SPAM"
 
-    def test_skips_failed_messages(self, client: GmailClient):
+    @patch("core.email.gmail_client.time.sleep")
+    def test_skips_failed_messages(self, mock_sleep, client: GmailClient):
         mock_service = MagicMock()
         batch_instance = MagicMock()
         mock_service.new_batch_http_request.return_value = batch_instance
@@ -541,3 +537,121 @@ class TestBootstrapEmailMetadata:
         assert isinstance(result, SyncResult)
         assert result.upserts == ["meta1", "meta2"]
         assert result.new_cursor == "hist99"
+
+
+# ── _execute_batch_get retry logic ──────────────────────────────────
+
+
+class TestExecuteBatchGetRetry:
+    """Tests for the retry logic inside _execute_batch_get."""
+
+    def test_no_failures_no_retry(self, client: GmailClient):
+        """All messages succeed on the first attempt — batch.execute() called once."""
+        mock_service = MagicMock()
+        batch_instance = MagicMock()
+        mock_service.new_batch_http_request.return_value = batch_instance
+
+        def fake_execute():
+            cb = mock_service.new_batch_http_request.call_args[1]["callback"]
+            cb("m1", {"id": "m1"}, None)
+            cb("m2", {"id": "m2"}, None)
+        batch_instance.execute.side_effect = fake_execute
+
+        client.service = mock_service
+        result = client._execute_batch_get(
+            ["m1", "m2"], fmt="metadata", error_context="test",
+        )
+        assert set(result.keys()) == {"m1", "m2"}
+        assert batch_instance.execute.call_count == 1
+
+    @patch("core.email.gmail_client.time.sleep")
+    def test_partial_failure_retries_only_failed(self, mock_sleep, client: GmailClient):
+        """2 of 5 fail, retry succeeds — second batch only contains the 2 failed."""
+        mock_service = MagicMock()
+        batch_instance = MagicMock()
+        mock_service.new_batch_http_request.return_value = batch_instance
+
+        call_count = 0
+
+        def fake_execute():
+            nonlocal call_count
+            call_count += 1
+            cb = mock_service.new_batch_http_request.call_args[1]["callback"]
+            if call_count == 1:
+                cb("m1", {"id": "m1"}, None)
+                cb("m2", {"id": "m2"}, None)
+                cb("m3", {"id": "m3"}, None)
+                cb("m4", None, Exception("rate limited"))
+                cb("m5", None, Exception("rate limited"))
+            else:
+                cb("m4", {"id": "m4"}, None)
+                cb("m5", {"id": "m5"}, None)
+        batch_instance.execute.side_effect = fake_execute
+
+        client.service = mock_service
+        result = client._execute_batch_get(
+            ["m1", "m2", "m3", "m4", "m5"], fmt="metadata", error_context="test",
+        )
+        assert set(result.keys()) == {"m1", "m2", "m3", "m4", "m5"}
+        assert batch_instance.execute.call_count == 2
+        mock_sleep.assert_called_once()
+
+    @patch("core.email.gmail_client.time.sleep")
+    def test_all_retries_exhausted_messages_lost(self, mock_sleep, client: GmailClient):
+        """A message fails on every attempt and is not in the final result."""
+        mock_service = MagicMock()
+        batch_instance = MagicMock()
+        mock_service.new_batch_http_request.return_value = batch_instance
+
+        def fake_execute():
+            cb = mock_service.new_batch_http_request.call_args[1]["callback"]
+            # Only callback IDs that were added to this batch attempt
+            added_ids = [c.kwargs["request_id"] for c in batch_instance.add.call_args_list]
+            batch_instance.add.call_args_list.clear()
+            for rid in added_ids:
+                if rid == "m2":
+                    cb(rid, None, Exception("always fails"))
+                else:
+                    cb(rid, {"id": rid}, None)
+        batch_instance.execute.side_effect = fake_execute
+
+        client.service = mock_service
+        result = client._execute_batch_get(
+            ["m1", "m2"], fmt="metadata", error_context="test",
+        )
+        assert "m1" in result
+        assert "m2" not in result
+        # 1 initial + 3 retries = 4 total execute calls
+        assert batch_instance.execute.call_count == 4
+        assert mock_sleep.call_count == 3
+
+    @patch("core.email.gmail_client.time.sleep")
+    def test_retry_with_fixed_delay(self, mock_sleep, client: GmailClient):
+        """Verify sleep delays are all 1.0s (fixed delay)."""
+        mock_service = MagicMock()
+        batch_instance = MagicMock()
+        mock_service.new_batch_http_request.return_value = batch_instance
+
+        def fake_execute():
+            cb = mock_service.new_batch_http_request.call_args[1]["callback"]
+            cb("m1", None, Exception("fail"))
+        batch_instance.execute.side_effect = fake_execute
+
+        client.service = mock_service
+        client._execute_batch_get(["m1"], fmt="metadata", error_context="test")
+        assert mock_sleep.call_args_list == [call(1.0), call(1.0), call(1.0)]
+
+    def test_batch_execute_exception_still_raises(self, client: GmailClient):
+        """HttpError from batch.execute() raises EmailExternalAPIError without retry."""
+        from googleapiclient.errors import HttpError
+
+        mock_service = MagicMock()
+        batch_instance = MagicMock()
+        mock_service.new_batch_http_request.return_value = batch_instance
+        resp = MagicMock()
+        type(resp).status = 500
+        batch_instance.execute.side_effect = HttpError(resp=resp, content=b"fail")
+
+        client.service = mock_service
+        with pytest.raises(EmailExternalAPIError, match="test failed"):
+            client._execute_batch_get(["m1"], fmt="metadata", error_context="test")

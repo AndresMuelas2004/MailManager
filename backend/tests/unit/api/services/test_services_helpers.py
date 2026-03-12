@@ -7,28 +7,40 @@ from __future__ import annotations
 from unittest.mock import patch
 
 import pytest
+from pydantic import SecretStr
 
 from api.errors.exceptions import (
     AccountConnectAuthError,
     AccountMisconfigured,
     AccountNotConnected,
     ApiError,
+    CredentialFileError,
+    DatabaseQueryError,
     ExternalAPIError,
     Forbidden,
     MailboxNotFound,
 )
 from api.services.services_helpers import (
     build_manager_for_accounts,
+    delete_email_metadata_batch,
     ensure_mailbox_access,
+    load_sync_cursors,
+    load_wrapped_account_tokens,
+    load_wrapped_app_credentials,
+    persist_email_metadata_batch,
     raise_on_silent_auth_errors,
     translate_connect_error,
-    translate_core_error,
+    update_email_metadata_labels_batch,
+    update_sync_cursor,
 )
+from core.email import LabelUpdate
 from core.email.errors import (
     EmailAuthError,
     EmailExternalAPIError,
     EmailMissingTokenError,
 )
+from database import CredentialReadError, QueryError
+from tests.shared.email_fakes import build_metadata
 
 
 class TestEnsureMailboxAccess:
@@ -170,3 +182,225 @@ class TestTranslateConnectError:
         exc = RuntimeError("unexpected")
         result = translate_connect_error(exc)
         assert isinstance(result, AccountConnectAuthError)
+
+
+# ------------------------------------------------------------------
+# load_wrapped_app_credentials
+# ------------------------------------------------------------------
+
+class TestLoadWrappedAppCredentials:
+
+    def test_happy_path_wraps_client_secret(self):
+        fake_creds = {"client_id": "cid", "client_secret": "secret"}
+        with patch("api.services.services_helpers.load_app_credentials", return_value=fake_creds):
+            result = load_wrapped_app_credentials("gmail")
+        assert isinstance(result["client_secret"], SecretStr)
+        assert result["client_secret"].get_secret_value() == "secret"
+        assert result["client_id"] == "cid"
+
+    def test_database_error_translated(self):
+        with patch(
+            "api.services.services_helpers.load_app_credentials",
+            side_effect=CredentialReadError("read fail"),
+        ):
+            with pytest.raises(CredentialFileError):
+                load_wrapped_app_credentials("gmail")
+
+    def test_generic_exception_raises_api_error(self):
+        with patch(
+            "api.services.services_helpers.load_app_credentials",
+            side_effect=RuntimeError("boom"),
+        ):
+            with pytest.raises(ApiError, match="Failed to load app credentials"):
+                load_wrapped_app_credentials("gmail")
+
+
+# ------------------------------------------------------------------
+# load_wrapped_account_tokens
+# ------------------------------------------------------------------
+
+class TestLoadWrappedAccountTokens:
+
+    def test_happy_path_wraps_tokens(self):
+        fake_tokens = {"access_token": "at", "refresh_token": "rt", "expires_in": 3600}
+        with patch("api.services.services_helpers.account_store") as mock_store:
+            mock_store.get_tokens.return_value = fake_tokens
+            result = load_wrapped_account_tokens("mb-1", "acc-1", "gmail")
+        assert isinstance(result["access_token"], SecretStr)
+        assert isinstance(result["refresh_token"], SecretStr)
+        assert result["expires_in"] == 3600
+
+    def test_none_returns_empty_dict(self):
+        with patch("api.services.services_helpers.account_store") as mock_store:
+            mock_store.get_tokens.return_value = None
+            result = load_wrapped_account_tokens("mb-1", "acc-1", "gmail")
+        assert result == {}
+
+    def test_database_error_translated(self):
+        with patch("api.services.services_helpers.account_store") as mock_store:
+            mock_store.get_tokens.side_effect = QueryError("DB fail")
+            with pytest.raises(DatabaseQueryError):
+                load_wrapped_account_tokens("mb-1", "acc-1", "gmail")
+
+    def test_generic_exception_raises_api_error(self):
+        with patch("api.services.services_helpers.account_store") as mock_store:
+            mock_store.get_tokens.side_effect = RuntimeError("boom")
+            with pytest.raises(ApiError, match="Failed to load account tokens"):
+                load_wrapped_account_tokens("mb-1", "acc-1", "gmail")
+
+
+# ------------------------------------------------------------------
+# persist_email_metadata_batch
+# ------------------------------------------------------------------
+
+class TestPersistEmailMetadataBatch:
+
+    def test_empty_list_returns_zero(self):
+        assert persist_email_metadata_batch("acc-1", []) == 0
+
+    def test_happy_path_converts_and_persists(self):
+        metadata = [
+            build_metadata(provider_message_id="m1"),
+            build_metadata(provider_message_id="m2"),
+        ]
+        with patch("api.services.services_helpers.email_metadata_store") as mock_store:
+            mock_store.upsert_batch.return_value = 2
+            result = persist_email_metadata_batch("acc-1", metadata)
+        assert result == 2
+        call_args = mock_store.upsert_batch.call_args
+        assert call_args[0][0] == "acc-1"
+        rows = call_args[0][1]
+        assert len(rows) == 2
+        assert rows[0][0] == "m1"
+
+    def test_database_error_translated(self):
+        metadata = [build_metadata()]
+        with patch("api.services.services_helpers.email_metadata_store") as mock_store:
+            mock_store.upsert_batch.side_effect = QueryError("DB fail")
+            with pytest.raises(DatabaseQueryError):
+                persist_email_metadata_batch("acc-1", metadata)
+
+    def test_generic_exception_raises_api_error(self):
+        metadata = [build_metadata()]
+        with patch("api.services.services_helpers.email_metadata_store") as mock_store:
+            mock_store.upsert_batch.side_effect = RuntimeError("boom")
+            with pytest.raises(ApiError, match="Failed to persist email metadata"):
+                persist_email_metadata_batch("acc-1", metadata)
+
+
+# ------------------------------------------------------------------
+# delete_email_metadata_batch
+# ------------------------------------------------------------------
+
+class TestDeleteEmailMetadataBatch:
+
+    def test_empty_list_returns_zero(self):
+        assert delete_email_metadata_batch("acc-1", []) == 0
+
+    def test_happy_path_returns_deleted_count(self):
+        with patch("api.services.services_helpers.email_metadata_store") as mock_store:
+            mock_store.delete_batch_by_message_ids.return_value = 3
+            result = delete_email_metadata_batch("acc-1", ["m1", "m2", "m3"])
+        assert result == 3
+
+    def test_database_error_translated(self):
+        with patch("api.services.services_helpers.email_metadata_store") as mock_store:
+            mock_store.delete_batch_by_message_ids.side_effect = QueryError("DB fail")
+            with pytest.raises(DatabaseQueryError):
+                delete_email_metadata_batch("acc-1", ["m1"])
+
+    def test_generic_exception_raises_api_error(self):
+        with patch("api.services.services_helpers.email_metadata_store") as mock_store:
+            mock_store.delete_batch_by_message_ids.side_effect = RuntimeError("boom")
+            with pytest.raises(ApiError, match="Failed to delete email metadata"):
+                delete_email_metadata_batch("acc-1", ["m1"])
+
+
+# ------------------------------------------------------------------
+# update_email_metadata_labels_batch
+# ------------------------------------------------------------------
+
+class TestUpdateEmailMetadataLabelsBatch:
+
+    def test_empty_list_returns_zero(self):
+        assert update_email_metadata_labels_batch("acc-1", []) == 0
+
+    def test_happy_path_converts_and_updates(self):
+        updates = [
+            LabelUpdate(provider_message_id="m1", is_read=True, box="INBOX"),
+            LabelUpdate(provider_message_id="m2", is_read=False, box="TRASH"),
+        ]
+        with patch("api.services.services_helpers.email_metadata_store") as mock_store:
+            mock_store.update_labels_batch.return_value = 2
+            result = update_email_metadata_labels_batch("acc-1", updates)
+        assert result == 2
+        call_args = mock_store.update_labels_batch.call_args
+        rows = call_args[0][1]
+        assert len(rows) == 2
+        assert rows[0] == ("m1", "acc-1", True, "INBOX")
+
+    def test_database_error_translated(self):
+        updates = [LabelUpdate(provider_message_id="m1", is_read=True, box="INBOX")]
+        with patch("api.services.services_helpers.email_metadata_store") as mock_store:
+            mock_store.update_labels_batch.side_effect = QueryError("DB fail")
+            with pytest.raises(DatabaseQueryError):
+                update_email_metadata_labels_batch("acc-1", updates)
+
+    def test_generic_exception_raises_api_error(self):
+        updates = [LabelUpdate(provider_message_id="m1", is_read=True, box="INBOX")]
+        with patch("api.services.services_helpers.email_metadata_store") as mock_store:
+            mock_store.update_labels_batch.side_effect = RuntimeError("boom")
+            with pytest.raises(ApiError, match="Failed to update email metadata labels"):
+                update_email_metadata_labels_batch("acc-1", updates)
+
+
+# ------------------------------------------------------------------
+# load_sync_cursors
+# ------------------------------------------------------------------
+
+class TestLoadSyncCursors:
+
+    def test_happy_path_returns_cursor_dict(self):
+        lookup = {"mb__acc1": ("mb", "acc1", "gmail")}
+        with patch("api.services.services_helpers.account_store") as mock_store:
+            mock_store.get_sync_cursor.return_value = "cursor-123"
+            result = load_sync_cursors(lookup)
+        assert result == {"mb__acc1": "cursor-123"}
+
+    def test_database_error_translated(self):
+        lookup = {"mb__acc1": ("mb", "acc1", "gmail")}
+        with patch("api.services.services_helpers.account_store") as mock_store:
+            mock_store.get_sync_cursor.side_effect = QueryError("DB fail")
+            with pytest.raises(DatabaseQueryError):
+                load_sync_cursors(lookup)
+
+    def test_generic_exception_raises_api_error(self):
+        lookup = {"mb__acc1": ("mb", "acc1", "gmail")}
+        with patch("api.services.services_helpers.account_store") as mock_store:
+            mock_store.get_sync_cursor.side_effect = RuntimeError("boom")
+            with pytest.raises(ApiError, match="Failed to load sync cursor"):
+                load_sync_cursors(lookup)
+
+
+# ------------------------------------------------------------------
+# update_sync_cursor
+# ------------------------------------------------------------------
+
+class TestUpdateSyncCursor:
+
+    def test_happy_path_calls_store(self):
+        with patch("api.services.services_helpers.account_store") as mock_store:
+            update_sync_cursor("mb-1", "acc-1", "cursor-new")
+        mock_store.update_sync_cursor.assert_called_once_with("mb-1", "acc-1", "cursor-new")
+
+    def test_database_error_translated(self):
+        with patch("api.services.services_helpers.account_store") as mock_store:
+            mock_store.update_sync_cursor.side_effect = QueryError("DB fail")
+            with pytest.raises(DatabaseQueryError):
+                update_sync_cursor("mb-1", "acc-1", "cursor-new")
+
+    def test_generic_exception_raises_api_error(self):
+        with patch("api.services.services_helpers.account_store") as mock_store:
+            mock_store.update_sync_cursor.side_effect = RuntimeError("boom")
+            with pytest.raises(ApiError, match="Failed to update sync cursor"):
+                update_sync_cursor("mb-1", "acc-1", "cursor-new")
