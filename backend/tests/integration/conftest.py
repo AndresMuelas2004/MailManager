@@ -19,6 +19,7 @@ from database.repositories import user_repository as user_repo_module
 from api.routers.routers_helpers import require_session
 from api.services import accounts_service, emails_service, services_helpers
 from core.email import EmailManager
+from core.email.email_client import LabelUpdate
 from tests.shared.email_fakes import FakeEmailClient, build_metadata
 
 _ALEMBIC_INI_PATH = Path(__file__).resolve().parents[2] / "database" / "alembic.ini"
@@ -207,6 +208,39 @@ def test_client(test_client_base, sample_metadata, monkeypatch):
 
     _apply_test_monkeypatches(monkeypatch, _build_manager)
     return test_client_base
+
+
+@pytest.fixture
+def configurable_test_client(test_client_base, sample_metadata, monkeypatch):
+    config = {
+        "metadata": list(sample_metadata),
+        "deletes": [],
+        "label_updates": [],
+        "is_full_sync": False,
+        "existing_message_ids": [],
+        "sync_cursor_return": "fake_cursor_12345",
+    }
+
+    def _build_manager(accounts):
+        manager = EmailManager()
+        for account in accounts:
+            mailbox_id = str(account.get("mailbox_id") or "")
+            account_id = str(account.get("account_id") or "")
+            label = f"{mailbox_id}__{account_id}"
+            manager.add_client(FakeEmailClient(
+                label,
+                metadata=config["metadata"],
+                deletes=config["deletes"],
+                label_updates=config["label_updates"],
+                is_full_sync=config["is_full_sync"],
+                existing_message_ids=config["existing_message_ids"],
+                sync_cursor_return=config["sync_cursor_return"],
+                auth_return={"access_token": "tok", "refresh_token": "ref"},
+            ))
+        return manager
+
+    _apply_test_monkeypatches(monkeypatch, _build_manager)
+    return test_client_base, config
 
 
 @pytest.fixture

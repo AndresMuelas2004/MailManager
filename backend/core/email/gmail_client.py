@@ -41,8 +41,11 @@ from .helpers import (
 GMAIL_SCOPES = ["https://www.googleapis.com/auth/gmail.modify"]
 
 _BATCH_SIZE = 100
-_BATCH_MAX_RETRIES = 3
+_BATCH_MAX_RETRIES = 4
 _BATCH_RETRY_DELAY = 1.0  # seconds
+_INCREMENTAL_EVENT_THRESHOLD = 100
+
+
 def _parse_max_workers() -> int:
     raw = os.environ.get("GMAIL_BATCH_MAX_WORKERS", "5")
     try:
@@ -52,6 +55,21 @@ def _parse_max_workers() -> int:
         return 5
 
 _PARALLEL_MAX_WORKERS = _parse_max_workers()
+
+_RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
+
+
+def _is_retryable(exception: Any) -> bool:
+    """Classify whether a batch callback exception is worth retrying.
+
+    Returns True for rate-limit (429), server errors (5xx), and non-HTTP
+    exceptions (network timeouts, connection resets).  Returns False for
+    client errors like 404, 400, 403, 410 — those are permanent failures.
+    """
+    if isinstance(exception, HttpError):
+        status = getattr(getattr(exception, "resp", None), "status", None)
+        return status in _RETRYABLE_STATUS_CODES
+    return True
 
 
 def _log_skipped_messages(
@@ -231,7 +249,7 @@ class GmailClient(EmailClient):
         history_id = self._get_current_history_id()
         message_ids = self._list_message_ids(max_total)
         metadata_list = self._batch_fetch_metadata(message_ids)
-        return SyncResult(upserts=metadata_list, new_cursor=history_id)
+        return SyncResult(upserts=metadata_list, new_cursor=history_id, is_full_sync=True)
 
     def _list_message_ids(self, max_total: int) -> list[str]:
         """List message IDs using pagination, including spam and trash."""
@@ -283,26 +301,31 @@ class GmailClient(EmailClient):
         fmt: str,
         extra_kwargs: dict[str, Any] | None = None,
         credentials: Credentials,
-    ) -> tuple[dict[str, dict[str, Any]], list[str], float]:
+    ) -> tuple[dict[str, dict[str, Any]], list[str], list[str], float]:
         """Execute a single batch.execute() for one chunk of IDs.
 
         Each call builds its own thread-local HTTP transport and service
         because httplib2 is not thread-safe. Never raises — chunk-level
         errors mark all IDs as failed.
 
-        Returns (successes, failed_ids, elapsed_seconds).
+        Returns (successes, retryable_failed_ids, permanent_failed_ids, elapsed_seconds).
         """
         t0 = time.perf_counter()
         successes: dict[str, dict[str, Any]] = {}
         failed: list[str] = []
+        permanent_failed: list[str] = []
 
         def _callback(
             request_id: str, response: Any, exception: Any,
             _s: dict[str, dict[str, Any]] = successes,
             _f: list[str] = failed,
+            _pf: list[str] = permanent_failed,
         ) -> None:
             if exception is not None:
-                _f.append(request_id)
+                if _is_retryable(exception):
+                    _f.append(request_id)
+                else:
+                    _pf.append(request_id)
                 return
             _s[request_id] = response
 
@@ -325,19 +348,25 @@ class GmailClient(EmailClient):
             batch.execute()
         except HttpError as exc:
             status, reason = http_error_detail(exc)
+            if _is_retryable(exc):
+                logger.warning(
+                    "Chunk %d: batch.execute() HttpError (HTTP %s: %s) — all %d IDs marked retryable",
+                    chunk_index, status, reason, len(chunk_ids),
+                )
+                return {}, list(chunk_ids), [], time.perf_counter() - t0
             logger.warning(
-                "Chunk %d: batch.execute() HttpError (HTTP %s: %s) — all %d IDs marked failed",
+                "Chunk %d: batch.execute() HttpError (HTTP %s: %s) — all %d IDs marked permanently failed",
                 chunk_index, status, reason, len(chunk_ids),
             )
-            return {}, list(chunk_ids), time.perf_counter() - t0
+            return {}, [], list(chunk_ids), time.perf_counter() - t0
         except Exception as exc:
             logger.warning(
-                "Chunk %d: batch.execute() %s: %s — all %d IDs marked failed",
+                "Chunk %d: batch.execute() %s: %s — all %d IDs marked retryable",
                 chunk_index, type(exc).__name__, exc, len(chunk_ids),
             )
-            return {}, list(chunk_ids), time.perf_counter() - t0
+            return {}, list(chunk_ids), [], time.perf_counter() - t0
 
-        return successes, failed, time.perf_counter() - t0
+        return successes, failed, permanent_failed, time.perf_counter() - t0
 
     def _execute_batch_get_sequential(
         self,
@@ -365,7 +394,8 @@ class GmailClient(EmailClient):
                     _f: list[str] = failed_in_attempt,
                 ) -> None:
                     if exception is not None:
-                        _f.append(request_id)
+                        if _is_retryable(exception):
+                            _f.append(request_id)
                         return
                     _r[request_id] = response
 
@@ -481,9 +511,14 @@ class GmailClient(EmailClient):
                 }
                 for future in as_completed(futures):
                     chunk_idx = futures[future]
-                    successes, failed, _elapsed = future.result()
+                    successes, failed, permanent_failed, _elapsed = future.result()
                     all_results.update(successes)
                     pending_per_chunk[chunk_idx] = failed
+                    if permanent_failed:
+                        logger.warning(
+                            "Gmail parallel batch: %d permanent failures in chunk %d: %s",
+                            len(permanent_failed), chunk_idx, permanent_failed[:10],
+                        )
 
             total_pending = sum(len(ids) for ids in pending_per_chunk.values())
             if total_pending == 0:
@@ -649,6 +684,17 @@ class GmailClient(EmailClient):
             if not page_token:
                 break
 
+        # Threshold check — abort if too many events (Step 1 is cheap, Steps 2-5 are not)
+        total_event_ids = len(need_get_ids | pending_delete_ids | label_change_ids)
+        if total_event_ids > _INCREMENTAL_EVENT_THRESHOLD:
+            logger.info(
+                "Gmail incremental: %d event IDs exceed threshold %d, falling back to bootstrap.",
+                total_event_ids, _INCREMENTAL_EVENT_THRESHOLD,
+            )
+            raise EmailExternalAPIError(
+                f"Gmail incremental sync has {total_event_ids} events, exceeding threshold."
+            )
+
         # Step 2 — Resolve pending deletes: batch probe in groups of 100
         probe_ids = list(pending_delete_ids - need_get_ids)
         confirmed_deletes: list[str] = []
@@ -744,6 +790,16 @@ class GmailClient(EmailClient):
             raise EmailExternalAPIError(
                 f"Gmail unexpected send email error ({type(exc).__name__}): {exc}"
             ) from exc
+
+    def verify_message_existence(self, message_ids: list[str]) -> list[str]:
+        if self.service is None:
+            raise EmailNotAuthenticatedError("Gmail verify_message_existence requires authentication.")
+        if not message_ids:
+            return []
+        raw = self._execute_batch_get(
+            message_ids, fmt="minimal", error_context="message existence verification",
+        )
+        return [msg_id for msg_id in message_ids if msg_id in raw]
 
     def get_account_label(self) -> str:
         """

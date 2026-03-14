@@ -40,7 +40,11 @@ logger = logging.getLogger(__name__)
 _DELTA_SELECT_FIELDS = "id,conversationId,from,subject,receivedDateTime,isRead"
 _DELTA_PAGE_SIZE = 100
 
-_DELTA_FOLDERS = ("inbox", "sentitems", "drafts", "deleteditems", "junkemail")
+_BOOTSTRAP_SELECT_FIELDS = (
+    "id,conversationId,from,subject,receivedDateTime,isRead,parentFolderId"
+)
+
+_DELTA_FOLDERS = ("inbox", "sentitems", "drafts", "deleteditems", "junkemail", "archive")
 
 _FOLDER_TO_BOX: dict[str, str] = {
     "deleteditems": "TRASH",
@@ -398,10 +402,13 @@ class OutlookClient(EmailClient):
         upserts: list[EmailMetadata],
         deletes: list[str],
         max_collect: int | None = None,
+        label_updates: list[LabelUpdate] | None = None,
     ) -> str:
         """Paginate a single folder's delta query until deltaLink is obtained.
 
         Appends parsed messages to *upserts* and removed IDs to *deletes*.
+        When *label_updates* is provided, partial delta messages (missing
+        ``from``) are appended there instead of being parsed as full upserts.
         When *max_collect* is set, stops collecting messages after the limit
         but continues paginating to obtain the deltaLink.
         Returns the deltaLink.
@@ -420,9 +427,28 @@ class OutlookClient(EmailClient):
                         msg_id = msg.get("id", "")
                         if msg_id:
                             deletes.append(msg_id)
+                            logger.debug(
+                                "Outlook delta [%s] REMOVED id=%s",
+                                folder_name, msg_id,
+                            )
+                    elif "from" not in msg and label_updates is not None:
+                        label_updates.append(LabelUpdate(
+                            provider_message_id=msg["id"],
+                            is_read=msg.get("isRead", False),
+                            box=box,
+                        ))
+                        logger.debug(
+                            "Outlook delta [%s] LABEL id=%s is_read=%s",
+                            folder_name, msg["id"], msg.get("isRead"),
+                        )
                     else:
                         try:
                             upserts.append(self._parse_graph_message(msg, box))
+                            logger.debug(
+                                "Outlook delta [%s] UPSERT id=%s subject=%r box=%s",
+                                folder_name, msg.get("id", "?"),
+                                msg.get("subject", "?"), box,
+                            )
                         except Exception:
                             logger.warning(
                                 "Outlook delta (%s): skipping unparseable message %s",
@@ -442,11 +468,76 @@ class OutlookClient(EmailClient):
 
             url = next_link
 
-    def _bootstrap_email_metadata(self, max_total: int) -> SyncResult:
-        """Path 1: Full bootstrap fetch via per-folder delta queries."""
-        upserts: list[EmailMetadata] = []
-        folder_cursors: dict[str, str] = {}
+    def _resolve_special_folder_ids(self) -> dict[str, str]:
+        """Fetch Graph IDs for sentitems, deleteditems and junkemail.
 
+        Returns a mapping {folder_id: box} so that each message's
+        parentFolderId can be classified into SENT, TRASH or SPAM.
+        Any folder not in this mapping defaults to ALL_MAIL.
+        """
+        folder_id_to_box: dict[str, str] = {}
+        for folder_name, box in _FOLDER_TO_BOX.items():
+            try:
+                url = f"{GRAPH_BASE_URL}/me/mailFolders/{folder_name}?$select=id"
+                response = self._graph_request("GET", url)
+                folder_id = response.get("id", "")
+                if folder_id:
+                    folder_id_to_box[folder_id] = box
+            except EmailExternalAPIError:
+                logger.warning(
+                    "Outlook bootstrap: failed to resolve folder '%s', skipping.",
+                    folder_name,
+                )
+        return folder_id_to_box
+
+    def _fetch_recent_messages(
+        self,
+        max_total: int,
+        folder_id_to_box: dict[str, str],
+    ) -> list[EmailMetadata]:
+        """Fetch the most recent messages across all folders via GET /me/messages.
+
+        Uses $orderby=receivedDateTime desc so the API returns messages
+        sorted by date (most recent first).  The parentFolderId of each
+        message is compared against *folder_id_to_box* to assign the
+        correct box value; anything not matched defaults to ALL_MAIL.
+        """
+        url = (
+            f"{GRAPH_BASE_URL}/me/messages"
+            f"?$select={_BOOTSTRAP_SELECT_FIELDS}"
+            f"&$orderby=receivedDateTime+desc"
+            f"&$top={min(max_total, 1000)}"
+        )
+        upserts: list[EmailMetadata] = []
+
+        while url and len(upserts) < max_total:
+            response = self._graph_request("GET", url)
+            for msg in response.get("value", []):
+                if len(upserts) >= max_total:
+                    break
+                parent_folder_id = msg.get("parentFolderId", "")
+                box = folder_id_to_box.get(parent_folder_id, "ALL_MAIL")
+                try:
+                    upserts.append(self._parse_graph_message(msg, box))
+                except Exception:
+                    logger.warning(
+                        "Outlook bootstrap: skipping unparseable message %s",
+                        msg.get("id", "?"),
+                    )
+            url = response.get("@odata.nextLink")
+
+        return upserts
+
+    def _bootstrap_email_metadata(self, max_total: int) -> SyncResult:
+        """Path 1: Fetch most recent messages across all folders, then init delta cursors."""
+        # Step 1: Discover special folder IDs for box classification.
+        folder_id_to_box = self._resolve_special_folder_ids()
+
+        # Step 2: Fetch the most recent messages across all folders.
+        upserts = self._fetch_recent_messages(max_total, folder_id_to_box)
+
+        # Step 3: Initialize per-folder delta cursors for future incremental syncs.
+        folder_cursors: dict[str, str] = {}
         for folder in _DELTA_FOLDERS:
             url = (
                 f"{GRAPH_BASE_URL}/me/mailFolders/{folder}/messages/delta"
@@ -454,17 +545,21 @@ class OutlookClient(EmailClient):
             )
             try:
                 delta_link = self._fetch_folder_delta(
-                    folder, url, upserts, [],  # deletes irrelevant during bootstrap
-                    max_collect=max_total,
+                    folder, url, [], [],
+                    max_collect=0,
                 )
                 if delta_link:
                     folder_cursors[folder] = delta_link
             except EmailExternalAPIError:
-                logger.warning("Outlook bootstrap: folder '%s' failed, skipping.", folder)
+                logger.warning(
+                    "Outlook bootstrap: delta init for '%s' failed, skipping.",
+                    folder,
+                )
 
         return SyncResult(
-            upserts=upserts[:max_total],
+            upserts=upserts,
             new_cursor=self._encode_folder_cursors(folder_cursors),
+            is_full_sync=True,
         )
 
     def _incremental_email_metadata(self, sync_cursor: str) -> SyncResult:
@@ -475,6 +570,7 @@ class OutlookClient(EmailClient):
 
         upserts: list[EmailMetadata] = []
         deletes: list[str] = []
+        label_updates: list[LabelUpdate] = []
         new_cursors: dict[str, str] = {}
         all_failed = True
 
@@ -482,6 +578,7 @@ class OutlookClient(EmailClient):
             try:
                 new_delta = self._fetch_folder_delta(
                     folder, delta_link, upserts, deletes,
+                    label_updates=label_updates,
                 )
                 new_cursors[folder] = new_delta if new_delta else delta_link
                 all_failed = False
@@ -496,6 +593,7 @@ class OutlookClient(EmailClient):
             upserts=upserts,
             new_cursor=self._encode_folder_cursors(new_cursors),
             deletes=deletes,
+            label_updates=label_updates,
         )
 
     def send_email(
@@ -524,6 +622,21 @@ class OutlookClient(EmailClient):
         }
 
         self._graph_request("POST", f"{GRAPH_BASE_URL}/me/sendMail", body=payload)
+
+    def verify_message_existence(self, message_ids: list[str]) -> list[str]:
+        if self._access_token is None:
+            raise EmailNotAuthenticatedError("Outlook verify_message_existence requires authentication.")
+        if not message_ids:
+            return []
+        existing: list[str] = []
+        for msg_id in message_ids:
+            url = f"{GRAPH_BASE_URL}/me/messages/{msg_id}?$select=id"
+            try:
+                self._graph_request("GET", url)
+                existing.append(msg_id)
+            except EmailExternalAPIError:
+                pass  # 404 or other error = not found
+        return existing
 
     def get_account_label(self) -> str:
         """

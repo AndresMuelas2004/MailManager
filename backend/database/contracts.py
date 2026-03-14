@@ -93,6 +93,10 @@ class EmailMetadataStore(ABC):
     def update_labels_batch(self, account_id: str, rows: list[tuple]) -> int:
         raise NotImplementedError
 
+    @abstractmethod
+    def list_provider_message_ids(self, account_id: str) -> list[str]:
+        raise NotImplementedError
+
 
 class UserStore(ABC):
     """

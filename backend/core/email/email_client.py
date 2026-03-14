@@ -44,6 +44,7 @@ class SyncResult:
     new_cursor: str
     deletes: list[str] = field(default_factory=list)
     label_updates: list[LabelUpdate] = field(default_factory=list)
+    is_full_sync: bool = False
 
 
 class EmailClient(ABC):
@@ -101,6 +102,10 @@ class EmailClient(ABC):
         :param body: Plain text body of the email.
         :param recipients: List of recipient email addresses.
         """
+
+    @abstractmethod
+    def verify_message_existence(self, message_ids: list[str]) -> list[str]:
+        """Return the subset of message_ids that still exist at the provider."""
 
     @abstractmethod
     def get_account_label(self) -> str:

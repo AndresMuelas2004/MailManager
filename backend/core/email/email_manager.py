@@ -134,6 +134,14 @@ class EmailManager:
                 self._last_errors[label] = exc
         return results
 
+    def verify_message_existence(
+        self,
+        account_label: str,
+        message_ids: list[str],
+    ) -> list[str]:
+        client = self._get_client_or_raise(account_label)
+        return client.verify_message_existence(message_ids)
+
     def send_email_from_account(
         self,
         account_label: str,

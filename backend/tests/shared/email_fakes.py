@@ -49,27 +49,34 @@ class FakeEmailClient(EmailClient):
         auth_silent_exc: Exception | None = None,
         fetch_exc: Exception | None = None,
         send_exc: Exception | None = None,
+        verify_exc: Exception | None = None,
         metadata: list[EmailMetadata] | None = None,
         sync_cursor_return: str = DEFAULT_SYNC_CURSOR,
         auth_return: dict | None = None,
         auth_silent_return: dict | None = None,
         deletes: list[str] | None = None,
         label_updates: list[LabelUpdate] | None = None,
+        existing_message_ids: list[str] | None = None,
+        is_full_sync: bool = False,
     ) -> None:
         self._account_label = account_label
         self._auth_exc = auth_exc
         self._auth_silent_exc = auth_silent_exc
         self._fetch_exc = fetch_exc
         self._send_exc = send_exc
+        self._verify_exc = verify_exc
         self._metadata = list(metadata or [])
         self._sync_cursor_return = sync_cursor_return
         self._auth_return = auth_return
         self._auth_silent_return = auth_silent_return
         self._deletes = list(deletes or [])
         self._label_updates = list(label_updates or [])
+        self._existing_message_ids = set(existing_message_ids or [])
+        self._is_full_sync = is_full_sync
         self.authenticate_calls = 0
         self.authenticate_silent_calls = 0
         self.fetch_calls = 0
+        self.verify_calls = 0
         self.sent_emails: list[tuple[str, str, list[str]]] = []
         self.last_app_credentials = None
         self.last_user_tokens = None
@@ -104,7 +111,14 @@ class FakeEmailClient(EmailClient):
             new_cursor=self._sync_cursor_return,
             deletes=list(self._deletes),
             label_updates=list(self._label_updates),
+            is_full_sync=self._is_full_sync,
         )
+
+    def verify_message_existence(self, message_ids: list[str]) -> list[str]:
+        self.verify_calls += 1
+        if self._verify_exc:
+            raise self._verify_exc
+        return [mid for mid in message_ids if mid in self._existing_message_ids]
 
     def send_email(self, subject: str, body: str, recipients: list[str]) -> None:
         if self._send_exc:

@@ -266,3 +266,103 @@ class TestSendEmail:
         monkeypatch.setattr(emails_service, "build_manager_for_accounts", _build_refreshing)
         emails_service.send_email(_MAILBOX_ID, self._make_payload(), _USER_ID)
         assert len(upsert_calls) >= 1
+
+
+# ==================================================================
+# _reconcile_ghost_emails
+# ==================================================================
+
+
+class TestReconciliation:
+
+    def test_full_sync_triggers_reconciliation(self, monkeypatch):
+        """Bootstrap (is_full_sync=True) should trigger ghost reconciliation."""
+        meta = build_metadata(provider_message_id="m1")
+        _patch_common(monkeypatch, fake_client_kwargs={
+            "is_full_sync": True,
+            "existing_message_ids": ["m1"],
+        })
+        # DB has m1 + m_ghost; bootstrap only returned m1
+        monkeypatch.setattr(
+            emails_service, "load_stored_message_ids",
+            lambda _aid: ["m1", "m_ghost"],
+        )
+        delete_calls = []
+        monkeypatch.setattr(
+            emails_service, "delete_email_metadata_batch",
+            lambda aid, ids: (delete_calls.append((aid, ids)), len(ids))[1],
+        )
+        result = emails_service.sync_email_metadata(_MAILBOX_ID, _USER_ID)
+        # m_ghost should have been deleted
+        assert any("m_ghost" in ids for _, ids in delete_calls)
+
+    def test_incremental_skips_reconciliation(self, monkeypatch):
+        """Incremental (is_full_sync=False) should not trigger reconciliation."""
+        _patch_common(monkeypatch, fake_client_kwargs={
+            "is_full_sync": False,
+        })
+        load_calls = []
+        monkeypatch.setattr(
+            emails_service, "load_stored_message_ids",
+            lambda _aid: (load_calls.append(_aid), [])[1],
+        )
+        emails_service.sync_email_metadata(_MAILBOX_ID, _USER_ID)
+        assert load_calls == []
+
+    def test_verification_error_skips_gracefully(self, monkeypatch):
+        """If verify_message_existence fails, reconciliation should skip."""
+        meta = build_metadata(provider_message_id="m1")
+        _patch_common(monkeypatch, fake_client_kwargs={
+            "is_full_sync": True,
+            "verify_exc": RuntimeError("API down"),
+        })
+        monkeypatch.setattr(
+            emails_service, "load_stored_message_ids",
+            lambda _aid: ["m1", "m_ghost"],
+        )
+        # Should not raise
+        result = emails_service.sync_email_metadata(_MAILBOX_ID, _USER_ID)
+        assert result.total_synced >= 0
+
+    def test_no_ghosts_means_no_deletes(self, monkeypatch):
+        """If all stored IDs are in bootstrap set, no deletes should happen."""
+        meta = build_metadata(provider_message_id="m1")
+        _patch_common(monkeypatch, fake_client_kwargs={
+            "is_full_sync": True,
+            "existing_message_ids": ["m1"],
+        })
+        # DB has exactly the same IDs as bootstrap
+        monkeypatch.setattr(
+            emails_service, "load_stored_message_ids",
+            lambda _aid: ["m1"],
+        )
+        delete_calls = []
+        monkeypatch.setattr(
+            emails_service, "delete_email_metadata_batch",
+            lambda aid, ids: (delete_calls.append((aid, ids)), len(ids))[1],
+        )
+        emails_service.sync_email_metadata(_MAILBOX_ID, _USER_ID)
+        # No ghost deletes (only the normal deletes call with empty list)
+        ghost_deletes = [ids for _, ids in delete_calls if ids and "m1" not in ids]
+        assert ghost_deletes == []
+
+    def test_all_suspects_are_ghosts(self, monkeypatch):
+        """When none of the suspect IDs exist at provider, all are deleted."""
+        meta = build_metadata(provider_message_id="m1")
+        _patch_common(monkeypatch, fake_client_kwargs={
+            "is_full_sync": True,
+            "existing_message_ids": [],  # nothing exists at provider
+        })
+        monkeypatch.setattr(
+            emails_service, "load_stored_message_ids",
+            lambda _aid: ["m1", "ghost1", "ghost2"],
+        )
+        delete_calls = []
+        monkeypatch.setattr(
+            emails_service, "delete_email_metadata_batch",
+            lambda aid, ids: (delete_calls.append((aid, ids)), len(ids))[1],
+        )
+        emails_service.sync_email_metadata(_MAILBOX_ID, _USER_ID)
+        all_deleted = [mid for _, ids in delete_calls for mid in ids]
+        assert "ghost1" in all_deleted
+        assert "ghost2" in all_deleted

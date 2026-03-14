@@ -17,10 +17,13 @@ from api.errors.exceptions import (
 )
 from core.email import CoreError
 from api.schemas.email import AccountSyncDetail, EmailSendRequest, SyncResultOut
+from core.email.email_client import SyncResult
+from core.email.email_manager import EmailManager
 from api.services.services_helpers import (
     build_manager_for_accounts,
     delete_email_metadata_batch,
     ensure_mailbox_access,
+    load_stored_message_ids,
     load_sync_cursors,
     load_wrapped_account_tokens,
     load_wrapped_app_credentials,
@@ -33,6 +36,43 @@ from api.services.services_helpers import (
     update_sync_cursor,
 )
 from database import account_store, DatabaseError
+
+
+def _reconcile_ghost_emails(
+    manager: EmailManager,
+    account_label: str,
+    account_id: str,
+    sync_result: SyncResult,
+) -> tuple[int, list[str]]:
+    """Best-effort: verify DB emails still exist at provider after bootstrap.
+    Returns (deleted_count, ghost_ids). Skips on any error."""
+    try:
+        stored_ids = load_stored_message_ids(account_id)
+    except Exception:
+        logger.warning("Reconciliation skipped for %s: failed to load stored IDs.", account_id)
+        return 0, []
+
+    bootstrap_ids = {m.provider_message_id for m in sync_result.upserts}
+    suspect_ids = [mid for mid in stored_ids if mid not in bootstrap_ids]
+    if not suspect_ids:
+        return 0, []
+
+    try:
+        still_exist = set(manager.verify_message_existence(account_label, suspect_ids))
+    except Exception as exc:
+        logger.warning(
+            "Reconciliation skipped for %s: verification failed (%s): %s",
+            account_id, type(exc).__name__, exc,
+        )
+        return 0, []
+
+    ghost_ids = [mid for mid in suspect_ids if mid not in still_exist]
+    if not ghost_ids:
+        return 0, []
+
+    deleted = delete_email_metadata_batch(account_id, ghost_ids)
+    logger.info("Reconciliation for %s: %d suspect, %d ghosts deleted.", account_id, len(suspect_ids), deleted)
+    return deleted, ghost_ids
 
 
 def _persist_refreshed_tokens(
@@ -128,8 +168,32 @@ def sync_email_metadata(mailbox_id: str, user_id: str) -> SyncResultOut:
             label_updated = update_email_metadata_labels_batch(aid, sync_result.label_updates)
             update_sync_cursor(mid, aid, sync_result.new_cursor)
 
-            count = upserted + deleted + label_updated
+            reconciled, ghost_ids = 0, []
+            if sync_result.is_full_sync:
+                reconciled, ghost_ids = _reconcile_ghost_emails(manager, label, aid, sync_result)
+
+            count = upserted + deleted + label_updated + reconciled
             total_synced += count
+
+            events: list[str] = []
+            for meta in sync_result.upserts:
+                events.append(
+                    f"UPSERT  | id={meta.provider_message_id} | box={meta.box} | subject={meta.subject!r}"
+                )
+            for msg_id in sync_result.deletes:
+                events.append(f"DELETE  | id={msg_id}")
+            for lu in sync_result.label_updates:
+                events.append(
+                    f"LABEL   | id={lu.provider_message_id} | box={lu.box} | is_read={lu.is_read}"
+                )
+            for ghost_id in ghost_ids:
+                events.append(f"GHOST   | id={ghost_id}")
+
+            if events:
+                logger.info("Sync events for account %s (%s) [%d events]:", aid, provider, len(events))
+                for event in events:
+                    logger.info("  %s", event)
+
             account_details.append(AccountSyncDetail(
                 account_id=aid,
                 provider=provider,

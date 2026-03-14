@@ -445,6 +445,17 @@ def update_email_metadata_labels_batch(
         raise ApiError("Failed to update email metadata labels.") from exc
 
 
+def load_stored_message_ids(account_id: str) -> list[str]:
+    """Load all provider_message_ids stored for an account."""
+    try:
+        return email_metadata_store.list_provider_message_ids(account_id)
+    except DatabaseError as exc:
+        raise translate_database_error(exc) from exc
+    except Exception as exc:
+        logger.warning("Unexpected stored message IDs load error (%s): %s", type(exc).__name__, exc)
+        raise ApiError("Failed to load stored message IDs.") from exc
+
+
 def update_sync_cursor(mailbox_id: str, account_id: str, cursor: str) -> None:
     """Persist the new sync_cursor for an account."""
     try:

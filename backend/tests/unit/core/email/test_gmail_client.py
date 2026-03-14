@@ -19,12 +19,56 @@ from core.email.errors import (
     EmailNotAuthenticatedError,
     EmailRecipientsMissingError,
 )
-from core.email.gmail_client import GmailClient
+from core.email.gmail_client import GmailClient, _is_retryable, _INCREMENTAL_EVENT_THRESHOLD
 
 
 @pytest.fixture
 def client() -> GmailClient:
     return GmailClient(account_label="mb__acct")
+
+
+# ── _is_retryable ───────────────────────────────────────────────────
+
+
+class TestIsRetryable:
+    def _make_http_error(self, status: int) -> Exception:
+        from googleapiclient.errors import HttpError
+        resp = MagicMock()
+        type(resp).status = status
+        return HttpError(resp=resp, content=b"err")
+
+    def test_404_not_retryable(self):
+        assert _is_retryable(self._make_http_error(404)) is False
+
+    def test_400_not_retryable(self):
+        assert _is_retryable(self._make_http_error(400)) is False
+
+    def test_403_not_retryable(self):
+        assert _is_retryable(self._make_http_error(403)) is False
+
+    def test_410_not_retryable(self):
+        assert _is_retryable(self._make_http_error(410)) is False
+
+    def test_429_retryable(self):
+        assert _is_retryable(self._make_http_error(429)) is True
+
+    def test_500_retryable(self):
+        assert _is_retryable(self._make_http_error(500)) is True
+
+    def test_502_retryable(self):
+        assert _is_retryable(self._make_http_error(502)) is True
+
+    def test_503_retryable(self):
+        assert _is_retryable(self._make_http_error(503)) is True
+
+    def test_504_retryable(self):
+        assert _is_retryable(self._make_http_error(504)) is True
+
+    def test_non_http_error_retryable(self):
+        assert _is_retryable(RuntimeError("timeout")) is True
+
+    def test_generic_exception_retryable(self):
+        assert _is_retryable(Exception("network error")) is True
 
 
 # ── get_account_label ────────────────────────────────────────────────
@@ -644,8 +688,8 @@ class TestExecuteBatchGetSequentialFallback:
         )
         assert "m1" in result
         assert "m2" not in result
-        assert batch_instance.execute.call_count == 4
-        assert mock_sleep.call_count == 3
+        assert batch_instance.execute.call_count == 5
+        assert mock_sleep.call_count == 4
 
     @patch("core.email.gmail_client.time.sleep")
     def test_retry_with_fixed_delay(self, mock_sleep, client: GmailClient):
@@ -661,7 +705,7 @@ class TestExecuteBatchGetSequentialFallback:
 
         client.service = mock_service
         client._execute_batch_get(["m1"], fmt="metadata", error_context="test")
-        assert mock_sleep.call_args_list == [call(1.0), call(1.0), call(1.0)]
+        assert mock_sleep.call_args_list == [call(1.0), call(1.0), call(1.0), call(1.0)]
 
     def test_batch_execute_exception_raises(self, client: GmailClient):
         """HttpError from batch.execute() raises EmailExternalAPIError."""
@@ -772,7 +816,7 @@ class TestExecuteBatchGetParallel:
         )
         assert "m1" in result
         assert "m2" not in result
-        assert mock_sleep.call_count == 3
+        assert mock_sleep.call_count == 4
 
     @patch("core.email.gmail_client.build")
     @patch("core.email.gmail_client.google_auth_httplib2.AuthorizedHttp")
@@ -809,12 +853,13 @@ class TestExecuteSingleChunk:
             cb("m1", {"id": "m1"}, None)
         batch_instance.execute.side_effect = fake_execute
 
-        successes, failed, elapsed = client._execute_single_chunk(
+        successes, failed, permanent_failed, elapsed = client._execute_single_chunk(
             ["m1"], 0, fmt="metadata",
             credentials=MagicMock(),
         )
         assert successes == {"m1": {"id": "m1"}}
         assert failed == []
+        assert permanent_failed == []
         assert elapsed >= 0
 
     @patch("core.email.gmail_client.build")
@@ -831,12 +876,13 @@ class TestExecuteSingleChunk:
             cb("m2", None, Exception("fail"))
         batch_instance.execute.side_effect = fake_execute
 
-        successes, failed, elapsed = client._execute_single_chunk(
+        successes, failed, permanent_failed, elapsed = client._execute_single_chunk(
             ["m1", "m2"], 0, fmt="metadata",
             credentials=MagicMock(),
         )
         assert successes == {"m1": {"id": "m1"}}
         assert failed == ["m2"]
+        assert permanent_failed == []
 
     @patch("core.email.gmail_client.build")
     @patch("core.email.gmail_client.google_auth_httplib2.AuthorizedHttp")
@@ -848,12 +894,131 @@ class TestExecuteSingleChunk:
         thread_service.new_batch_http_request.return_value = batch_instance
         batch_instance.execute.side_effect = RuntimeError("connection reset")
 
-        successes, failed, elapsed = client._execute_single_chunk(
+        successes, failed, permanent_failed, elapsed = client._execute_single_chunk(
             ["m1", "m2"], 0, fmt="metadata",
             credentials=MagicMock(),
         )
         assert successes == {}
         assert set(failed) == {"m1", "m2"}
+        assert permanent_failed == []
+
+
+    @patch("core.email.gmail_client.build")
+    @patch("core.email.gmail_client.google_auth_httplib2.AuthorizedHttp")
+    def test_non_retryable_callback_goes_to_permanent_failed(self, mock_auth_http, mock_build, client: GmailClient):
+        """HttpError 404 in callback → permanent_failed, not retryable failed."""
+        from googleapiclient.errors import HttpError
+
+        thread_service = MagicMock()
+        mock_build.return_value = thread_service
+        batch_instance = MagicMock()
+        thread_service.new_batch_http_request.return_value = batch_instance
+
+        resp_404 = MagicMock()
+        type(resp_404).status = 404
+
+        def fake_execute():
+            cb = thread_service.new_batch_http_request.call_args[1]["callback"]
+            cb("m1", {"id": "m1"}, None)
+            cb("m2", None, HttpError(resp=resp_404, content=b"not found"))
+        batch_instance.execute.side_effect = fake_execute
+
+        successes, failed, permanent_failed, elapsed = client._execute_single_chunk(
+            ["m1", "m2"], 0, fmt="metadata",
+            credentials=MagicMock(),
+        )
+        assert successes == {"m1": {"id": "m1"}}
+        assert failed == []
+        assert permanent_failed == ["m2"]
+
+    @patch("core.email.gmail_client.build")
+    @patch("core.email.gmail_client.google_auth_httplib2.AuthorizedHttp")
+    def test_chunk_level_non_retryable_http_error(self, mock_auth_http, mock_build, client: GmailClient):
+        """Non-retryable HttpError from batch.execute() → all IDs permanently failed."""
+        from googleapiclient.errors import HttpError
+
+        thread_service = MagicMock()
+        mock_build.return_value = thread_service
+        batch_instance = MagicMock()
+        thread_service.new_batch_http_request.return_value = batch_instance
+
+        resp_400 = MagicMock()
+        type(resp_400).status = 400
+        batch_instance.execute.side_effect = HttpError(resp=resp_400, content=b"bad request")
+
+        successes, failed, permanent_failed, elapsed = client._execute_single_chunk(
+            ["m1", "m2"], 0, fmt="metadata",
+            credentials=MagicMock(),
+        )
+        assert successes == {}
+        assert failed == []
+        assert set(permanent_failed) == {"m1", "m2"}
+
+
+# ── Non-retryable errors skip retry in batch paths ──────────────
+
+
+class TestNonRetryableSkipsRetry:
+    """Non-retryable errors (e.g. 404) must not trigger retry loops."""
+
+    @patch("core.email.gmail_client.time.sleep")
+    def test_sequential_path_no_retry_for_404(self, mock_sleep, client: GmailClient):
+        """HttpError 404 in sequential callback → no retry, message simply missing."""
+        from googleapiclient.errors import HttpError
+
+        mock_service = MagicMock()
+        batch_instance = MagicMock()
+        mock_service.new_batch_http_request.return_value = batch_instance
+
+        resp_404 = MagicMock()
+        type(resp_404).status = 404
+
+        def fake_execute():
+            cb = mock_service.new_batch_http_request.call_args[1]["callback"]
+            cb("m1", {"id": "m1"}, None)
+            cb("m2", None, HttpError(resp=resp_404, content=b"not found"))
+        batch_instance.execute.side_effect = fake_execute
+
+        client.service = mock_service
+        result = client._execute_batch_get(
+            ["m1", "m2"], fmt="metadata", error_context="test",
+        )
+        assert "m1" in result
+        assert "m2" not in result
+        assert batch_instance.execute.call_count == 1
+        mock_sleep.assert_not_called()
+
+    @patch("core.email.gmail_client.time.sleep")
+    @patch("core.email.gmail_client.build")
+    @patch("core.email.gmail_client.google_auth_httplib2.AuthorizedHttp")
+    def test_parallel_path_no_retry_for_404(self, mock_auth_http, mock_build, mock_sleep, client: GmailClient):
+        """HttpError 404 in parallel callback → no retry, message simply missing."""
+        from googleapiclient.errors import HttpError
+
+        client.service = MagicMock()
+        client._credentials = MagicMock()
+
+        thread_service = MagicMock()
+        mock_build.return_value = thread_service
+        batch_instance = MagicMock()
+        thread_service.new_batch_http_request.return_value = batch_instance
+
+        resp_404 = MagicMock()
+        type(resp_404).status = 404
+
+        def fake_execute():
+            cb = thread_service.new_batch_http_request.call_args[1]["callback"]
+            cb("m1", {"id": "m1"}, None)
+            cb("m2", None, HttpError(resp=resp_404, content=b"not found"))
+        batch_instance.execute.side_effect = fake_execute
+
+        result = client._execute_batch_get(
+            ["m1", "m2"], fmt="metadata", error_context="test",
+        )
+        assert "m1" in result
+        assert "m2" not in result
+        assert batch_instance.execute.call_count == 1
+        mock_sleep.assert_not_called()
 
 
 # ── authenticate ─────────────────────────────────────────────────
@@ -954,3 +1119,95 @@ class TestSendEmail:
 
         with pytest.raises(EmailExternalAPIError, match="Gmail unexpected send email error"):
             client.send_email("S", "B", ["a@b.com"])
+
+
+# ── verify_message_existence ───────────────────────────────────────
+
+
+class TestVerifyMessageExistence:
+    def test_not_authenticated_raises(self, client: GmailClient):
+        with pytest.raises(EmailNotAuthenticatedError):
+            client.verify_message_existence(["m1"])
+
+    def test_empty_list_returns_empty(self, client: GmailClient):
+        client.service = MagicMock()
+        assert client.verify_message_existence([]) == []
+
+    def test_all_exist(self, client: GmailClient):
+        client.service = MagicMock()
+        with patch.object(
+            client, "_execute_batch_get",
+            return_value={"m1": {"id": "m1"}, "m2": {"id": "m2"}},
+        ):
+            result = client.verify_message_existence(["m1", "m2"])
+        assert result == ["m1", "m2"]
+
+    def test_some_missing(self, client: GmailClient):
+        client.service = MagicMock()
+        with patch.object(
+            client, "_execute_batch_get",
+            return_value={"m1": {"id": "m1"}},
+        ):
+            result = client.verify_message_existence(["m1", "m2", "m3"])
+        assert result == ["m1"]
+
+    def test_all_missing(self, client: GmailClient):
+        client.service = MagicMock()
+        with patch.object(client, "_execute_batch_get", return_value={}):
+            result = client.verify_message_existence(["m1", "m2"])
+        assert result == []
+
+
+# ── is_full_sync flag ──────────────────────────────────────────────
+
+
+class TestBootstrapIsFullSync:
+    def test_bootstrap_sets_is_full_sync_true(self, client: GmailClient):
+        client.service = MagicMock()
+        with patch.object(client, "_list_message_ids", return_value=[]), \
+             patch.object(client, "_batch_fetch_metadata", return_value=[]), \
+             patch.object(client, "_get_current_history_id", return_value="hist1"):
+            result = client._bootstrap_email_metadata(500)
+        assert result.is_full_sync is True
+
+
+class TestIncrementalIsFullSync:
+    def test_incremental_sets_is_full_sync_false(self, client: GmailClient):
+        mock_service = MagicMock()
+        mock_service.users().history().list().execute.return_value = (
+            _make_history_response(history=[], history_id="200")
+        )
+        client.service = mock_service
+        result = client._incremental_email_metadata("100")
+        assert result.is_full_sync is False
+
+
+# ── incremental threshold ─────────────────────────────────────────
+
+
+class TestIncrementalThreshold:
+    def test_threshold_triggers_fallback(self, client: GmailClient):
+        mock_service = MagicMock()
+        ids_count = _INCREMENTAL_EVENT_THRESHOLD + 1
+        history = [{"messagesAdded": [
+            {"message": {"id": f"m{i}"}} for i in range(ids_count)
+        ]}]
+        mock_service.users().history().list().execute.return_value = (
+            _make_history_response(history=history, history_id="999")
+        )
+        client.service = mock_service
+        with pytest.raises(EmailExternalAPIError, match="exceeding threshold"):
+            client._incremental_email_metadata("50")
+
+    def test_at_threshold_does_not_trigger(self, client: GmailClient):
+        mock_service = MagicMock()
+        history = [{"messagesAdded": [
+            {"message": {"id": f"m{i}"}} for i in range(_INCREMENTAL_EVENT_THRESHOLD)
+        ]}]
+        mock_service.users().history().list().execute.return_value = (
+            _make_history_response(history=history, history_id="999")
+        )
+        client.service = mock_service
+        with patch.object(client, "_batch_fetch_metadata", return_value=[]):
+            result = client._incremental_email_metadata("50")
+        assert isinstance(result, SyncResult)

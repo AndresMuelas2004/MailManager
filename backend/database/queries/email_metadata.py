@@ -40,3 +40,9 @@ UPDATE_LABELS_BATCH = """
      WHERE em.provider_message_id = v.provider_message_id::VARCHAR
        AND em.account_id          = v.account_id::UUID
 """
+
+LIST_PROVIDER_MESSAGE_IDS_BY_ACCOUNT = """
+    SELECT provider_message_id
+    FROM email_metadata
+    WHERE account_id = %(account_id)s
+"""

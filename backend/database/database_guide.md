@@ -1,3 +1,8 @@
+> **Permanent rule (do not remove unless the user explicitly asks):**
+> This document should only contain information that Claude cannot deduce from reading the code,
+> or that would be complex / context-expensive to deduce. Information easily derived from the code
+> does not need to be here.
+
 # Database Layer Guide
 
 > **General rules**: this layer MUST respect every rule defined in

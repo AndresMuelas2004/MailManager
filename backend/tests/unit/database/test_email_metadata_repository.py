@@ -251,3 +251,45 @@ def test_update_labels_batch_propagates_connection_pool_error(monkeypatch):
 
     with pytest.raises(ConnectionPoolError, match="pool down"):
         em_module.email_metadata_store.update_labels_batch("acc1", [("m1",)])
+
+
+# ===== list_provider_message_ids =====
+
+
+def test_list_provider_message_ids_happy_path(monkeypatch):
+    cursor = FakeCursor(fetchall_results=[[("m1",), ("m2",)]])
+    patch_connection(monkeypatch, em_module, [cursor])
+
+    result = em_module.email_metadata_store.list_provider_message_ids("acc1")
+    assert result == ["m1", "m2"]
+    assert len(cursor.executed) == 1
+
+
+def test_list_provider_message_ids_empty_result(monkeypatch):
+    cursor = FakeCursor(fetchall_results=[[]])
+    patch_connection(monkeypatch, em_module, [cursor])
+
+    assert em_module.email_metadata_store.list_provider_message_ids("acc1") == []
+
+
+def test_list_provider_message_ids_invalid_text_returns_empty(monkeypatch):
+    cursor = FakeCursor(execute_side_effect=psycopg2.errors.InvalidTextRepresentation())
+    patch_connection(monkeypatch, em_module, [cursor])
+
+    assert em_module.email_metadata_store.list_provider_message_ids("not-a-uuid") == []
+
+
+def test_list_provider_message_ids_psycopg2_error_raises_query_error(monkeypatch):
+    cursor = FakeCursor(execute_side_effect=psycopg2.OperationalError("fail"))
+    patch_connection(monkeypatch, em_module, [cursor])
+
+    with pytest.raises(QueryError, match="Failed to list provider message IDs"):
+        em_module.email_metadata_store.list_provider_message_ids("acc1")
+
+
+def test_list_provider_message_ids_generic_raises_query_error(monkeypatch):
+    cursor = FakeCursor(execute_side_effect=RuntimeError("boom"))
+    patch_connection(monkeypatch, em_module, [cursor])
+
+    with pytest.raises(QueryError, match="RuntimeError"):
+        em_module.email_metadata_store.list_provider_message_ids("acc1")

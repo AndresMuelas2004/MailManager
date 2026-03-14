@@ -7,6 +7,7 @@ from core.email.errors import (
     EmailAccountNotFoundError,
     EmailAccountRecordError,
     EmailDuplicateAccountLabelError,
+    EmailExternalAPIError,
     EmailProviderConfigError,
 )
 from core.email.outlook_client import OutlookClient
@@ -203,3 +204,33 @@ def test_get_last_errors_returns_copy(manager: EmailManager, fake_client_fail_fe
     fresh = manager.get_last_errors()
     assert "new" not in fresh
     assert set(fresh.keys()) == {fake_client_fail_fetch.get_account_label()}
+
+
+# ==================================================================
+# verify_message_existence
+# ==================================================================
+
+
+class TestVerifyMessageExistence:
+
+    def test_delegates_to_correct_client(
+        self, manager: EmailManager, fake_client_factory
+    ):
+        client = fake_client_factory("acct", existing_message_ids=["m1", "m2"])
+        manager.add_client(client)
+        result = manager.verify_message_existence("acct", ["m1", "m2", "m3"])
+        assert result == ["m1", "m2"]
+        assert client.verify_calls == 1
+
+    def test_not_found_raises(self, manager: EmailManager):
+        with pytest.raises(EmailAccountNotFoundError, match="not found"):
+            manager.verify_message_existence("missing", ["m1"])
+
+    def test_propagates_client_exception(
+        self, manager: EmailManager, fake_client_factory
+    ):
+        exc = EmailExternalAPIError("API down")
+        client = fake_client_factory("acct", verify_exc=exc)
+        manager.add_client(client)
+        with pytest.raises(EmailExternalAPIError, match="API down"):
+            manager.verify_message_existence("acct", ["m1"])

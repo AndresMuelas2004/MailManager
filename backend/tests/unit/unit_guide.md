@@ -1,3 +1,8 @@
+> **Permanent rule (do not remove unless the user explicitly asks):**
+> This document should only contain information that Claude cannot deduce from reading the code,
+> or that would be complex / context-expensive to deduce. Information easily derived from the code
+> does not need to be here.
+
 # Unit Tests Guide
 
 > **General rules**: this test layer MUST respect every rule defined in

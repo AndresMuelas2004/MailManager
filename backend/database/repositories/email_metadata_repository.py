@@ -120,4 +120,22 @@ class PgEmailMetadataStore(EmailMetadataStore):
             ) from exc
 
 
+    def list_provider_message_ids(self, account_id: str) -> list[str]:
+        try:
+            with connection.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(queries.LIST_PROVIDER_MESSAGE_IDS_BY_ACCOUNT, {"account_id": account_id})
+                    return [row[0] for row in cur.fetchall()]
+        except psycopg2.errors.InvalidTextRepresentation:
+            return []
+        except DatabaseError:
+            raise
+        except psycopg2.Error as exc:
+            raise QueryError("Failed to list provider message IDs.") from exc
+        except Exception as exc:
+            raise QueryError(
+                f"Unexpected list provider message IDs error ({type(exc).__name__}): {exc}"
+            ) from exc
+
+
 email_metadata_store = PgEmailMetadataStore()
