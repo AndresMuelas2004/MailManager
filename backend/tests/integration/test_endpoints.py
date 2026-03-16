@@ -172,6 +172,29 @@ def test_send_email(test_client, setup_mailbox_and_account):
     assert resp.json() == {"status": "sent"}
 
 
+def test_send_email_persists_metadata(test_client, setup_mailbox_and_account, isolated_db):
+    """After send, the sent email metadata is persisted in the database."""
+    mid, aid = setup_mailbox_and_account(test_client)
+    resp = test_client.post(
+        f"{_MAILBOX_URL}/{mid}/emails/send",
+        json={
+            "account_id": aid,
+            "subject": "Persisted Send",
+            "body": "Body",
+            "recipients": ["dest@example.com"],
+        },
+    )
+    assert resp.status_code == 200
+    with isolated_db.cursor() as cur:
+        cur.execute(
+            "SELECT count(*) FROM email_metadata "
+            "WHERE account_id = %s::uuid AND box = 'SENT'",
+            (aid,),
+        )
+        count = cur.fetchone()[0]
+    assert count >= 1
+
+
 # ==================================================================
 # Multi-account scenarios
 # ==================================================================

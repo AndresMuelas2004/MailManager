@@ -148,12 +148,13 @@ class EmailManager:
         subject: str,
         body: str,
         recipients: list[str],
-    ) -> None:
+    ) -> EmailMetadata:
         """
         Send an email using the client that matches the requested account label.
+        Returns metadata of the sent email.
         """
         client = self._get_client_or_raise(account_label)
-        client.send_email(subject, body, recipients)
+        return client.send_email(subject, body, recipients)
 
     def get_last_errors(self) -> dict[str, Exception]:
         """

@@ -6,6 +6,7 @@ Shared helper tests (parse_expiry, unwrap/wrap) live in ``test_helpers.py``.
 from __future__ import annotations
 
 import base64
+from datetime import datetime
 from unittest.mock import MagicMock, call, patch
 
 import pytest
@@ -1078,47 +1079,156 @@ class TestAuthenticate:
 
 
 class TestSendEmail:
-    def test_constructs_mime_and_calls_api(self, client: GmailClient):
-        """Verify MIME message structure and API call."""
+    def _setup_send_mock(self, client: GmailClient, send_response: dict | None = None):
+        """Set up mock service for send_email with proper MagicMock chaining."""
         mock_service = MagicMock()
         client.service = mock_service
+        if send_response is None:
+            send_response = {"id": "msg1", "threadId": "th1", "labelIds": ["SENT"]}
+        # Chain: service.users().messages().send(userId=..., body=...).execute()
+        mock_service.users.return_value.messages.return_value.send.return_value.execute.return_value = send_response
+        return mock_service
 
-        client.send_email("Test Subject", "Test Body", ["a@b.com"])
+    def test_constructs_mime_and_calls_api(self, client: GmailClient):
+        """Verify MIME message structure and API call."""
+        mock_service = self._setup_send_mock(client)
+        with patch.object(client, "_batch_fetch_metadata", return_value=[]):
+            client.send_email("Test Subject", "Test Body", ["a@b.com"])
 
-        send_call = mock_service.users().messages().send
-        send_call.assert_called_once()
-        call_kwargs = send_call.call_args
-        body = call_kwargs[1]["body"] if "body" in (call_kwargs[1] or {}) else call_kwargs[0][0] if call_kwargs[0] else call_kwargs[1].get("body")
+        send_fn = mock_service.users.return_value.messages.return_value.send
+        send_fn.assert_called_once()
+        call_kwargs = send_fn.call_args
+        body = call_kwargs[1]["body"]
         raw_bytes = base64.urlsafe_b64decode(body["raw"])
         raw_text = raw_bytes.decode("utf-8")
         assert "Test Subject" in raw_text
         assert "Test Body" in raw_text
         assert "a@b.com" in raw_text
 
-    def test_http_error_raises_external_api(self, client: GmailClient):
-        mock_service = MagicMock()
-        client.service = mock_service
+    def test_returns_metadata_from_batch_fetch(self, client: GmailClient):
+        """send_email returns EmailMetadata fetched via _batch_fetch_metadata."""
+        from core.email.email_client import EmailMetadata
+        self._setup_send_mock(client, {"id": "msg123", "threadId": "th456", "labelIds": ["SENT"]})
+        expected = EmailMetadata(
+            provider_message_id="msg123", thread_id="th456",
+            from_email="me@gmail.com", from_name="Me",
+            subject="Hello", received_at=datetime(2024, 1, 1),
+            is_read=True, box="SENT",
+        )
+        with patch.object(client, "_batch_fetch_metadata", return_value=[expected]) as mock_fetch:
+            result = client.send_email("Hello", "Body", ["a@b.com"])
 
+        mock_fetch.assert_called_once_with(["msg123"])
+        assert result is expected
+
+    def test_returns_fallback_metadata_when_fetch_empty(self, client: GmailClient):
+        """When _batch_fetch_metadata returns empty, fallback metadata is built."""
+        self._setup_send_mock(client, {"id": "msg123", "threadId": "th456"})
+        with patch.object(client, "_batch_fetch_metadata", return_value=[]):
+            result = client.send_email("Subject", "Body", ["a@b.com"])
+
+        assert result.provider_message_id == "msg123"
+        assert result.thread_id == "th456"
+        assert result.box == "SENT"
+        assert result.is_read is True
+        assert result.subject == "Subject"
+
+    def test_http_error_raises_external_api(self, client: GmailClient):
         from googleapiclient.errors import HttpError
-        from unittest.mock import PropertyMock
 
         mock_resp = MagicMock()
         mock_resp.status = 403
         mock_resp.reason = "Forbidden"
         http_err = HttpError(resp=mock_resp, content=b"forbidden")
 
-        mock_service.users().messages().send().execute.side_effect = http_err
+        mock_service = self._setup_send_mock(client)
+        mock_service.users.return_value.messages.return_value.send.return_value.execute.side_effect = http_err
 
         with pytest.raises(EmailExternalAPIError, match="Gmail failed to send email"):
             client.send_email("S", "B", ["a@b.com"])
 
     def test_unexpected_error_raises_external_api(self, client: GmailClient):
-        mock_service = MagicMock()
-        client.service = mock_service
-        mock_service.users().messages().send().execute.side_effect = RuntimeError("boom")
+        mock_service = self._setup_send_mock(client)
+        mock_service.users.return_value.messages.return_value.send.return_value.execute.side_effect = RuntimeError("boom")
 
         with pytest.raises(EmailExternalAPIError, match="Gmail unexpected send email error"):
             client.send_email("S", "B", ["a@b.com"])
+
+    def test_supplements_subject_when_batch_fetch_returns_empty(self, client: GmailClient):
+        """Batch fetch returns EmailMetadata with empty subject — supplemented from parameter."""
+        from core.email.email_client import EmailMetadata
+        self._setup_send_mock(client, {"id": "msg1", "threadId": "th1"})
+        fetched = EmailMetadata(
+            provider_message_id="msg1", thread_id="th1",
+            from_email="me@gmail.com", from_name="Me",
+            subject="", received_at=datetime(2024, 1, 1),
+            is_read=True, box="SENT",
+        )
+        with patch.object(client, "_batch_fetch_metadata", return_value=[fetched]):
+            result = client.send_email("Real Subject", "Body", ["a@b.com"])
+        assert result.subject == "Real Subject"
+
+    def test_supplements_from_email_from_profile(self, client: GmailClient):
+        """Batch fetch returns empty from_email — supplemented from getProfile."""
+        from core.email.email_client import EmailMetadata
+        self._setup_send_mock(client, {"id": "msg1", "threadId": "th1"})
+        fetched = EmailMetadata(
+            provider_message_id="msg1", thread_id="th1",
+            from_email="", from_name="",
+            subject="S", received_at=datetime(2024, 1, 1),
+            is_read=True, box="SENT",
+        )
+        with patch.object(client, "_batch_fetch_metadata", return_value=[fetched]), \
+             patch.object(client, "_fetch_sender_email", return_value="me@gmail.com"):
+            result = client.send_email("S", "Body", ["a@b.com"])
+        assert result.from_email == "me@gmail.com"
+
+    def test_supplements_from_name_with_from_email(self, client: GmailClient):
+        """Batch fetch returns from_email but empty from_name — from_name set to from_email."""
+        from core.email.email_client import EmailMetadata
+        self._setup_send_mock(client, {"id": "msg1", "threadId": "th1"})
+        fetched = EmailMetadata(
+            provider_message_id="msg1", thread_id="th1",
+            from_email="me@gmail.com", from_name="",
+            subject="S", received_at=datetime(2024, 1, 1),
+            is_read=True, box="SENT",
+        )
+        with patch.object(client, "_batch_fetch_metadata", return_value=[fetched]):
+            result = client.send_email("S", "Body", ["a@b.com"])
+        assert result.from_name == "me@gmail.com"
+
+    def test_fallback_metadata_uses_profile_email(self, client: GmailClient):
+        """Fallback path (batch fetch empty) uses profile email for from fields."""
+        self._setup_send_mock(client, {"id": "msg1", "threadId": "th1"})
+        with patch.object(client, "_batch_fetch_metadata", return_value=[]), \
+             patch.object(client, "_fetch_sender_email", return_value="me@gmail.com"):
+            result = client.send_email("Subject", "Body", ["a@b.com"])
+        assert result.from_email == "me@gmail.com"
+        assert result.from_name == "me@gmail.com"
+        assert result.subject == "Subject"
+
+
+class TestFetchSenderEmail:
+    def test_caches_result(self, client: GmailClient):
+        """_fetch_sender_email calls getProfile only once, caches for subsequent calls."""
+        mock_service = MagicMock()
+        client.service = mock_service
+        mock_service.users.return_value.getProfile.return_value.execute.return_value = {
+            "emailAddress": "me@gmail.com",
+        }
+        first = client._fetch_sender_email()
+        second = client._fetch_sender_email()
+        assert first == "me@gmail.com"
+        assert second == "me@gmail.com"
+        mock_service.users.return_value.getProfile.return_value.execute.assert_called_once()
+
+    def test_returns_empty_on_error(self, client: GmailClient):
+        """_fetch_sender_email returns empty string when getProfile raises."""
+        mock_service = MagicMock()
+        client.service = mock_service
+        mock_service.users.return_value.getProfile.return_value.execute.side_effect = RuntimeError("boom")
+        result = client._fetch_sender_email()
+        assert result == ""
 
 
 # ── verify_message_existence ───────────────────────────────────────

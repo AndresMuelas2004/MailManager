@@ -30,6 +30,7 @@ from .helpers import (
 OUTLOOK_SCOPES = [
     "https://graph.microsoft.com/Mail.ReadWrite",
     "https://graph.microsoft.com/Mail.Send",
+    "https://graph.microsoft.com/User.Read",
     "offline_access",
 ]
 
@@ -63,6 +64,8 @@ class OutlookClient(EmailClient):
     def __init__(self, account_label: str = "outlook") -> None:
         self._account_label = account_label
         self._access_token: str | None = None
+        self._sender_email: str | None = None
+        self._sender_name: str | None = None
 
     # ------------------------------------------------------------------
     # Authentication
@@ -601,9 +604,10 @@ class OutlookClient(EmailClient):
         subject: str,
         body: str,
         recipients: list[str],
-    ) -> None:
+    ) -> EmailMetadata:
         """
-        Send a plain text email using Microsoft Graph API.
+        Send a plain text email using Microsoft Graph API (draft-then-send).
+        Returns metadata of the sent message.
         """
         if self._access_token is None:
             raise EmailNotAuthenticatedError()
@@ -611,17 +615,40 @@ class OutlookClient(EmailClient):
         if not recipients:
             raise EmailRecipientsMissingError()
 
-        payload = {
-            "message": {
-                "subject": subject,
-                "body": {"contentType": "Text", "content": body},
-                "toRecipients": [
-                    {"emailAddress": {"address": r}} for r in recipients
-                ],
-            }
+        draft_payload = {
+            "subject": subject,
+            "body": {"contentType": "Text", "content": body},
+            "toRecipients": [
+                {"emailAddress": {"address": r}} for r in recipients
+            ],
         }
 
-        self._graph_request("POST", f"{GRAPH_BASE_URL}/me/sendMail", body=payload)
+        draft_response = self._graph_request(
+            "POST", f"{GRAPH_BASE_URL}/me/messages", body=draft_payload,
+        )
+        metadata = self._parse_graph_message(draft_response, "SENT")
+
+        draft_id = draft_response.get("id", "")
+        try:
+            self._graph_request("POST", f"{GRAPH_BASE_URL}/me/messages/{draft_id}/send")
+        except Exception:
+            try:
+                self._graph_request("DELETE", f"{GRAPH_BASE_URL}/me/messages/{draft_id}")
+            except Exception:
+                logger.warning(
+                    "Outlook failed to delete orphan draft %s after send failure.",
+                    draft_id,
+                )
+            raise
+
+        if not metadata.from_email or not metadata.from_name:
+            profile_email, profile_name = self._fetch_sender_profile()
+            if not metadata.from_email:
+                metadata.from_email = profile_email
+            if not metadata.from_name:
+                metadata.from_name = profile_name or profile_email
+
+        return metadata
 
     def verify_message_existence(self, message_ids: list[str]) -> list[str]:
         if self._access_token is None:
@@ -647,6 +674,78 @@ class OutlookClient(EmailClient):
     # ------------------------------------------------------------------
     # Private helpers
     # ------------------------------------------------------------------
+
+    def _fetch_sender_profile(self) -> tuple[str, str]:
+        """Best-effort fetch of the authenticated user's email and display name (cached).
+
+        Tries three strategies in order:
+        1. GET /me (requires User.Read scope)
+        2. Decode JWT access token claims
+        3. Read the ``from`` field of a recently sent message (Mail.ReadWrite)
+        """
+        if self._sender_email is not None:
+            return self._sender_email, self._sender_name or ""
+
+        email, name = "", ""
+
+        # Try 1: Graph API /me endpoint (needs User.Read scope)
+        try:
+            response = self._graph_request(
+                "GET", f"{GRAPH_BASE_URL}/me?$select=displayName,mail,userPrincipalName",
+            )
+            email = response.get("mail") or response.get("userPrincipalName") or ""
+            name = response.get("displayName") or ""
+        except Exception:
+            pass
+
+        # Try 2: decode JWT access token claims
+        if not email:
+            email, name = self._parse_token_claims()
+
+        # Try 3: read from a recently sent message (needs Mail.ReadWrite)
+        if not email:
+            try:
+                response = self._graph_request(
+                    "GET",
+                    f"{GRAPH_BASE_URL}/me/mailFolders/sentitems/messages?$top=1&$select=from",
+                )
+                messages = response.get("value", [])
+                if messages:
+                    from_obj = messages[0].get("from") or {}
+                    email_addr = from_obj.get("emailAddress") or {}
+                    email = email_addr.get("address") or ""
+                    name = email_addr.get("name") or ""
+            except Exception:
+                pass
+
+        self._sender_email = email
+        self._sender_name = name
+        return self._sender_email, self._sender_name
+
+    def _parse_token_claims(self) -> tuple[str, str]:
+        """Extract (email, display_name) from the JWT access token claims."""
+        if not self._access_token:
+            return "", ""
+        try:
+            parts = self._access_token.split(".")
+            if len(parts) != 3:
+                return "", ""
+            payload = parts[1]
+            padding = 4 - len(payload) % 4
+            if padding != 4:
+                payload += "=" * padding
+            claims = json.loads(base64.urlsafe_b64decode(payload))
+            email = (
+                claims.get("preferred_username")
+                or claims.get("email")
+                or claims.get("unique_name")
+                or claims.get("upn")
+                or ""
+            )
+            name = claims.get("name") or ""
+            return email, name
+        except Exception:
+            return "", ""
 
     def _resolve_scopes(
         self,

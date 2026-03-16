@@ -92,6 +92,7 @@ class GmailClient(EmailClient):
         self._account_label = account_label
         self.service = None
         self._credentials: Credentials | None = None
+        self._sender_email: str | None = None
 
     def authenticate(
         self,
@@ -608,6 +609,17 @@ class GmailClient(EmailClient):
             box=box,
         )
 
+    def _fetch_sender_email(self) -> str:
+        """Best-effort fetch of the authenticated user's email address (cached)."""
+        if self._sender_email is not None:
+            return self._sender_email
+        try:
+            profile = self.service.users().getProfile(userId="me").execute()
+            self._sender_email = profile.get("emailAddress", "")
+        except Exception:
+            self._sender_email = ""
+        return self._sender_email
+
     def _get_current_history_id(self) -> str:
         """Retrieve the current historyId from the user's Gmail profile."""
         try:
@@ -760,9 +772,10 @@ class GmailClient(EmailClient):
         subject: str,
         body: str,
         recipients: list[str],
-    ) -> None:
+    ) -> EmailMetadata:
         """
         Send a plain text email using the Gmail API.
+        Returns metadata of the sent message.
         """
         if self.service is None:
             raise EmailNotAuthenticatedError("Gmail send_email requires authentication.")
@@ -780,7 +793,7 @@ class GmailClient(EmailClient):
         payload = {"raw": raw_message}
 
         try:
-            self.service.users().messages().send(userId="me", body=payload).execute()
+            response = self.service.users().messages().send(userId="me", body=payload).execute()
         except HttpError as exc:
             status, reason = http_error_detail(exc)
             raise EmailExternalAPIError(
@@ -790,6 +803,38 @@ class GmailClient(EmailClient):
             raise EmailExternalAPIError(
                 f"Gmail unexpected send email error ({type(exc).__name__}): {exc}"
             ) from exc
+
+        message_id = response.get("id", "")
+        if message_id:
+            try:
+                fetched = self._batch_fetch_metadata([message_id])
+                if fetched:
+                    result = fetched[0]
+                    if not result.subject:
+                        result.subject = subject
+                    if not result.from_email:
+                        result.from_email = self._fetch_sender_email()
+                    if not result.from_name:
+                        result.from_name = result.from_email
+                    return result
+            except Exception as exc:
+                logger.warning(
+                    "Gmail failed to fetch metadata for sent message %s (%s): %s",
+                    message_id, type(exc).__name__, exc,
+                )
+
+        # Fallback: build minimal metadata from the send response
+        sender_email = self._fetch_sender_email()
+        return EmailMetadata(
+            provider_message_id=message_id,
+            thread_id=response.get("threadId") or "",
+            from_email=sender_email,
+            from_name=sender_email,
+            subject=subject,
+            received_at=datetime.now(timezone.utc),
+            is_read=True,
+            box="SENT",
+        )
 
     def verify_message_existence(self, message_ids: list[str]) -> list[str]:
         if self.service is None:

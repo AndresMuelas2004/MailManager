@@ -74,21 +74,23 @@ No global "skip all after first failure". Each test checks its own prerequisites
 | 13 | `DELETE /mailboxes/{mid}` | requires `temp_mid` → produces `temp_mid_deleted` |
 | 14 | `GET /mailboxes/{mid}` → 404 | requires `temp_mid_deleted` |
 
-### Section 4: Provider operations — pre-existing accounts (tests 15–18)
+### Section 4: Provider operations — pre-existing accounts (tests 15–20)
 
 | Test | Endpoint | Dependencies |
 |---|---|---|
-| 15 | `POST .../emails/sync-metadata` (gmail) | independent |
-| 16 | `POST .../emails/sync-metadata` (outlook) | independent |
-| 17 | `POST .../emails/send` (gmail) | independent |
-| 18 | `POST .../emails/send` (outlook) | independent |
+| 15 | `POST .../emails/sync-metadata` (gmail, path 1 — bootstrap) | independent → produces `gmail_path1_done` |
+| 16 | `POST .../emails/sync-metadata` (outlook, path 1 — bootstrap) | independent → produces `outlook_path1_done` |
+| 17 | `POST .../emails/sync-metadata` (gmail, path 2 — incremental) | requires `gmail_path1_done` |
+| 18 | `POST .../emails/sync-metadata` (outlook, path 2 — incremental) | requires `outlook_path1_done` |
+| 19 | `POST .../emails/send` (gmail) | independent |
+| 20 | `POST .../emails/send` (outlook) | independent |
 
-### Section 5: Auth lifecycle — MUST BE LAST (tests 19–20)
+### Section 5: Auth lifecycle — MUST BE LAST (tests 21–22)
 
 | Test | Endpoint | Dependencies |
 |---|---|---|
-| 19 | `POST /auth/logout` | independent → produces `logged_out` |
-| 20 | `GET /auth/me` → 401 | requires `logged_out` |
+| 21 | `POST /auth/logout` | independent → produces `logged_out` |
+| 22 | `GET /auth/me` → 401 | requires `logged_out` |
 
 ## Behavioral Contracts — Traps to Avoid
 
@@ -102,7 +104,7 @@ The pre-existing user, mailboxes, and accounts (defined in `e2e_config.py`) must
 
 ### Auth lifecycle tests must be last
 
-`POST /auth/logout` (test 19) invalidates the session cookie. Any test running after it will get 401. This is why Section 5 is the final section.
+`POST /auth/logout` (test 21) invalidates the session cookie. Any test running after it will get 401. This is why Section 5 is the final section.
 
 ### Section 6. Extension Checklist
 

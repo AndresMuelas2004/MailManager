@@ -10,6 +10,9 @@ Run with: python -m pytest backend/tests/e2e -v --tb=short
 
 from __future__ import annotations
 
+import os
+
+import psycopg2
 import pytest
 
 from .e2e_config import (
@@ -31,6 +34,21 @@ def _require(flow_state: dict, *keys: str) -> None:
     missing = [k for k in keys if k not in flow_state]
     if missing:
         pytest.skip(f"Prerequisites not met: {', '.join(missing)}")
+
+
+def _clear_sync_cursor(account_id: str) -> None:
+    """Set sync_cursor to NULL so the next sync exercises Path 1 (bootstrap)."""
+    dsn = os.getenv("DATABASE_URL", "").strip()
+    conn = psycopg2.connect(dsn=dsn)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE accounts SET sync_cursor = NULL WHERE account_id = %s",
+                (account_id,),
+            )
+        conn.commit()
+    finally:
+        conn.close()
 
 
 # ===================================================================
@@ -156,7 +174,8 @@ def test_14_get_deleted_mailbox_404(e2e_client, flow_state):
 # Section 4: Provider operations (pre-existing connected accounts)
 # ===================================================================
 
-def test_15_sync_metadata_gmail(e2e_client):
+def test_15_sync_metadata_gmail_path_1(e2e_client, flow_state):
+    _clear_sync_cursor(GMAIL_ACCOUNT_ID)
     response = e2e_client.post(f"/mailboxes/{GMAIL_MAILBOX_ID}/emails/sync-metadata")
     _assert_ok(response)
     data = response.json()
@@ -165,9 +184,13 @@ def test_15_sync_metadata_gmail(e2e_client):
     accounts = data["accounts"]
     synced_ids = {a["account_id"] for a in accounts}
     assert GMAIL_ACCOUNT_ID in synced_ids
+    gmail_account = next(a for a in accounts if a["account_id"] == GMAIL_ACCOUNT_ID)
+    assert gmail_account["sync_cursor"] is not None
+    flow_state["gmail_path1_done"] = "true"
 
 
-def test_16_sync_metadata_outlook(e2e_client):
+def test_16_sync_metadata_outlook_path_1(e2e_client, flow_state):
+    _clear_sync_cursor(OUTLOOK_ACCOUNT_ID)
     response = e2e_client.post(f"/mailboxes/{OUTLOOK_MAILBOX_ID}/emails/sync-metadata")
     _assert_ok(response)
     data = response.json()
@@ -176,9 +199,40 @@ def test_16_sync_metadata_outlook(e2e_client):
     accounts = data["accounts"]
     synced_ids = {a["account_id"] for a in accounts}
     assert OUTLOOK_ACCOUNT_ID in synced_ids
+    outlook_account = next(a for a in accounts if a["account_id"] == OUTLOOK_ACCOUNT_ID)
+    assert outlook_account["sync_cursor"] is not None
+    flow_state["outlook_path1_done"] = "true"
 
 
-def test_17_send_email_gmail(e2e_client):
+def test_17_sync_metadata_gmail_path_2(e2e_client, flow_state):
+    _require(flow_state, "gmail_path1_done")
+    response = e2e_client.post(f"/mailboxes/{GMAIL_MAILBOX_ID}/emails/sync-metadata")
+    _assert_ok(response)
+    data = response.json()
+    assert isinstance(data["total_synced"], int)
+    assert data["total_synced"] >= 0
+    accounts = data["accounts"]
+    synced_ids = {a["account_id"] for a in accounts}
+    assert GMAIL_ACCOUNT_ID in synced_ids
+    gmail_account = next(a for a in accounts if a["account_id"] == GMAIL_ACCOUNT_ID)
+    assert gmail_account["sync_cursor"] is not None
+
+
+def test_18_sync_metadata_outlook_path_2(e2e_client, flow_state):
+    _require(flow_state, "outlook_path1_done")
+    response = e2e_client.post(f"/mailboxes/{OUTLOOK_MAILBOX_ID}/emails/sync-metadata")
+    _assert_ok(response)
+    data = response.json()
+    assert isinstance(data["total_synced"], int)
+    assert data["total_synced"] >= 0
+    accounts = data["accounts"]
+    synced_ids = {a["account_id"] for a in accounts}
+    assert OUTLOOK_ACCOUNT_ID in synced_ids
+    outlook_account = next(a for a in accounts if a["account_id"] == OUTLOOK_ACCOUNT_ID)
+    assert outlook_account["sync_cursor"] is not None
+
+
+def test_19_send_email_gmail(e2e_client):
     response = e2e_client.post(
         f"/mailboxes/{GMAIL_MAILBOX_ID}/emails/send",
         json={
@@ -191,7 +245,7 @@ def test_17_send_email_gmail(e2e_client):
     _assert_ok(response)
 
 
-def test_18_send_email_outlook(e2e_client):
+def test_20_send_email_outlook(e2e_client):
     response = e2e_client.post(
         f"/mailboxes/{OUTLOOK_MAILBOX_ID}/emails/send",
         json={
@@ -208,14 +262,14 @@ def test_18_send_email_outlook(e2e_client):
 # Section 5: Auth lifecycle (MUST BE LAST — invalidates session)
 # ===================================================================
 
-def test_19_post_auth_logout(e2e_client, flow_state):
+def test_21_post_auth_logout(e2e_client, flow_state):
     response = e2e_client.post("/auth/logout")
     _assert_ok(response)
     assert response.json() == {"status": "logged_out"}
     flow_state["logged_out"] = "true"
 
 
-def test_20_get_auth_me_after_logout_401(e2e_client, flow_state):
+def test_22_get_auth_me_after_logout_401(e2e_client, flow_state):
     _require(flow_state, "logged_out")
     response = e2e_client.get("/auth/me")
     _assert_ok(response, expected=401)

@@ -120,10 +120,16 @@ class FakeEmailClient(EmailClient):
             raise self._verify_exc
         return [mid for mid in message_ids if mid in self._existing_message_ids]
 
-    def send_email(self, subject: str, body: str, recipients: list[str]) -> None:
+    def send_email(self, subject: str, body: str, recipients: list[str]) -> EmailMetadata:
         if self._send_exc:
             raise self._send_exc
         self.sent_emails.append((subject, body, list(recipients)))
+        return build_metadata(
+            provider_message_id="sent_m1",
+            subject=subject,
+            box="SENT",
+            is_read=True,
+        )
 
     def get_account_label(self) -> str:
         return self._account_label

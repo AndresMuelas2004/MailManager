@@ -912,28 +912,200 @@ class TestGraphRawRequest:
 
 
 class TestSendEmail:
-    def test_constructs_payload_and_calls_graph(self):
+    def _draft_response(self, draft_id="draft1"):
+        return {
+            "id": draft_id,
+            "conversationId": "conv1",
+            "from": {"emailAddress": {"address": "me@outlook.com", "name": "Me"}},
+            "subject": "Subject",
+            "receivedDateTime": "2024-06-01T12:00:00Z",
+            "isRead": True,
+        }
+
+    def test_draft_then_send_two_calls(self):
+        """send_email creates a draft then sends it (2 graph calls)."""
         client = _make_authenticated_client()
-        with patch.object(client, "_graph_request") as mock_graph:
-            client.send_email("Subject", "Body", ["a@b.com"])
-            mock_graph.assert_called_once()
-            call_args, call_kwargs = mock_graph.call_args
-            assert call_args[0] == "POST"
-            assert "/me/sendMail" in call_args[1]
-            payload = call_kwargs.get("body", call_args[2] if len(call_args) > 2 else None)
-            assert payload["message"]["subject"] == "Subject"
-            assert payload["message"]["body"]["content"] == "Body"
-            assert len(payload["message"]["toRecipients"]) == 1
-            assert payload["message"]["toRecipients"][0]["emailAddress"]["address"] == "a@b.com"
+        with patch.object(client, "_graph_request", side_effect=[
+            self._draft_response(), {},
+        ]) as mock_graph:
+            result = client.send_email("Subject", "Body", ["a@b.com"])
+
+        assert mock_graph.call_count == 2
+        # First call: create draft
+        first_args, first_kwargs = mock_graph.call_args_list[0]
+        assert first_args[0] == "POST"
+        assert "/me/messages" in first_args[1]
+        assert "/send" not in first_args[1]
+        draft_body = first_kwargs.get("body", first_args[2] if len(first_args) > 2 else None)
+        assert draft_body["subject"] == "Subject"
+        assert draft_body["body"]["content"] == "Body"
+        # Second call: send
+        second_args, _ = mock_graph.call_args_list[1]
+        assert second_args[0] == "POST"
+        assert "/me/messages/draft1/send" in second_args[1]
+
+    def test_returns_email_metadata(self):
+        """send_email returns EmailMetadata parsed from the draft response."""
+        client = _make_authenticated_client()
+        with patch.object(client, "_graph_request", side_effect=[
+            self._draft_response(), {},
+        ]):
+            result = client.send_email("Subject", "Body", ["a@b.com"])
+
+        assert result.provider_message_id == "draft1"
+        assert result.thread_id == "conv1"
+        assert result.from_email == "me@outlook.com"
+        assert result.subject == "Subject"
+        assert result.box == "SENT"
 
     def test_multiple_recipients_payload(self):
         client = _make_authenticated_client()
-        with patch.object(client, "_graph_request") as mock_graph:
+        with patch.object(client, "_graph_request", side_effect=[
+            self._draft_response(), {},
+        ]) as mock_graph:
             client.send_email("S", "B", ["a@b.com", "c@d.com", "e@f.com"])
-            call_args, call_kwargs = mock_graph.call_args
-            payload = call_kwargs.get("body", call_args[2] if len(call_args) > 2 else None)
-            addrs = [r["emailAddress"]["address"] for r in payload["message"]["toRecipients"]]
+            first_args, first_kwargs = mock_graph.call_args_list[0]
+            payload = first_kwargs.get("body", first_args[2] if len(first_args) > 2 else None)
+            addrs = [r["emailAddress"]["address"] for r in payload["toRecipients"]]
             assert addrs == ["a@b.com", "c@d.com", "e@f.com"]
+
+    def test_supplements_sender_from_profile_when_draft_has_no_from(self):
+        """Draft response without 'from' — sender fields supplemented after send."""
+        client = _make_authenticated_client()
+        draft_no_from = {
+            "id": "draft1",
+            "conversationId": "conv1",
+            "subject": "Subject",
+            "receivedDateTime": "2024-06-01T12:00:00Z",
+            "isRead": True,
+        }
+        profile_response = {
+            "displayName": "Test User",
+            "mail": "me@outlook.com",
+        }
+
+        def mock_graph(method, url, body=None):
+            if method == "POST" and "/me/messages" in url and "/send" not in url:
+                return draft_no_from
+            if method == "POST" and "/send" in url:
+                return {}
+            if method == "GET" and "/me?" in url and "mailFolders" not in url:
+                return profile_response
+            raise AssertionError(f"Unexpected call: {method} {url}")
+
+        with patch.object(client, "_graph_request", side_effect=mock_graph):
+            result = client.send_email("Subject", "Body", ["a@b.com"])
+        assert result.from_email == "me@outlook.com"
+        assert result.from_name == "Test User"
+
+    def test_supplements_sender_from_sentitems_fallback(self):
+        """When /me and JWT fail, reads sender from a recently sent message."""
+        client = _make_authenticated_client()
+        draft_no_from = {
+            "id": "draft1",
+            "conversationId": "conv1",
+            "subject": "Subject",
+            "receivedDateTime": "2024-06-01T12:00:00Z",
+            "isRead": True,
+        }
+        sentitems_response = {
+            "value": [{
+                "from": {"emailAddress": {"address": "me@outlook.com", "name": "Sent User"}},
+            }],
+        }
+
+        call_index = 0
+
+        def mock_graph(method, url, body=None):
+            nonlocal call_index
+            call_index += 1
+            if method == "POST" and "/me/messages" in url and "/send" not in url:
+                return draft_no_from
+            if method == "POST" and "/send" in url:
+                return {}
+            if method == "GET" and "/me?" in url and "mailFolders" not in url:
+                raise EmailExternalAPIError("no User.Read scope")
+            if method == "GET" and "sentitems/messages" in url:
+                return sentitems_response
+            raise AssertionError(f"Unexpected call: {method} {url}")
+
+        with patch.object(client, "_graph_request", side_effect=mock_graph):
+            result = client.send_email("Subject", "Body", ["a@b.com"])
+        assert result.from_email == "me@outlook.com"
+        assert result.from_name == "Sent User"
+
+    def test_uses_draft_from_when_available(self):
+        """Draft with 'from' — no profile call made (only 2 graph calls)."""
+        client = _make_authenticated_client()
+        with patch.object(client, "_graph_request", side_effect=[
+            self._draft_response(), {},
+        ]) as mock_graph:
+            result = client.send_email("Subject", "Body", ["a@b.com"])
+        assert mock_graph.call_count == 2
+        assert result.from_email == "me@outlook.com"
+        assert result.from_name == "Me"
+
+
+class TestFetchSenderProfile:
+    def test_caches_result(self):
+        """_fetch_sender_profile calls /me only once, caches for subsequent calls."""
+        client = _make_authenticated_client()
+        profile_response = {
+            "displayName": "Test User",
+            "mail": "me@outlook.com",
+        }
+        with patch.object(client, "_graph_request", return_value=profile_response) as mock_graph:
+            first = client._fetch_sender_profile()
+            second = client._fetch_sender_profile()
+        assert first == ("me@outlook.com", "Test User")
+        assert second == ("me@outlook.com", "Test User")
+        mock_graph.assert_called_once()
+
+    def test_falls_back_to_jwt_when_graph_fails(self):
+        """When /me fails (e.g. missing User.Read scope), falls back to JWT claims."""
+        import base64 as b64
+        claims = json.dumps({
+            "preferred_username": "user@outlook.com",
+            "name": "JWT User",
+        }).encode()
+        payload_b64 = b64.urlsafe_b64encode(claims).rstrip(b"=").decode()
+        fake_token = f"header.{payload_b64}.signature"
+
+        client = OutlookClient(account_label="mb__outlook")
+        client._access_token = fake_token
+        with patch.object(client, "_graph_request", side_effect=RuntimeError("403")):
+            result = client._fetch_sender_profile()
+        assert result == ("user@outlook.com", "JWT User")
+
+    def test_falls_back_to_sentitems_when_jwt_also_fails(self):
+        """When /me and JWT fail, reads sender from sentitems."""
+        client = OutlookClient(account_label="mb__outlook")
+        client._access_token = "EwB-opaque-token"  # not a JWT
+
+        sentitems_response = {
+            "value": [{
+                "from": {"emailAddress": {"address": "me@outlook.com", "name": "Sent User"}},
+            }],
+        }
+
+        def mock_graph(method, url, body=None):
+            if "mailFolders" not in url and "/me?" in url:
+                raise RuntimeError("no User.Read scope")
+            if "sentitems/messages" in url:
+                return sentitems_response
+            raise AssertionError(f"Unexpected: {method} {url}")
+
+        with patch.object(client, "_graph_request", side_effect=mock_graph):
+            result = client._fetch_sender_profile()
+        assert result == ("me@outlook.com", "Sent User")
+
+    def test_returns_empty_when_all_paths_fail(self):
+        """When /me, JWT, and sentitems all fail, returns empty strings."""
+        client = OutlookClient(account_label="mb__outlook")
+        client._access_token = "opaque"
+        with patch.object(client, "_graph_request", side_effect=RuntimeError("boom")):
+            result = client._fetch_sender_profile()
+        assert result == ("", "")
 
 
 # ── _token_request ───────────────────────────────────────────────

@@ -188,6 +188,25 @@ def test_send_email_from_account_routes_to_correct_client(
     assert fake_client_ok_2.sent_emails == []
 
 
+def test_send_email_from_account_returns_metadata(
+    manager: EmailManager, fake_client_ok
+):
+    """send_email_from_account returns EmailMetadata from the client."""
+    from core.email.email_client import EmailMetadata
+    manager.add_client(fake_client_ok)
+
+    result = manager.send_email_from_account(
+        fake_client_ok.get_account_label(),
+        subject="hello",
+        body="body",
+        recipients=["a@example.com"],
+    )
+
+    assert isinstance(result, EmailMetadata)
+    assert result.box == "SENT"
+    assert result.is_read is True
+
+
 def test_send_email_from_account_not_found_raises_error(manager: EmailManager):
     with pytest.raises(EmailAccountNotFoundError, match="not found"):
         manager.send_email_from_account("missing", "s", "b", ["a@example.com"])

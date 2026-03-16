@@ -232,7 +232,7 @@ def send_email(mailbox_id: str, payload: EmailSendRequest, user_id: str) -> dict
         raise_on_silent_auth_errors(manager.get_last_errors(), fallback=EmailSendError)
 
         try:
-            manager.send_email_from_account(
+            sent_metadata = manager.send_email_from_account(
                 account_label=account_label,
                 subject=payload.subject,
                 body=payload.body,
@@ -244,6 +244,14 @@ def send_email(mailbox_id: str, payload: EmailSendRequest, user_id: str) -> dict
                 fallback=EmailSendError,
                 context={"account_id": payload.account_id, "account_label": account_label},
             ) from exc
+
+        try:
+            persist_email_metadata_batch(payload.account_id, [sent_metadata])
+        except Exception as exc:
+            logger.warning(
+                "Email sent but metadata persistence failed for account '%s' (%s): %s",
+                payload.account_id, type(exc).__name__, exc,
+            )
 
         return {"status": "sent"}
     except ApiError:

@@ -95,12 +95,13 @@ class EmailClient(ABC):
         subject: str,
         body: str,
         recipients: list[str],
-    ) -> None:
+    ) -> EmailMetadata:
         """
         Send a simple email message using this provider.
         :param subject: Email subject line.
         :param body: Plain text body of the email.
         :param recipients: List of recipient email addresses.
+        :return: Metadata of the sent email.
         """
 
     @abstractmethod

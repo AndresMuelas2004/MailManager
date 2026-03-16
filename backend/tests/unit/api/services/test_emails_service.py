@@ -267,6 +267,21 @@ class TestSendEmail:
         emails_service.send_email(_MAILBOX_ID, self._make_payload(), _USER_ID)
         assert len(upsert_calls) >= 1
 
+    def test_persists_sent_metadata(self, monkeypatch):
+        """After send, metadata is persisted with the correct account_id."""
+        _patch_common(monkeypatch)
+        persist_calls = []
+        monkeypatch.setattr(
+            emails_service, "persist_email_metadata_batch",
+            lambda aid, meta: (persist_calls.append((aid, meta)), len(meta))[1],
+        )
+        emails_service.send_email(_MAILBOX_ID, self._make_payload(), _USER_ID)
+        assert len(persist_calls) == 1
+        aid, meta_list = persist_calls[0]
+        assert aid == _ACCOUNT_ID
+        assert len(meta_list) == 1
+        assert meta_list[0].box == "SENT"
+
 
 # ==================================================================
 # _reconcile_ghost_emails
