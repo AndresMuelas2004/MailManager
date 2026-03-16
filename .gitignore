@@ -3,9 +3,10 @@
 .vscode/
 
 # Claude Code local config
-.claude/
+.claude/settings.local.json
 .mcp.json
 claudePlans/
+.playwright-mcp/
 
 # Virtual environment
 .venv/

@@ -4,9 +4,10 @@ E2E test fixtures — nothing faked, real providers and real APIs.
 
 from __future__ import annotations
 
-import contextlib
 import json
 import os
+import uuid
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import psycopg2
@@ -14,12 +15,10 @@ import pytest
 from fastapi.testclient import TestClient
 
 from api.app import create_app
-from database import connection as connection_module
 from database.migrations.runner import ensure_schema_at_head
-from database.repositories import account_repository as account_repo_module
-from database.repositories import mailbox_repository as mailbox_repo_module
-from database.repositories import session_repository as session_repo_module
-from database.repositories import user_repository as user_repo_module
+
+from .e2e_config import TEST_USER_ID
+
 _ALEMBIC_INI_PATH = Path(__file__).resolve().parents[2] / "database" / "alembic.ini"
 
 try:
@@ -107,65 +106,66 @@ def _setup_google_client_id(monkeypatch_module):
 
 
 @pytest.fixture(scope="module")
-def google_id_token():
-    """Obtain a real Google id_token via interactive browser OAuth flow."""
-    from google_auth_oauthlib.flow import InstalledAppFlow
-
-    creds_path = os.environ["MIA_GMAIL_CREDENTIALS_PATH"]
-    with open(creds_path) as f:
-        creds_data = json.load(f)
-
-    if "installed" not in creds_data and "web" not in creds_data:
-        client_config = {"installed": creds_data}
-    else:
-        client_config = creds_data
-
-    os.environ.setdefault("OAUTHLIB_RELAX_TOKEN_SCOPE", "1")
-
-    flow = InstalledAppFlow.from_client_config(
-        client_config,
-        scopes=["openid", "email", "profile"],
-    )
-    flow.run_local_server(port=0)
-
-    raw_id_token = flow.oauth2session.token.get("id_token")
-    if not raw_id_token:
-        pytest.fail("OAuth flow did not return an id_token. Ensure 'openid' scope is supported.")
-    return raw_id_token
-
-
-@pytest.fixture(scope="module")
-def e2e_client(isolated_e2e_db):
+def e2e_client():
     """Real FastAPI TestClient — no fakes, no monkeypatching of providers."""
     app = create_app()
     with TestClient(app) as client:
         yield client
 
 
+@pytest.fixture(scope="module")
+def created_resources() -> dict[str, list[str]]:
+    """Track temp resources for safety-net cleanup."""
+    return {"mailbox_ids": [], "session_ids": []}
+
+
 @pytest.fixture(autouse=True, scope="module")
-def isolated_e2e_db(monkeypatch_module):
-    """Redirect database operations to a transaction that is rolled back at teardown."""
+def e2e_session(e2e_client, created_resources):
+    """Create a real session in DB for the pre-existing test user, set cookie."""
     dsn = os.getenv("DATABASE_URL", "").strip()
     if not dsn:
         pytest.skip("DATABASE_URL is not set.")
 
+    session_id = str(uuid.uuid4())
+    expires_at = (datetime.now(timezone.utc) + timedelta(hours=2)).isoformat()
+
     conn = psycopg2.connect(dsn=dsn)
-    conn.autocommit = False
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO sessions (session_id, user_id, expires_at)
+                VALUES (%(session_id)s, %(user_id)s, %(expires_at)s)
+                """,
+                {
+                    "session_id": session_id,
+                    "user_id": TEST_USER_ID,
+                    "expires_at": expires_at,
+                },
+            )
+        conn.commit()
+    finally:
+        conn.close()
 
-    @contextlib.contextmanager
-    def _get_conn():
-        try:
-            yield conn
-        except Exception:
-            raise
+    created_resources["session_ids"].append(session_id)
+    e2e_client.cookies.set("session_id", session_id)
 
-    monkeypatch_module.setattr(connection_module, "get_connection", _get_conn)
-    monkeypatch_module.setattr(mailbox_repo_module.connection, "get_connection", _get_conn)
-    monkeypatch_module.setattr(account_repo_module.connection, "get_connection", _get_conn)
-    monkeypatch_module.setattr(user_repo_module.connection, "get_connection", _get_conn)
-    monkeypatch_module.setattr(session_repo_module.connection, "get_connection", _get_conn)
+    yield session_id
 
-    yield
+    # Safety-net cleanup: delete temp mailboxes and the test session
+    cleanup_conn = psycopg2.connect(dsn=dsn)
+    try:
+        with cleanup_conn.cursor() as cur:
+            for mid in created_resources["mailbox_ids"]:
+                cur.execute("DELETE FROM mailboxes WHERE mailbox_id = %s", (mid,))
+            for sid in created_resources["session_ids"]:
+                cur.execute("DELETE FROM sessions WHERE session_id = %s", (sid,))
+        cleanup_conn.commit()
+    finally:
+        cleanup_conn.close()
 
-    conn.rollback()
-    conn.close()
+
+@pytest.fixture(scope="module")
+def flow_state() -> dict[str, str]:
+    """Shared dict for passing state between ordered tests."""
+    return {}

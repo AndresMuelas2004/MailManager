@@ -13,59 +13,104 @@
 
 ## Design Decisions
 
+### Fully automated — no interactive steps
+
+The E2E suite runs without any browser interaction or manual input. Authentication is handled by inserting a session directly into the database via `psycopg2`, bypassing the interactive Google OAuth flow.
+
+Three endpoints are **excluded** from the automated suite because they require interactive OAuth or depend on it:
+
+| Endpoint | Reason |
+|---|---|
+| `POST /auth/google` | Initiates interactive browser OAuth flow |
+| `POST /mailboxes/{mid}/accounts/{aid}/connect` | Initiates interactive per-provider OAuth flow |
+| `DELETE /auth/me` | Cannot create a test user without `POST /auth/google` |
+
+These endpoints are verified manually by the developer with scripts.
+
 ### `GOOGLE_CLIENT_ID` derived automatically
 
 `GOOGLE_CLIENT_ID` is **not required** as an env var — the `_setup_google_client_id` fixture extracts the `client_id` from the credentials file pointed to by `MIA_GMAIL_CREDENTIALS_PATH` at runtime.
 
-### Test file variants
+### Test configuration in `e2e_config.py`
 
-- `test_full_flow.py` — Full dual-provider flow (Gmail + Outlook).
-- `test_full_flow_gmailonly.py` — Gmail-only variant (skips Outlook steps).
+Pre-existing test account identifiers are centralized in `e2e_config.py` with env var overrides. These accounts must exist in the database with valid OAuth refresh tokens before running the suite.
 
-Each flow includes numbered tests plus auxiliary steps (08b for DB inspection pause, 99 for cleanup). If one step fails, subsequent steps are skipped.
+### Session injected via direct DB insert
+
+The `e2e_session` fixture creates a real session row in the `sessions` table using a separate `psycopg2` connection (not the app's pool). The session cookie is set on the `TestClient`. `require_session` validates it against the real database.
+
+### Test independence model
+
+No global "skip all after first failure". Each test checks its own prerequisites via `flow_state` keys using the `_require()` helper. If a prerequisite is missing (because the producing test failed), the dependent test shows `SKIPPED`. Independent tests always run.
 
 ## Flow Sequence (test_full_flow.py)
 
-### Auth — login (steps 1–2)
+### Section 1: Health (test 01)
 
-| Step | Action | Endpoint | Interactive? |
-|---|---|---|---|
-| 1 | Google login (real OIDC) | `POST /auth/google` | Yes — browser |
-| 2 | Get current user | `GET /auth/me` | No |
+| Test | Endpoint | Dependencies |
+|---|---|---|
+| 01 | `GET /health` | independent |
 
-### Mailboxes, accounts, emails (steps 3–15)
+### Section 2: Auth read (test 02)
 
-| Step | Action | Endpoint | Interactive? |
-|---|---|---|---|
-| 3 | Create mailbox | `POST /mailboxes` | No |
-| 4 | Create Gmail and Outlook accounts | `POST .../accounts` | No |
-| 5 | Connect Gmail and Outlook | `POST .../connect` | Yes — browser per provider |
-| 6 | Update Gmail label | `PATCH .../accounts/{id}` | No |
-| 7 | Send email from each provider | `POST .../emails/send` | No |
-| 8 | Sync email metadata | `POST .../emails/sync-metadata` | No |
-| 8b | DB inspection pause | — | Yes — manual Enter key |
-| 9–13 | List/get accounts and mailboxes | various GET | No |
-| 14 | Delete mailbox | `DELETE /mailboxes/{mid}` | No |
-| 15 | Confirm deletion | `GET /mailboxes/{mid}` → 404 | No |
+| Test | Endpoint | Dependencies |
+|---|---|---|
+| 02 | `GET /auth/me` | independent |
 
-### Auth — logout, re-login, delete (steps 16–19)
+### Section 3: CRUD — temp mailbox + accounts (tests 03–14)
 
-| Step | Action | Endpoint | Interactive? |
-|---|---|---|---|
-| 16 | Logout | `POST /auth/logout` | No |
-| 17 | Re-login (reuses id_token) | `POST /auth/google` | No |
-| 18 | Delete user account | `DELETE /auth/me` | No |
-| 19 | Confirm auth deleted | `GET /auth/me` → 401 | No |
+| Test | Endpoint | Dependencies |
+|---|---|---|
+| 03 | `POST /mailboxes` | independent → produces `temp_mid` |
+| 04 | `POST .../accounts` (gmail) | requires `temp_mid` → produces `temp_gmail_id` |
+| 05 | `POST .../accounts` (outlook) | requires `temp_mid` → produces `temp_outlook_id` |
+| 06 | `GET /mailboxes` | requires `temp_mid` |
+| 07 | `GET /mailboxes/{mid}` | requires `temp_mid` |
+| 08 | `GET .../accounts` | requires `temp_mid` |
+| 09 | `GET .../accounts/{aid}` (gmail) | requires `temp_gmail_id` |
+| 10 | `GET .../accounts/{aid}` (outlook) | requires `temp_outlook_id` |
+| 11 | `PATCH .../accounts/{aid}` | requires `temp_gmail_id` |
+| 12 | `DELETE .../accounts/{aid}` | requires `temp_outlook_id` |
+| 13 | `DELETE /mailboxes/{mid}` | requires `temp_mid` → produces `temp_mid_deleted` |
+| 14 | `GET /mailboxes/{mid}` → 404 | requires `temp_mid_deleted` |
+
+### Section 4: Provider operations — pre-existing accounts (tests 15–18)
+
+| Test | Endpoint | Dependencies |
+|---|---|---|
+| 15 | `POST .../emails/sync-metadata` (gmail) | independent |
+| 16 | `POST .../emails/sync-metadata` (outlook) | independent |
+| 17 | `POST .../emails/send` (gmail) | independent |
+| 18 | `POST .../emails/send` (outlook) | independent |
+
+### Section 5: Auth lifecycle — MUST BE LAST (tests 19–20)
+
+| Test | Endpoint | Dependencies |
+|---|---|---|
+| 19 | `POST /auth/logout` | independent → produces `logged_out` |
+| 20 | `GET /auth/me` → 401 | requires `logged_out` |
 
 ## Behavioral Contracts — Traps to Avoid
 
-### Step 99 cleanup
+### Safety-net cleanup in fixture teardown
 
-Step 99 deletes the test user via **direct SQL DELETE + COMMIT**, triggering CASCADE cleanup. This runs outside the module-level transaction rollback isolation — it explicitly commits to ensure data created during interactive steps (which are committed by the real app) is cleaned up even if earlier steps fail.
+The `created_resources` fixture tracks temp mailbox IDs and session IDs. On teardown, the `e2e_session` fixture deletes these via direct SQL, ensuring no orphan data remains even if tests fail mid-flow.
 
-### Manual interaction
+### Pre-existing test data is sacred
 
-- **Step 1**: Browser opens for Google login consent.
-- **Step 5**: One browser popup per provider for OAuth consent.
-- **Step 17**: Reuses the same `id_token` from step 1 (valid ~1 hour). No browser needed.
-- Current test payload sends emails to a hardcoded recipient in the test file.
+The pre-existing user, mailboxes, and accounts (defined in `e2e_config.py`) must NEVER be deleted, edited, or modified by the test suite. Provider operation tests (sync, send) use these accounts but only perform additive/idempotent operations.
+
+### Auth lifecycle tests must be last
+
+`POST /auth/logout` (test 19) invalidates the session cookie. Any test running after it will get 401. This is why Section 5 is the final section.
+
+### Section 6. Extension Checklist
+
+When adding a new provider:
+
+- [ ] Add account creation for the provider.
+- [ ] Add connect step for the provider.
+- [ ] Add operation steps (send, fetch, etc.) for the provider.
+- [ ] Ensure flow assertions include the new provider behavior.
+
+The E2E suite should always represent the full set of supported providers.
