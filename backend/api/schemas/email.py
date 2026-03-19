@@ -32,3 +32,31 @@ class SyncResultOut(BaseModel):
 
     total_synced: int
     accounts: list[AccountSyncDetail]
+
+
+class ReadStatusItem(BaseModel):
+    """Single item in a read-status update request."""
+
+    account_id: str = Field(..., min_length=1)
+    provider_message_id: str = Field(..., min_length=1)
+
+
+class ReadStatusRequest(BaseModel):
+    """Request to batch-update read/unread status."""
+
+    is_read: bool
+    items: list[ReadStatusItem] = Field(..., min_length=1)
+
+
+class AccountReadStatusDetail(BaseModel):
+    """Per-account result of a read-status update."""
+
+    account_id: str
+    updated: int
+
+
+class ReadStatusResponse(BaseModel):
+    """Response for the read-status endpoint."""
+
+    updated_count: int
+    accounts: list[AccountReadStatusDetail]

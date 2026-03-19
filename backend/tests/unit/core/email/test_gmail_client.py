@@ -1321,3 +1321,49 @@ class TestIncrementalThreshold:
         with patch.object(client, "_batch_fetch_metadata", return_value=[]):
             result = client._incremental_email_metadata("50")
         assert isinstance(result, SyncResult)
+
+
+# ── update_read_status ────────────────────────────────────────────
+
+
+class TestUpdateReadStatus:
+    def test_not_authenticated_raises(self, client: GmailClient):
+        with pytest.raises(EmailNotAuthenticatedError):
+            client.update_read_status(["m1"], True)
+
+    def test_empty_returns_empty(self, client: GmailClient):
+        client.service = MagicMock()
+        assert client.update_read_status([], True) == []
+
+    def test_mark_as_read_removes_unread_label(self, client: GmailClient):
+        mock_service = MagicMock()
+        client.service = mock_service
+        # Simulate successful batch callback
+        def _batch_execute(callback=None):
+            batch = mock_service.new_batch_http_request.return_value
+            return None
+
+        # Set up so batch.execute() triggers the callback with success
+        batch_mock = MagicMock()
+        mock_service.new_batch_http_request.return_value = batch_mock
+
+        def _execute():
+            # The callback was registered during new_batch_http_request;
+            # we simulate success by not raising. The batch add/execute
+            # flow succeeds, and the callback marks each ID as successful.
+            pass
+
+        batch_mock.execute.side_effect = _execute
+
+        # We mock _batch_modify_labels to verify the correct arguments
+        with patch.object(client, "_batch_modify_labels", return_value=["m1"]) as mock_modify:
+            result = client.update_read_status(["m1"], True)
+        mock_modify.assert_called_once_with(["m1"], remove_labels=["UNREAD"])
+        assert result == ["m1"]
+
+    def test_mark_as_unread_adds_unread_label(self, client: GmailClient):
+        client.service = MagicMock()
+        with patch.object(client, "_batch_modify_labels", return_value=["m1"]) as mock_modify:
+            result = client.update_read_status(["m1"], False)
+        mock_modify.assert_called_once_with(["m1"], add_labels=["UNREAD"])
+        assert result == ["m1"]

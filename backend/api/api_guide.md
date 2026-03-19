@@ -53,6 +53,15 @@ Five helpers in `services_helpers.py` support the email metadata sync flow:
 - `delete_email_metadata_batch(account_id, message_ids)` — deletes email metadata rows by provider message IDs.
 - `update_email_metadata_labels_batch(account_id, label_updates)` — updates is_read and box labels for existing rows.
 
+### Read-status endpoint
+
+`PATCH /mailboxes/{mailbox_id}/emails/read-status` — batch mark emails as read/unread across one or more accounts.
+
+- **Request**: `ReadStatusRequest` with `is_read: bool` and `items: list[ReadStatusItem]` (each item carries `account_id` + `provider_message_id`).
+- **Response**: `ReadStatusResponse` with `updated_count` and per-account details.
+- **Error**: `ReadStatusUpdateError` (code `"read_status_update_error"`, HTTP 502) — raised when provider-level updates fail.
+- **Flow**: validate ownership via `ensure_mailbox_access` → group items by account → authenticate silently → call `update_read_status` at the provider → persist to DB via `update_read_status_batch`.
+
 ## Behavioral Contracts — Traps to Avoid
 
 ### `translate_connect_error`

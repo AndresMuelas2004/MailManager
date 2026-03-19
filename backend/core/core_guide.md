@@ -140,6 +140,7 @@ Beyond `authenticate`, `authenticate_silent`, and `fetch_email_metadata`, the `E
 
 - **`send_email(subject, body, recipients)`** — send a plain text email.
 - **`verify_message_existence(message_ids) → list[str]`** — return the subset of IDs that still exist at the provider. Used to confirm deletions or detect stale references.
+- **`update_read_status(message_ids, is_read) → list[str]`** — mark messages as read or unread at the provider. Returns the list of `provider_message_id`s that were successfully updated. Messages not found at the provider are silently skipped (no error raised). Gmail adds/removes the `UNREAD` label via batch `messages.modify`. Outlook patches each message with `PATCH /me/messages/{id}` setting `{"isRead": bool}`. Raises `EmailNotAuthenticatedError` if the client is not authenticated (guard), and `EmailExternalAPIError` on provider-level failures.
 - **`get_account_label() → str`** — return the label identifying this account within the app.
 
 ## Extension

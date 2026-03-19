@@ -445,6 +445,27 @@ def update_email_metadata_labels_batch(
         raise ApiError("Failed to update email metadata labels.") from exc
 
 
+def update_email_read_status_batch(
+    account_id: str,
+    message_ids: list[str],
+    is_read: bool,
+) -> int:
+    """Update only is_read for specific messages. Returns rows updated."""
+    if not message_ids:
+        return 0
+    rows = [(mid, account_id, is_read) for mid in message_ids]
+    try:
+        return email_metadata_store.update_read_status_batch(account_id, rows)
+    except DatabaseError as exc:
+        raise translate_database_error(exc) from exc
+    except Exception as exc:
+        logger.warning(
+            "Unexpected read status DB update error (%s): %s",
+            type(exc).__name__, exc,
+        )
+        raise ApiError("Failed to update email read status in database.") from exc
+
+
 def load_stored_message_ids(account_id: str) -> list[str]:
     """Load all provider_message_ids stored for an account."""
     try:

@@ -7,7 +7,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends
 
 from api.routers.routers_helpers import require_session
-from api.schemas.email import EmailSendRequest, SyncResultOut
+from api.schemas.email import EmailSendRequest, ReadStatusRequest, ReadStatusResponse, SyncResultOut
 from api.services import emails_service
 
 
@@ -35,3 +35,15 @@ def send_email(
     Send an email using a specific account under the mailbox.
     """
     return emails_service.send_email(mailbox_id, payload, user_id)
+
+
+@router.patch("/read-status", response_model=ReadStatusResponse)
+def update_read_status(
+    mailbox_id: str,
+    payload: ReadStatusRequest,
+    user_id: str = Depends(require_session),
+) -> ReadStatusResponse:
+    """
+    Mark emails as read or unread across accounts in a mailbox.
+    """
+    return emails_service.update_read_status(mailbox_id, payload, user_id)

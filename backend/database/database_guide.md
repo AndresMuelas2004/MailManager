@@ -33,6 +33,12 @@ The plaintext token columns (`access_token`, `refresh_token`) remain temporarily
 - `_backfill_plaintext_tokens` is best-effort: failures are logged as warnings and never propagate. The backfill retries on the next read.
 - A malformed `TOKEN_ENCRYPTION_KEY` raises `SettingsError` immediately via `get_fernet()` — it is never silently treated as "key absent".
 
+## Behavioral Contracts — Email Metadata
+
+### `EmailMetadataStore.update_read_status_batch(account_id, rows) → int`
+
+Batch-updates the `is_read` column for existing email metadata rows. Uses a dedicated SQL query (`UPDATE_READ_STATUS_BATCH`) that only touches `is_read` — it does **not** modify the `box` column. This is intentionally separate from `update_labels_batch`, because read-status updates should never change box classification. `rows` format: `list[tuple]` of `(provider_message_id, account_id, is_read)`. Returns the number of rows updated.
+
 ## Extension
 
 ### Adding a new provider

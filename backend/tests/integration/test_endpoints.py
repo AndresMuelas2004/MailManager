@@ -424,3 +424,110 @@ def test_sync_persists_and_updates_cursor(
             (aid,),
         )
         assert cur.fetchone()[0] == "cursor_v2"
+
+
+# ===== Emails -- read-status =====
+
+def test_update_read_status(test_client, setup_mailbox_and_account):
+    mid, aid = setup_mailbox_and_account(test_client)
+    # Sync metadata first so messages exist in DB
+    test_client.post(f"{_MAILBOX_URL}/{mid}/emails/sync-metadata")
+
+    resp = test_client.patch(
+        f"{_MAILBOX_URL}/{mid}/emails/read-status",
+        json={
+            "is_read": True,
+            "items": [{"account_id": aid, "provider_message_id": "m1"}],
+        },
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "updated_count" in data
+    assert isinstance(data["updated_count"], int)
+    assert data["updated_count"] >= 1
+    assert "accounts" in data
+    assert isinstance(data["accounts"], list)
+    assert len(data["accounts"]) == 1
+    assert data["accounts"][0]["account_id"] == aid
+    assert isinstance(data["accounts"][0]["updated"], int)
+
+
+def test_update_read_status_persists_to_db(test_client, setup_mailbox_and_account, isolated_db):
+    mid, aid = setup_mailbox_and_account(test_client)
+    test_client.post(f"{_MAILBOX_URL}/{mid}/emails/sync-metadata")
+
+    # All three messages start with is_read=False; mark m1 as read
+    test_client.patch(
+        f"{_MAILBOX_URL}/{mid}/emails/read-status",
+        json={
+            "is_read": True,
+            "items": [{"account_id": aid, "provider_message_id": "m1"}],
+        },
+    )
+
+    with isolated_db.cursor() as cur:
+        cur.execute(
+            "SELECT is_read FROM email_metadata "
+            "WHERE provider_message_id = 'm1' AND account_id = %s::uuid",
+            (aid,),
+        )
+        row = cur.fetchone()
+    assert row is not None
+    assert row[0] is True
+
+
+def test_update_read_status_preserves_box(test_client, setup_mailbox_and_account, isolated_db):
+    mid, aid = setup_mailbox_and_account(test_client)
+    test_client.post(f"{_MAILBOX_URL}/{mid}/emails/sync-metadata")
+
+    # Record the box value before the read-status update
+    with isolated_db.cursor() as cur:
+        cur.execute(
+            "SELECT box FROM email_metadata "
+            "WHERE provider_message_id = 'm1' AND account_id = %s::uuid",
+            (aid,),
+        )
+        box_before = cur.fetchone()[0]
+
+    test_client.patch(
+        f"{_MAILBOX_URL}/{mid}/emails/read-status",
+        json={
+            "is_read": True,
+            "items": [{"account_id": aid, "provider_message_id": "m1"}],
+        },
+    )
+
+    with isolated_db.cursor() as cur:
+        cur.execute(
+            "SELECT box FROM email_metadata "
+            "WHERE provider_message_id = 'm1' AND account_id = %s::uuid",
+            (aid,),
+        )
+        box_after = cur.fetchone()[0]
+    assert box_after == box_before
+
+
+def test_update_read_status_nonexistent_account_404(test_client, setup_mailbox_and_account):
+    mid, _ = setup_mailbox_and_account(test_client)
+    fake_account_id = "00000000-0000-4000-a000-000000000099"
+    resp = test_client.patch(
+        f"{_MAILBOX_URL}/{mid}/emails/read-status",
+        json={
+            "is_read": True,
+            "items": [{"account_id": fake_account_id, "provider_message_id": "m1"}],
+        },
+    )
+    assert resp.status_code == 404
+
+
+def test_update_read_status_nonexistent_mailbox_404(test_client):
+    fake_mailbox_id = "00000000-0000-4000-a000-000000000099"
+    fake_account_id = "00000000-0000-4000-a000-000000000098"
+    resp = test_client.patch(
+        f"{_MAILBOX_URL}/{fake_mailbox_id}/emails/read-status",
+        json={
+            "is_read": True,
+            "items": [{"account_id": fake_account_id, "provider_message_id": "m1"}],
+        },
+    )
+    assert resp.status_code == 404
