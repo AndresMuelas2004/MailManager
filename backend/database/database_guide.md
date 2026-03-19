@@ -6,7 +6,7 @@
 # Database Layer Guide
 
 > **General rules**: this layer MUST respect every rule defined in
-> [`general_database_rules.md`](./general_database_rules.md).
+> [`CLAUDE.md`](./CLAUDE.md).
 > The current document contains project-specific details that complement those rules.
 
 **Authority rule**: the code of this layer must respect what is documented here. If there is a discrepancy between this guide and existing code, this guide is the reference — fix the code, not the guide. When new functionality is added, update this guide at the end of the task to reflect the new reality.

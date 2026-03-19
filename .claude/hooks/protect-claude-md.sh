@@ -23,6 +23,51 @@ def deny(reason):
     }))
     sys.exit(0)
 
+# Determine if this is the root CLAUDE.md or a subdirectory one.
+# Root CLAUDE.md: only the filename, no directory separators before it,
+# or the parent directory is the project root.
+# Subdirectory CLAUDE.md files (layer rules) are fully protected.
+parts = file_path.replace('\\\\', '/').rstrip('/').split('/')
+claude_idx = len(parts) - 1  # last element is 'CLAUDE.md'
+# Check if parent directory is the project root by looking for common
+# project root indicators. A simple heuristic: if the CLAUDE.md is NOT
+# directly inside the repo root, it is a subdirectory CLAUDE.md.
+# We detect root by checking if the parent contains typical root markers
+# or by counting depth relative to known structure.
+# Simpler approach: root CLAUDE.md has no 'backend' or similar in its path
+# before the filename. Most reliable: check if the file is at repo root.
+import subprocess
+try:
+    repo_root = subprocess.check_output(
+        ['git', 'rev-parse', '--show-toplevel'],
+        stderr=subprocess.DEVNULL
+    ).decode().strip().replace('\\\\', '/')
+except Exception:
+    repo_root = None
+
+if repo_root:
+    parent_dir = '/'.join(parts[:-1])
+    # Normalize both paths for comparison
+    repo_root_norm = repo_root.rstrip('/').lower()
+    parent_norm = parent_dir.rstrip('/').lower()
+    is_root_claude_md = (parent_norm == repo_root_norm)
+else:
+    # Fallback: if only filename with no directory, treat as root
+    is_root_claude_md = (len(parts) <= 1)
+
+if not is_root_claude_md:
+    # Subdirectory CLAUDE.md — fully protected (was general_*_rules.md)
+    if tool_name in ('Edit', 'Write'):
+        deny('This CLAUDE.md is a layer rules file (subdirectory) and is fully protected. It must never be modified.')
+    elif tool_name == 'Bash':
+        command = tool_input.get('command', '')
+        write_indicators = ['>', 'sed -i', 'tee ', 'mv ', 'cp ', 'rm ', 'del ']
+        for indicator in write_indicators:
+            if indicator in command:
+                deny(f'Bash command appears to modify a protected subdirectory CLAUDE.md via \"{indicator.strip()}\".')
+    sys.exit(0)
+
+# From here on, only the root CLAUDE.md is handled.
 if tool_name == 'Edit':
     old_string = tool_input.get('old_string', '')
     if not old_string:

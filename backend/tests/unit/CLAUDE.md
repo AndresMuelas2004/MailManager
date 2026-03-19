@@ -1,6 +1,6 @@
 # General Unit Test Rules
 
-This is the `general_unit_rules.md` for the **unit test** layer. It serves as the general architectural reference for this layer, describing its separation of responsibilities, its error handling and escalation model, its structural rules, and its common behavior. Every aspect covered here is transferable to any application that follows this layered architecture — nothing is specific to a single project.
+This is the `CLAUDE.md` for the **unit test** layer. It serves as the general architectural reference for this layer, describing its separation of responsibilities, its error handling and escalation model, its structural rules, and its common behavior. Every aspect covered here is transferable to any application that follows this layered architecture — nothing is specific to a single project.
 
 **Project-agnostic by design.** Nothing here references a concrete domain, entity, or feature. Every rule applies to any repository that follows this layered architecture.
 
@@ -79,4 +79,4 @@ Shared utilities are used by both unit and integration tests.
 
 This file covers the general, transferable rules for the unit test layer. For project-specific details — concrete rules, architectural decisions, and implementation details that apply these general principles to the current application — consult [`unit_guide.md`](unit_guide.md).
 
-The guide complements these rules but never contradicts them. In case of conflict, this `general_unit_rules.md` has absolute precedence. Code in this layer must respect both levels: first these general rules, then the project-specific guide.
+The guide complements these rules but never contradicts them. In case of conflict, this `CLAUDE.md` has absolute precedence. Code in this layer must respect both levels: first these general rules, then the project-specific guide.

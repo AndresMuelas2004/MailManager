@@ -300,13 +300,13 @@ Testing docs:
 
 ### General rules (architecture standards)
 
-- `backend/api/general_api_rules.md`
-- `backend/auth/general_auth_rules.md`
-- `backend/database/general_database_rules.md`
-- `backend/core/general_core_rules.md`
-- `backend/tests/unit/general_unit_rules.md`
-- `backend/tests/integration/general_integration_rules.md`
-- `backend/tests/e2e/general_e2e_rules.md`
+- `backend/api/CLAUDE.md`
+- `backend/auth/CLAUDE.md`
+- `backend/database/CLAUDE.md`
+- `backend/core/CLAUDE.md`
+- `backend/tests/unit/CLAUDE.md`
+- `backend/tests/integration/CLAUDE.md`
+- `backend/tests/e2e/CLAUDE.md`
 
 ### Other
 

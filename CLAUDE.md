@@ -8,23 +8,20 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 This section describes the layered architecture, structural rules, and conventions that apply to any project following this pattern. It is project-agnostic and should not be modified for domain-specific changes.
 
-### 1.1 On-Demand Loading
+### 1.1 Layer Rules (Auto-Loaded)
 
-Before modifying, planning or think about any layer, read **only** its `general_*_rules.md`. Do not load rules for layers unrelated to the current task.
+Each layer has its own `CLAUDE.md` that Claude Code loads automatically when reading files in that directory. These layer-level `CLAUDE.md` files are project-agnostic, transferable, and **must never be modified**. Each one references internally a `*_guide.md` with project-specific details.
 
-| Layer | General Rules |
-|---|---|
-| API | [`backend/api/general_api_rules.md`](backend/api/general_api_rules.md) |
-| Auth | [`backend/auth/general_auth_rules.md`](backend/auth/general_auth_rules.md) |
-| Database | [`backend/database/general_database_rules.md`](backend/database/general_database_rules.md) |
-| Core | [`backend/core/general_core_rules.md`](backend/core/general_core_rules.md) |
-| Unit Tests | [`backend/tests/unit/general_unit_rules.md`](backend/tests/unit/general_unit_rules.md) |
-| Integration Tests | [`backend/tests/integration/general_integration_rules.md`](backend/tests/integration/general_integration_rules.md) |
-| E2E Tests | [`backend/tests/e2e/general_e2e_rules.md`](backend/tests/e2e/general_e2e_rules.md) |
+Layers with their own `CLAUDE.md`:
+- `backend/api/`
+- `backend/auth/`
+- `backend/database/`
+- `backend/core/`
+- `backend/tests/unit/`
+- `backend/tests/integration/`
+- `backend/tests/e2e/`
 
-These files are project-agnostic and transferable. Each one references internally a `*_guide.md` with project-specific details.
-
-**Hard rule**: these general rules are non-negotiable and override any conflicting project-specific guidance.
+**Hard rule**: these layer rules are non-negotiable and override any conflicting project-specific guidance.
 
 ### 1.2 Monorepo Structure
 
@@ -52,16 +49,16 @@ Communication rules:
 - No lower layer imports from API.
 - Database does not communicate with Core.
 
-Each layer defines its own error hierarchy. Services translate lower-layer errors into API-layer errors. For specifics, read the relevant `general_*_rules.md`.
+Each layer defines its own error hierarchy. Services translate lower-layer errors into API-layer errors. For specifics, consult the layer's `CLAUDE.md` (auto-loaded when reading files in that directory).
 
 ### 1.5 Two-Level Documentation Pattern
 
 Each layer has two documentation files:
 
-- `general_*_rules.md` — general, transferable rules. Not modified for project changes.
+- `CLAUDE.md` (in each layer directory) — general, transferable rules. Not modified for project changes. Auto-loaded by Claude Code when reading files in that directory.
 - `*_guide.md` — project-specific details. Claude updates these when the project changes.
 
-The general rules file references its guide. This CLAUDE.md references the general rules files.
+The layer `CLAUDE.md` references its guide. This root `CLAUDE.md` lists the layers that have their own rules (§ 1.1).
 
 ### 1.6 Style and Code Quality
 
@@ -130,10 +127,10 @@ Stack: React + Vite + TypeScript + Tailwind. Structure:
 
 ### 2.8 Extensibility
 
-- **New email provider**: follow the Core layer's `*_guide.md` (referenced from `general_core_rules.md`).
-- **New identity provider**: follow the Auth layer's `*_guide.md` (referenced from `general_auth_rules.md`).
-- **New API endpoint**: follow the API layer's `*_guide.md` (referenced from `general_api_rules.md`).
+- **New email provider**: follow the Core layer's `*_guide.md` (referenced from `backend/core/CLAUDE.md`).
+- **New identity provider**: follow the Auth layer's `*_guide.md` (referenced from `backend/auth/CLAUDE.md`).
+- **New API endpoint**: follow the API layer's `*_guide.md` (referenced from `backend/api/CLAUDE.md`).
 
 ### 2.9 Document Maintenance
 
-Update this section when: architecture layers change, new providers are introduced, commands change, or key identifiers are added. Do not modify Section 1 or the `general_*_rules.md` files.
+Update this section when: architecture layers change, new providers are introduced, commands change, or key identifiers are added. Do not modify Section 1 or any layer-level `CLAUDE.md` files.

@@ -19,7 +19,7 @@ You receive a **test directory path** as your prompt. Process it through the fol
 
 ### Phase 1 — Documentation-Test Concordance (GATE)
 
-1. Use `Glob` to find the `*_rules.md` file inside the provided test directory (e.g. `general_unit_rules.md`, `general_integration_rules.md`, `general_e2e_rules.md`). If the rules file references a `*_guide.md`, read that too.
+1. Use `Glob` to find the `CLAUDE.md` file inside the provided test directory. If the rules file references a `*_guide.md`, read that too.
 2. Use `Glob` to find all test files recursively under the directory (e.g. `**/test_*.py`, `**/*_test.py`, `**/*.test.ts`, `**/*.spec.ts` — adapt to the language). Also find conftest files, fixture modules, and helper files.
 3. Read the documentation and every test file. Extract from the documentation: what should be tested, testing conventions, boundaries, fixture rules, shared utilities, and any explicit must/must-not statements.
 4. Compare what the documentation prescribes against what the tests actually do.
