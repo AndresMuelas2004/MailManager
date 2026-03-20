@@ -117,7 +117,7 @@ def test_connect_account_authenticate_failure_is_recorded_and_raised(
 ):
     """Propagates auth failure and records it under the account label."""
     manager.add_client(fake_client_fail_auth)
-    with pytest.raises(Exception):
+    with pytest.raises(Exception, match="boom"):
         manager.connect_account(fake_client_fail_auth.get_account_label())
     errors = manager.get_last_errors()
     assert set(errors.keys()) == {fake_client_fail_auth.get_account_label()}
@@ -253,3 +253,47 @@ class TestVerifyMessageExistence:
         manager.add_client(client)
         with pytest.raises(EmailExternalAPIError, match="API down"):
             manager.verify_message_existence("acct", ["m1"])
+
+
+# ── delete_messages ──────────────────────────────────────────────
+
+def test_delete_messages_delegates_to_client(manager: EmailManager, fake_client_factory):
+    client = fake_client_factory("acct1")
+    manager.add_client(client)
+    result = manager.delete_messages("acct1", ["m1", "m2"])
+    assert result == ["m1", "m2"]
+    assert client.delete_calls == 1
+
+def test_delete_messages_unknown_label_raises(manager: EmailManager):
+    with pytest.raises(EmailAccountNotFoundError):
+        manager.delete_messages("nonexistent", ["m1"])
+
+
+# ── restore_from_trash ───────────────────────────────────────────
+
+def test_restore_from_trash_delegates_to_client(manager: EmailManager, fake_client_factory):
+    client = fake_client_factory("acct1")
+    manager.add_client(client)
+    result = manager.restore_from_trash("acct1", {"m1": "ALL_MAIL"})
+    assert result == {"m1": "m1"}
+    assert client.restore_calls == 1
+
+def test_restore_from_trash_unknown_label_raises(manager: EmailManager):
+    with pytest.raises(EmailAccountNotFoundError):
+        manager.restore_from_trash("nonexistent", {"m1": "ALL_MAIL"})
+
+
+# ── move_to_trash ────────────────────────────────────────────────
+
+
+def test_move_to_trash_delegates_to_client(manager: EmailManager, fake_client_factory):
+    client = fake_client_factory("acct1")
+    manager.add_client(client)
+    result = manager.move_to_trash("acct1", ["m1", "m2"])
+    assert result == {"m1": "m1", "m2": "m2"}
+    assert client.move_to_trash_calls == 1
+
+
+def test_move_to_trash_unknown_label_raises(manager: EmailManager):
+    with pytest.raises(EmailAccountNotFoundError):
+        manager.move_to_trash("nonexistent", ["m1"])

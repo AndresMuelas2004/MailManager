@@ -13,7 +13,7 @@ import pytest
 
 from auth import AuthError, AuthTokenInvalidError, AuthTokenNetworkError
 
-from database.errors.exceptions import DatabaseError, QueryError
+from database import DatabaseError, QueryError
 
 from api.errors.exceptions import ApiError, EnvVarError, ExternalAPIError, Unauthorized, UserNotFound
 from api.schemas.auth import AuthResponse, UserOut

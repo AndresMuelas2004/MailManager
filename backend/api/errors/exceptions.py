@@ -105,3 +105,15 @@ class TokenIntegrityError(ApiError):
 
 class UserNotFound(ApiError):
     code = "user_not_found"
+
+
+class EmailNotInTrash(ApiError):
+    code = "email_not_in_trash"
+
+
+class TrashOperationError(ApiError):
+    code = "trash_operation_error"
+
+
+class MoveToTrashError(ApiError):
+    code = "move_to_trash_error"

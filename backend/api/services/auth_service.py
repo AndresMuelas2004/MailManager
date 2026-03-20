@@ -170,7 +170,7 @@ def delete_account(user_id: str, response: Response) -> dict[str, str]:
         logger.warning("Unexpected user deletion error (%s): %s", type(exc).__name__, exc)
         raise ApiError("Failed to delete user.") from exc
     if not deleted:
-        raise UserNotFound("User not found.", {"user_id": user_id})
+        raise UserNotFound("User not found while deleting account.", {"user_id": user_id})
     settings = _load_auth_settings()
     _clear_session_cookie(response, settings)
     return {"status": "account_deleted"}
@@ -198,5 +198,5 @@ def get_current_user(user_id: str) -> UserOut:
         logger.warning("Unexpected user lookup error (%s): %s", type(exc).__name__, exc)
         raise ApiError("Failed to look up user.") from exc
     if user is None:
-        raise UserNotFound("User not found.", {"user_id": user_id})
+        raise UserNotFound("User not found while fetching current user.", {"user_id": user_id})
     return UserOut(**user)

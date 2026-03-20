@@ -358,9 +358,9 @@ class TestIncrementalEmailMetadata:
         mock_service.users().history().list().execute.return_value = (
             _make_history_response(history=history, history_id="200")
         )
-        # _batch_fetch_metadata returns metadata for the requested IDs
+        # fetch_messages_metadata returns metadata for the requested IDs
         client.service = mock_service
-        with patch.object(client, "_batch_fetch_metadata", return_value=["meta1", "meta2"]) as mock_batch:
+        with patch.object(client, "fetch_messages_metadata", return_value=["meta1", "meta2"]) as mock_batch:
             result = client._incremental_email_metadata("100")
         assert set(mock_batch.call_args[0][0]) == {"m1", "m2"}
         assert result.upserts == ["meta1", "meta2"]
@@ -375,7 +375,7 @@ class TestIncrementalEmailMetadata:
         )
         client.service = mock_service
         with patch.object(client, "_execute_batch_get", return_value={}), \
-             patch.object(client, "_batch_fetch_metadata", return_value=[]):
+             patch.object(client, "fetch_messages_metadata", return_value=[]):
             result = client._incremental_email_metadata("100")
         assert "d1" in result.deletes
         assert result.upserts == []
@@ -389,7 +389,7 @@ class TestIncrementalEmailMetadata:
         )
         client.service = mock_service
         with patch.object(client, "_execute_batch_get", return_value={"d1": {"id": "d1"}}), \
-             patch.object(client, "_batch_fetch_metadata", return_value=["meta_d1"]) as mock_batch:
+             patch.object(client, "fetch_messages_metadata", return_value=["meta_d1"]) as mock_batch:
             result = client._incremental_email_metadata("100")
         assert "d1" in mock_batch.call_args[0][0]
         assert result.upserts == ["meta_d1"]
@@ -407,7 +407,7 @@ class TestIncrementalEmailMetadata:
         )
         client.service = mock_service
         fake_updates = [MagicMock(), MagicMock()]
-        with patch.object(client, "_batch_fetch_metadata", return_value=[]), \
+        with patch.object(client, "fetch_messages_metadata", return_value=[]), \
              patch.object(client, "_batch_fetch_label_updates", return_value=fake_updates) as mock_lu:
             result = client._incremental_email_metadata("100")
         called_ids = set(mock_lu.call_args[0][0])
@@ -425,7 +425,7 @@ class TestIncrementalEmailMetadata:
             _make_history_response(history=history, history_id="200")
         )
         client.service = mock_service
-        with patch.object(client, "_batch_fetch_metadata", return_value=["meta1"]), \
+        with patch.object(client, "fetch_messages_metadata", return_value=["meta1"]), \
              patch.object(client, "_batch_fetch_label_updates", return_value=[]) as mock_lu:
             result = client._incremental_email_metadata("100")
         # _batch_fetch_label_updates called with empty list (m1 already in need_get)
@@ -446,7 +446,7 @@ class TestIncrementalEmailMetadata:
         )
         mock_service.users().history().list().execute.side_effect = [page1, page2]
         client.service = mock_service
-        with patch.object(client, "_batch_fetch_metadata", return_value=["meta1", "meta2"]) as mock_batch:
+        with patch.object(client, "fetch_messages_metadata", return_value=["meta1", "meta2"]) as mock_batch:
             result = client._incremental_email_metadata("100")
         called_ids = set(mock_batch.call_args[0][0])
         assert called_ids == {"m1", "m2"}
@@ -595,7 +595,7 @@ class TestBootstrapEmailMetadata:
     def test_calls_list_batch_history_and_returns_sync_result(self, client: GmailClient):
         client.service = MagicMock()
         with patch.object(client, "_list_message_ids", return_value=["m1", "m2"]) as mock_list, \
-             patch.object(client, "_batch_fetch_metadata", return_value=["meta1", "meta2"]) as mock_batch, \
+             patch.object(client, "fetch_messages_metadata", return_value=["meta1", "meta2"]) as mock_batch, \
              patch.object(client, "_get_current_history_id", return_value="hist99") as mock_hist:
             result = client._bootstrap_email_metadata(500)
 
@@ -1092,7 +1092,7 @@ class TestSendEmail:
     def test_constructs_mime_and_calls_api(self, client: GmailClient):
         """Verify MIME message structure and API call."""
         mock_service = self._setup_send_mock(client)
-        with patch.object(client, "_batch_fetch_metadata", return_value=[]):
+        with patch.object(client, "fetch_messages_metadata", return_value=[]):
             client.send_email("Test Subject", "Test Body", ["a@b.com"])
 
         send_fn = mock_service.users.return_value.messages.return_value.send
@@ -1106,7 +1106,7 @@ class TestSendEmail:
         assert "a@b.com" in raw_text
 
     def test_returns_metadata_from_batch_fetch(self, client: GmailClient):
-        """send_email returns EmailMetadata fetched via _batch_fetch_metadata."""
+        """send_email returns EmailMetadata fetched via fetch_messages_metadata."""
         from core.email.email_client import EmailMetadata
         self._setup_send_mock(client, {"id": "msg123", "threadId": "th456", "labelIds": ["SENT"]})
         expected = EmailMetadata(
@@ -1115,16 +1115,16 @@ class TestSendEmail:
             subject="Hello", received_at=datetime(2024, 1, 1),
             is_read=True, box="SENT",
         )
-        with patch.object(client, "_batch_fetch_metadata", return_value=[expected]) as mock_fetch:
+        with patch.object(client, "fetch_messages_metadata", return_value=[expected]) as mock_fetch:
             result = client.send_email("Hello", "Body", ["a@b.com"])
 
         mock_fetch.assert_called_once_with(["msg123"])
         assert result is expected
 
     def test_returns_fallback_metadata_when_fetch_empty(self, client: GmailClient):
-        """When _batch_fetch_metadata returns empty, fallback metadata is built."""
+        """When fetch_messages_metadata returns empty, fallback metadata is built."""
         self._setup_send_mock(client, {"id": "msg123", "threadId": "th456"})
-        with patch.object(client, "_batch_fetch_metadata", return_value=[]):
+        with patch.object(client, "fetch_messages_metadata", return_value=[]):
             result = client.send_email("Subject", "Body", ["a@b.com"])
 
         assert result.provider_message_id == "msg123"
@@ -1164,7 +1164,7 @@ class TestSendEmail:
             subject="", received_at=datetime(2024, 1, 1),
             is_read=True, box="SENT",
         )
-        with patch.object(client, "_batch_fetch_metadata", return_value=[fetched]):
+        with patch.object(client, "fetch_messages_metadata", return_value=[fetched]):
             result = client.send_email("Real Subject", "Body", ["a@b.com"])
         assert result.subject == "Real Subject"
 
@@ -1178,7 +1178,7 @@ class TestSendEmail:
             subject="S", received_at=datetime(2024, 1, 1),
             is_read=True, box="SENT",
         )
-        with patch.object(client, "_batch_fetch_metadata", return_value=[fetched]), \
+        with patch.object(client, "fetch_messages_metadata", return_value=[fetched]), \
              patch.object(client, "_fetch_sender_email", return_value="me@gmail.com"):
             result = client.send_email("S", "Body", ["a@b.com"])
         assert result.from_email == "me@gmail.com"
@@ -1193,14 +1193,14 @@ class TestSendEmail:
             subject="S", received_at=datetime(2024, 1, 1),
             is_read=True, box="SENT",
         )
-        with patch.object(client, "_batch_fetch_metadata", return_value=[fetched]):
+        with patch.object(client, "fetch_messages_metadata", return_value=[fetched]):
             result = client.send_email("S", "Body", ["a@b.com"])
         assert result.from_name == "me@gmail.com"
 
     def test_fallback_metadata_uses_profile_email(self, client: GmailClient):
         """Fallback path (batch fetch empty) uses profile email for from fields."""
         self._setup_send_mock(client, {"id": "msg1", "threadId": "th1"})
-        with patch.object(client, "_batch_fetch_metadata", return_value=[]), \
+        with patch.object(client, "fetch_messages_metadata", return_value=[]), \
              patch.object(client, "_fetch_sender_email", return_value="me@gmail.com"):
             result = client.send_email("Subject", "Body", ["a@b.com"])
         assert result.from_email == "me@gmail.com"
@@ -1275,7 +1275,7 @@ class TestBootstrapIsFullSync:
     def test_bootstrap_sets_is_full_sync_true(self, client: GmailClient):
         client.service = MagicMock()
         with patch.object(client, "_list_message_ids", return_value=[]), \
-             patch.object(client, "_batch_fetch_metadata", return_value=[]), \
+             patch.object(client, "fetch_messages_metadata", return_value=[]), \
              patch.object(client, "_get_current_history_id", return_value="hist1"):
             result = client._bootstrap_email_metadata(500)
         assert result.is_full_sync is True
@@ -1318,6 +1318,230 @@ class TestIncrementalThreshold:
             _make_history_response(history=history, history_id="999")
         )
         client.service = mock_service
-        with patch.object(client, "_batch_fetch_metadata", return_value=[]):
+        with patch.object(client, "fetch_messages_metadata", return_value=[]):
             result = client._incremental_email_metadata("50")
         assert isinstance(result, SyncResult)
+
+
+# ── delete_messages ──────────────────────────────────────────────
+
+
+class TestDeleteMessages:
+    def test_guard_raises_not_authenticated(self, client: GmailClient):
+        assert client.service is None
+        with pytest.raises(EmailNotAuthenticatedError):
+            client.delete_messages(["m1"])
+
+    def test_empty_returns_empty(self, client: GmailClient):
+        client.service = MagicMock()
+        assert client.delete_messages([]) == []
+
+    def test_returns_all_ids_noop(self, client: GmailClient):
+        client.service = MagicMock()
+        result = client.delete_messages(["m1", "m2"])
+        assert result == ["m1", "m2"]
+
+
+# ── restore_from_trash ───────────────────────────────────────────
+
+
+class TestRestoreFromTrash:
+    def test_guard_raises_not_authenticated(self, client: GmailClient):
+        assert client.service is None
+        with pytest.raises(EmailNotAuthenticatedError):
+            client.restore_from_trash({"m1": "ALL_MAIL"})
+
+    def test_empty_returns_empty(self, client: GmailClient):
+        client.service = MagicMock()
+        assert client.restore_from_trash({}) == {}
+
+    def test_happy_path(self, client: GmailClient):
+        mock_service = MagicMock()
+        batch_instance = MagicMock()
+        mock_service.new_batch_http_request.return_value = batch_instance
+
+        def fake_execute():
+            cb = mock_service.new_batch_http_request.call_args[1]["callback"]
+            cb("m1", {"id": "m1"}, None)
+            cb("m2", {"id": "m2"}, None)
+        batch_instance.execute.side_effect = fake_execute
+
+        client.service = mock_service
+        result = client.restore_from_trash({"m1": "ALL_MAIL", "m2": "SENT"})
+        assert result == {"m1": "m1", "m2": "m2"}
+
+    def test_modify_sends_correct_labels_per_destination_box(self, client: GmailClient):
+        mock_service = MagicMock()
+        batch_instance = MagicMock()
+        mock_service.new_batch_http_request.return_value = batch_instance
+
+        def fake_execute():
+            cb = mock_service.new_batch_http_request.call_args[1]["callback"]
+            cb("m1", {"id": "m1"}, None)
+            cb("m2", {"id": "m2"}, None)
+            cb("m3", {"id": "m3"}, None)
+        batch_instance.execute.side_effect = fake_execute
+
+        client.service = mock_service
+        client.restore_from_trash({"m1": "ALL_MAIL", "m2": "SENT", "m3": "SPAM"})
+
+        modify_mock = mock_service.users.return_value.messages.return_value.modify
+        calls = {
+            call.kwargs["id"]: call.kwargs["body"]
+            for call in modify_mock.call_args_list
+        }
+        assert calls["m1"] == {"removeLabelIds": ["TRASH"], "addLabelIds": ["INBOX"]}
+        assert calls["m2"] == {"removeLabelIds": ["TRASH"], "addLabelIds": []}
+        assert calls["m3"] == {"removeLabelIds": ["TRASH"], "addLabelIds": ["SPAM"]}
+
+    def test_partial_failure(self, client: GmailClient):
+        mock_service = MagicMock()
+        batch_instance = MagicMock()
+        mock_service.new_batch_http_request.return_value = batch_instance
+
+        def fake_execute():
+            cb = mock_service.new_batch_http_request.call_args[1]["callback"]
+            cb("m1", {"id": "m1"}, None)
+            cb("m2", None, Exception("untrash failed"))
+        batch_instance.execute.side_effect = fake_execute
+
+        client.service = mock_service
+        result = client.restore_from_trash({"m1": "ALL_MAIL", "m2": "SENT"})
+        assert result == {"m1": "m1"}
+
+    def test_http_error_raises_external_api(self, client: GmailClient):
+        from googleapiclient.errors import HttpError
+
+        mock_service = MagicMock()
+        batch_instance = MagicMock()
+        mock_service.new_batch_http_request.return_value = batch_instance
+        resp = MagicMock()
+        type(resp).status = 500
+        batch_instance.execute.side_effect = HttpError(resp=resp, content=b"fail")
+
+        client.service = mock_service
+        with pytest.raises(EmailExternalAPIError, match="restore_from_trash batch failed"):
+            client.restore_from_trash({"m1": "ALL_MAIL"})
+
+    def test_generic_error_raises_external_api(self, client: GmailClient):
+        mock_service = MagicMock()
+        batch_instance = MagicMock()
+        mock_service.new_batch_http_request.return_value = batch_instance
+        batch_instance.execute.side_effect = RuntimeError("connection lost")
+
+        client.service = mock_service
+        with pytest.raises(EmailExternalAPIError, match="unexpected restore_from_trash error"):
+            client.restore_from_trash({"m1": "ALL_MAIL"})
+
+    def test_none_destination_uses_untrash(self, client: GmailClient):
+        """When destination is None, untrash() is used instead of modify()."""
+        mock_service = MagicMock()
+        batch_instance = MagicMock()
+        mock_service.new_batch_http_request.return_value = batch_instance
+
+        def fake_execute():
+            cb = mock_service.new_batch_http_request.call_args[1]["callback"]
+            cb("m1", {"id": "m1"}, None)
+        batch_instance.execute.side_effect = fake_execute
+
+        client.service = mock_service
+        result = client.restore_from_trash({"m1": None})
+        assert result == {"m1": "m1"}
+
+        untrash_mock = mock_service.users.return_value.messages.return_value.untrash
+        untrash_mock.assert_called_once_with(userId="me", id="m1")
+
+    def test_mixed_known_and_none_destinations(self, client: GmailClient):
+        """Known destinations use modify(); None uses untrash()."""
+        mock_service = MagicMock()
+        batch_instance = MagicMock()
+        mock_service.new_batch_http_request.return_value = batch_instance
+
+        call_count = [0]
+
+        def fake_execute():
+            cb = mock_service.new_batch_http_request.call_args[1]["callback"]
+            call_count[0] += 1
+            if call_count[0] == 1:
+                # First batch: known items (modify)
+                cb("m1", {"id": "m1"}, None)
+            else:
+                # Second batch: unknown items (untrash)
+                cb("m2", {"id": "m2"}, None)
+        batch_instance.execute.side_effect = fake_execute
+
+        client.service = mock_service
+        result = client.restore_from_trash({"m1": "ALL_MAIL", "m2": None})
+        assert result == {"m1": "m1", "m2": "m2"}
+
+        modify_mock = mock_service.users.return_value.messages.return_value.modify
+        assert modify_mock.call_count == 1
+
+        untrash_mock = mock_service.users.return_value.messages.return_value.untrash
+        assert untrash_mock.call_count == 1
+
+
+# ── fetch_messages_metadata (public) ─────────────────────────────
+
+
+class TestFetchMessagesMetadata:
+    def test_guard_raises_not_authenticated(self, client: GmailClient):
+        assert client.service is None
+        with pytest.raises(EmailNotAuthenticatedError):
+            client.fetch_messages_metadata(["m1"])
+
+    def test_empty_returns_empty(self, client: GmailClient):
+        client.service = MagicMock()
+        assert client.fetch_messages_metadata([]) == []
+
+    def test_happy_path_returns_metadata(self, client: GmailClient):
+        mock_service = MagicMock()
+        client.service = mock_service
+
+        with patch.object(client, "_execute_batch_get", return_value={
+            "m1": {
+                "id": "m1", "threadId": "t1", "labelIds": ["SENT"],
+                "internalDate": "1704067200000",
+                "payload": {"headers": [
+                    {"name": "From", "value": "me@example.com"},
+                    {"name": "Subject", "value": "Hello"},
+                ]},
+            },
+        }):
+            result = client.fetch_messages_metadata(["m1"])
+
+        assert len(result) == 1
+        assert result[0].provider_message_id == "m1"
+        assert result[0].box == "SENT"
+
+
+# ── move_to_trash ─────────────────────────────────────────────────
+
+
+class TestMoveToTrash:
+    def test_guard_raises_not_authenticated(self, client: GmailClient):
+        assert client.service is None
+        with pytest.raises(EmailNotAuthenticatedError):
+            client.move_to_trash(["m1"])
+
+    def test_empty_returns_empty(self, client: GmailClient):
+        client.service = MagicMock()
+        assert client.move_to_trash([]) == {}
+
+    def test_happy_path(self, client: GmailClient):
+        client.service = MagicMock()
+        with patch.object(client, "_execute_batch_modify", return_value=["id1", "id2"]):
+            result = client.move_to_trash(["id1", "id2"])
+        assert result == {"id1": "id1", "id2": "id2"}
+
+    def test_partial_failure_returns_succeeded(self, client: GmailClient):
+        client.service = MagicMock()
+        with patch.object(client, "_execute_batch_modify", return_value=["id1"]):
+            result = client.move_to_trash(["id1", "id2"])
+        assert result == {"id1": "id1"}
+
+    def test_http_error_raises_external_api(self, client: GmailClient):
+        client.service = MagicMock()
+        with patch.object(client, "_execute_batch_modify", side_effect=EmailExternalAPIError("fail")):
+            with pytest.raises(EmailExternalAPIError):
+                client.move_to_trash(["id1"])

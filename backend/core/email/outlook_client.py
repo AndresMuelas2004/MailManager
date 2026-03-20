@@ -11,6 +11,7 @@ from typing import Any
 
 from .email_client import EmailClient, EmailMetadata, LabelUpdate, SyncResult
 from .errors import (
+    CoreError,
     EmailExternalAPIError,
     EmailMissingAppCredentialsError,
     EmailMissingRefreshTokenError,
@@ -51,6 +52,12 @@ _FOLDER_TO_BOX: dict[str, str] = {
     "deleteditems": "TRASH",
     "junkemail": "SPAM",
     "sentitems": "SENT",
+}
+
+_BOX_TO_FOLDER: dict[str, str] = {
+    "ALL_MAIL": "inbox",
+    "SENT": "sentitems",
+    "SPAM": "junkemail",
 }
 
 
@@ -452,11 +459,10 @@ class OutlookClient(EmailClient):
                                 folder_name, msg.get("id", "?"),
                                 msg.get("subject", "?"), box,
                             )
-                        except Exception:
+                        except Exception as exc:
                             logger.warning(
-                                "Outlook delta (%s): skipping unparseable message %s",
-                                folder_name,
-                                msg.get("id", "?"),
+                                "Outlook delta (%s): skipping unparseable message %s: %s",
+                                folder_name, msg.get("id", "?"), exc,
                             )
 
             next_link = response.get("@odata.nextLink")
@@ -522,10 +528,10 @@ class OutlookClient(EmailClient):
                 box = folder_id_to_box.get(parent_folder_id, "ALL_MAIL")
                 try:
                     upserts.append(self._parse_graph_message(msg, box))
-                except Exception:
+                except Exception as exc:
                     logger.warning(
-                        "Outlook bootstrap: skipping unparseable message %s",
-                        msg.get("id", "?"),
+                        "Outlook bootstrap: skipping unparseable message %s: %s",
+                        msg.get("id", "?"), exc,
                     )
             url = response.get("@odata.nextLink")
 
@@ -615,40 +621,114 @@ class OutlookClient(EmailClient):
         if not recipients:
             raise EmailRecipientsMissingError()
 
-        draft_payload = {
-            "subject": subject,
-            "body": {"contentType": "Text", "content": body},
-            "toRecipients": [
-                {"emailAddress": {"address": r}} for r in recipients
-            ],
-        }
-
-        draft_response = self._graph_request(
-            "POST", f"{GRAPH_BASE_URL}/me/messages", body=draft_payload,
-        )
-        metadata = self._parse_graph_message(draft_response, "SENT")
-
-        draft_id = draft_response.get("id", "")
         try:
-            self._graph_request("POST", f"{GRAPH_BASE_URL}/me/messages/{draft_id}/send")
-        except Exception:
+            draft_payload = {
+                "subject": subject,
+                "body": {"contentType": "Text", "content": body},
+                "toRecipients": [
+                    {"emailAddress": {"address": r}} for r in recipients
+                ],
+            }
+
+            draft_response = self._graph_request(
+                "POST", f"{GRAPH_BASE_URL}/me/messages", body=draft_payload,
+            )
+            metadata = self._parse_graph_message(draft_response, "SENT")
+
+            draft_id = draft_response.get("id", "")
             try:
-                self._graph_request("DELETE", f"{GRAPH_BASE_URL}/me/messages/{draft_id}")
+                self._graph_request("POST", f"{GRAPH_BASE_URL}/me/messages/{draft_id}/send")
             except Exception:
-                logger.warning(
-                    "Outlook failed to delete orphan draft %s after send failure.",
-                    draft_id,
-                )
+                try:
+                    self._graph_request("DELETE", f"{GRAPH_BASE_URL}/me/messages/{draft_id}")
+                except Exception:
+                    logger.warning(
+                        "Outlook failed to delete orphan draft %s after send failure.",
+                        draft_id,
+                    )
+                raise
+
+            if not metadata.from_email or not metadata.from_name:
+                profile_email, profile_name = self._fetch_sender_profile()
+                if not metadata.from_email:
+                    metadata.from_email = profile_email
+                if not metadata.from_name:
+                    metadata.from_name = profile_name or profile_email
+
+            return metadata
+        except EmailExternalAPIError:
             raise
+        except CoreError:
+            raise
+        except Exception as exc:
+            raise EmailExternalAPIError(
+                f"Outlook unexpected send_email error ({type(exc).__name__}): {exc}"
+            ) from exc
 
-        if not metadata.from_email or not metadata.from_name:
-            profile_email, profile_name = self._fetch_sender_profile()
-            if not metadata.from_email:
-                metadata.from_email = profile_email
-            if not metadata.from_name:
-                metadata.from_name = profile_name or profile_email
+    def delete_messages(self, message_ids: list[str]) -> list[str]:
+        if self._access_token is None:
+            raise EmailNotAuthenticatedError("Outlook delete_messages requires authentication.")
+        if not message_ids:
+            return []
+        # No-op: permanent deletion is not performed at the provider.
+        # The service layer marks these as DELETED locally; the provider
+        # retains the messages in Trash until its own retention policy
+        # purges them.  See core_guide.md § Trash Management Operations.
+        return list(message_ids)
 
-        return metadata
+    def restore_from_trash(self, items: dict[str, str | None]) -> dict[str, str]:
+        if self._access_token is None:
+            raise EmailNotAuthenticatedError("Outlook restore_from_trash requires authentication.")
+        if not items:
+            return {}
+        results: dict[str, str] = {}
+        for msg_id, dest_box in items.items():
+            folder = _BOX_TO_FOLDER.get(dest_box, "inbox") if dest_box else "inbox"
+            try:
+                response = self._graph_request(
+                    "POST",
+                    f"{GRAPH_BASE_URL}/me/messages/{msg_id}/move",
+                    body={"destinationId": folder},
+                )
+                results[msg_id] = response.get("id", msg_id)
+            except EmailExternalAPIError:
+                logger.warning("Outlook restore_from_trash: failed to restore message %s", msg_id)
+        return results
+
+    def move_to_trash(self, message_ids: list[str]) -> dict[str, str]:
+        if self._access_token is None:
+            raise EmailNotAuthenticatedError("Outlook move_to_trash requires authentication.")
+        if not message_ids:
+            return {}
+        results: dict[str, str] = {}
+        for msg_id in message_ids:
+            try:
+                response = self._graph_request(
+                    "POST", f"{GRAPH_BASE_URL}/me/messages/{msg_id}/move",
+                    body={"destinationId": "deleteditems"},
+                )
+                results[msg_id] = response.get("id", msg_id)
+            except EmailExternalAPIError:
+                logger.warning("Outlook move_to_trash: failed to trash message %s", msg_id)
+        return results
+
+    def fetch_messages_metadata(self, message_ids: list[str]) -> list[EmailMetadata]:
+        if self._access_token is None:
+            raise EmailNotAuthenticatedError("Outlook fetch_messages_metadata requires authentication.")
+        if not message_ids:
+            return []
+        folder_id_to_box = self._resolve_special_folder_ids()
+        results: list[EmailMetadata] = []
+        for msg_id in message_ids:
+            url = f"{GRAPH_BASE_URL}/me/messages/{msg_id}?$select={_BOOTSTRAP_SELECT_FIELDS}"
+            try:
+                msg = self._graph_request("GET", url)
+                parent_folder_id = msg.get("parentFolderId", "")
+                box = folder_id_to_box.get(parent_folder_id, "ALL_MAIL")
+                results.append(self._parse_graph_message(msg, box))
+            except EmailExternalAPIError:
+                logger.warning("Outlook fetch_messages_metadata: failed to fetch %s", msg_id)
+        return results
 
     def verify_message_existence(self, message_ids: list[str]) -> list[str]:
         if self._access_token is None:
@@ -695,8 +775,8 @@ class OutlookClient(EmailClient):
             )
             email = response.get("mail") or response.get("userPrincipalName") or ""
             name = response.get("displayName") or ""
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("Outlook /me profile fetch failed: %s", exc)
 
         # Try 2: decode JWT access token claims
         if not email:
@@ -715,8 +795,8 @@ class OutlookClient(EmailClient):
                     email_addr = from_obj.get("emailAddress") or {}
                     email = email_addr.get("address") or ""
                     name = email_addr.get("name") or ""
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("Outlook sent message profile fetch failed: %s", exc)
 
         self._sender_email = email
         self._sender_name = name
@@ -744,7 +824,8 @@ class OutlookClient(EmailClient):
             )
             name = claims.get("name") or ""
             return email, name
-        except Exception:
+        except Exception as exc:
+            logger.debug("Outlook failed to parse JWT claims: %s", exc)
             return "", ""
 
     def _resolve_scopes(
@@ -867,28 +948,3 @@ class OutlookClient(EmailClient):
                 f"Outlook failed Graph API request ({type(exc).__name__}): {exc}"
             ) from exc
 
-    def _graph_raw_request(self, url: str) -> bytes:
-        """Make an authenticated GET request and return the raw response bytes."""
-        headers = {"Authorization": f"Bearer {self._access_token}"}
-        req = urllib.request.Request(url, headers=headers, method="GET")
-        try:
-            with urllib.request.urlopen(req, timeout=30) as response:
-                return response.read()
-        except urllib.error.HTTPError as exc:
-            error_body = exc.read().decode("utf-8", errors="replace")
-            detail = error_body
-            try:
-                error_json = json.loads(error_body) if error_body else {}
-                if isinstance(error_json, dict):
-                    err_code = error_json.get("error", {})
-                    if isinstance(err_code, dict):
-                        detail = f"{err_code.get('code', 'error')}: {err_code.get('message', '')}"
-            except (json.JSONDecodeError, TypeError, ValueError):
-                pass
-            raise EmailExternalAPIError(f"Outlook failed Graph API call: {detail}") from exc
-        except urllib.error.URLError as exc:
-            raise EmailExternalAPIError(f"Outlook failed to reach Graph API: {exc.reason}") from exc
-        except Exception as exc:
-            raise EmailExternalAPIError(
-                f"Outlook failed Graph API request ({type(exc).__name__}): {exc}"
-            ) from exc

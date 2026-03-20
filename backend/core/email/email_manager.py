@@ -142,6 +142,24 @@ class EmailManager:
         client = self._get_client_or_raise(account_label)
         return client.verify_message_existence(message_ids)
 
+    def delete_messages(self, account_label: str, message_ids: list[str]) -> list[str]:
+        client = self._get_client_or_raise(account_label)
+        return client.delete_messages(message_ids)
+
+    def restore_from_trash(self, account_label: str, items: dict[str, str | None]) -> dict[str, str]:
+        client = self._get_client_or_raise(account_label)
+        return client.restore_from_trash(items)
+
+    def fetch_messages_metadata(
+        self, account_label: str, message_ids: list[str],
+    ) -> list[EmailMetadata]:
+        client = self._get_client_or_raise(account_label)
+        return client.fetch_messages_metadata(message_ids)
+
+    def move_to_trash(self, account_label: str, message_ids: list[str]) -> dict[str, str]:
+        client = self._get_client_or_raise(account_label)
+        return client.move_to_trash(message_ids)
+
     def send_email_from_account(
         self,
         account_label: str,

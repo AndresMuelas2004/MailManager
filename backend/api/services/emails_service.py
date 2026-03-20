@@ -13,22 +13,38 @@ from api.errors.exceptions import (
     AccountNotFound,
     ApiError,
     EmailFetchError,
+    EmailNotInTrash,
     EmailSendError,
+    MoveToTrashError,
+    TrashOperationError,
 )
 from core.email import CoreError
-from api.schemas.email import AccountSyncDetail, EmailSendRequest, SyncResultOut
+from api.schemas.email import (
+    AccountSyncDetail,
+    EmailSendRequest,
+    MoveToTrashRequest,
+    MoveToTrashResult,
+    SyncResultOut,
+    TrashActionRequest,
+    TrashActionResult,
+)
 from core.email.email_client import SyncResult
 from core.email.email_manager import EmailManager
 from api.services.services_helpers import (
     build_manager_for_accounts,
     delete_email_metadata_batch,
     ensure_mailbox_access,
+    get_trash_emails_by_ids,
     load_stored_message_ids,
     load_sync_cursors,
     load_wrapped_account_tokens,
     load_wrapped_app_credentials,
+    mark_as_deleted_batch,
+    move_to_trash_batch,
     persist_email_metadata_batch,
     raise_on_silent_auth_errors,
+    restore_from_trash_batch,
+    restore_from_trash_discovered_batch,
     translate_core_error,
     translate_database_error,
     unwrap_secret,
@@ -70,7 +86,11 @@ def _reconcile_ghost_emails(
     if not ghost_ids:
         return 0, []
 
-    deleted = delete_email_metadata_batch(account_id, ghost_ids)
+    try:
+        deleted = delete_email_metadata_batch(account_id, ghost_ids)
+    except Exception:
+        logger.warning("Reconciliation skipped for %s: failed to delete ghosts.", account_id)
+        return 0, []
     logger.info("Reconciliation for %s: %d suspect, %d ghosts deleted.", account_id, len(suspect_ids), deleted)
     return deleted, ghost_ids
 
@@ -133,7 +153,7 @@ def sync_email_metadata(mailbox_id: str, user_id: str) -> SyncResultOut:
         raise translate_database_error(exc) from exc
     except Exception as exc:
         logger.warning("Unexpected account listing error (%s): %s", type(exc).__name__, exc)
-        raise ApiError("Failed to list accounts.") from exc
+        raise ApiError("Failed to list accounts for sync.") from exc
 
     try:
         auth_payloads, label_lookup = _build_auth_context(accounts, mailbox_id)
@@ -217,7 +237,7 @@ def send_email(mailbox_id: str, payload: EmailSendRequest, user_id: str) -> dict
         raise translate_database_error(exc) from exc
     except Exception as exc:
         logger.warning("Unexpected account lookup error (%s): %s", type(exc).__name__, exc)
-        raise ApiError("Failed to look up account.") from exc
+        raise ApiError("Failed to look up account for email send.") from exc
     if account is None:
         raise AccountNotFound(f"Account '{payload.account_id}' not found.")
 
@@ -259,3 +279,154 @@ def send_email(mailbox_id: str, payload: EmailSendRequest, user_id: str) -> dict
     except Exception as exc:
         logger.warning("Unexpected send error (%s): %s", type(exc).__name__, exc)
         raise EmailSendError("Failed to send email.") from exc
+
+
+def manage_trash(mailbox_id: str, payload: TrashActionRequest, user_id: str) -> TrashActionResult:
+    """Delete permanently or restore emails from trash."""
+    ensure_mailbox_access(mailbox_id, user_id)
+
+    try:
+        accounts = account_store.list_by_mailbox(mailbox_id)
+    except DatabaseError as exc:
+        raise translate_database_error(exc) from exc
+    except Exception as exc:
+        logger.warning("Unexpected account listing error (%s): %s", type(exc).__name__, exc)
+        raise TrashOperationError("Failed to list accounts for trash operation.") from exc
+
+    account_ids_in_mailbox = {str(a.get("account_id") or "") for a in accounts}
+
+    # Group message IDs by account_id
+    msg_ids_by_account: dict[str, list[str]] = {}
+    for item in payload.items:
+        if item.account_id not in account_ids_in_mailbox:
+            raise AccountNotFound(
+                f"Account '{item.account_id}' not found in mailbox '{mailbox_id}'."
+            )
+        msg_ids_by_account.setdefault(item.account_id, []).append(item.provider_message_id)
+
+    # Verify all emails are in TRASH and collect trash data
+    trash_data_by_account: dict[str, dict[str, str | None]] = {}
+    for account_id, msg_ids in msg_ids_by_account.items():
+        trash_rows = get_trash_emails_by_ids(account_id, msg_ids)
+        found_ids = {str(r["provider_message_id"]) for r in trash_rows}
+        missing = [mid for mid in msg_ids if mid not in found_ids]
+        if missing:
+            raise EmailNotInTrash(
+                f"Emails not in trash for account '{account_id}': {missing}.",
+                {"account_id": account_id, "missing_ids": missing},
+            )
+        trash_data_by_account[account_id] = {
+            str(r["provider_message_id"]): r.get("previous_box")
+            for r in trash_rows
+        }
+
+    # Build auth context only for referenced accounts
+    referenced_accounts = [a for a in accounts if str(a.get("account_id") or "") in msg_ids_by_account]
+
+    try:
+        auth_payloads, label_lookup = _build_auth_context(referenced_accounts, mailbox_id)
+        manager = build_manager_for_accounts(referenced_accounts)
+
+        updated_tokens = manager.authenticate_all_silent(auth_payloads)
+        if updated_tokens:
+            _persist_refreshed_tokens(updated_tokens, label_lookup)
+        raise_on_silent_auth_errors(manager.get_last_errors(), fallback=TrashOperationError)
+
+        total_affected = 0
+        for account_id, msg_ids in msg_ids_by_account.items():
+            account_label = f"{mailbox_id}__{account_id}"
+
+            if payload.action == "delete":
+                succeeded = manager.delete_messages(account_label, msg_ids)
+                mark_as_deleted_batch(account_id, succeeded)
+                total_affected += len(succeeded)
+            else:  # restore
+                trash_data = trash_data_by_account[account_id]
+                provider_items = {mid: trash_data.get(mid) for mid in msg_ids}
+
+                id_mapping = manager.restore_from_trash(account_label, provider_items)
+
+                # Split: known previous_box vs NULL (needs discovery)
+                known_rows: list[tuple] = []
+                null_old_to_new: dict[str, str] = {}
+                for old, new in id_mapping.items():
+                    if trash_data.get(old):
+                        known_rows.append((old, new, account_id))
+                    else:
+                        null_old_to_new[old] = new
+
+                if known_rows:
+                    restore_from_trash_batch(account_id, known_rows)
+
+                if null_old_to_new:
+                    new_ids = list(null_old_to_new.values())
+                    metadata_list = manager.fetch_messages_metadata(account_label, new_ids)
+                    box_map = {m.provider_message_id: m.box for m in metadata_list}
+                    discovered_rows = [
+                        (old, new, account_id, box_map.get(new, "ALL_MAIL"))
+                        for old, new in null_old_to_new.items()
+                    ]
+                    restore_from_trash_discovered_batch(account_id, discovered_rows)
+
+                total_affected += len(id_mapping)
+
+        return TrashActionResult(affected=total_affected)
+    except ApiError:
+        raise
+    except CoreError as exc:
+        raise translate_core_error(exc, fallback=TrashOperationError) from exc
+    except Exception as exc:
+        logger.warning("Unexpected trash operation error (%s): %s", type(exc).__name__, exc)
+        raise TrashOperationError("Failed to manage trash operation.") from exc
+
+
+def move_to_trash(mailbox_id: str, payload: MoveToTrashRequest, user_id: str) -> MoveToTrashResult:
+    """Move emails to trash (provider-first, then update DB)."""
+    ensure_mailbox_access(mailbox_id, user_id)
+
+    try:
+        accounts = account_store.list_by_mailbox(mailbox_id)
+    except DatabaseError as exc:
+        raise translate_database_error(exc) from exc
+    except Exception as exc:
+        logger.warning("Unexpected account listing error (%s): %s", type(exc).__name__, exc)
+        raise MoveToTrashError("Failed to list accounts for move-to-trash operation.") from exc
+
+    account_ids_in_mailbox = {str(a.get("account_id") or "") for a in accounts}
+
+    items_by_account: dict[str, list[str]] = {}
+    for item in payload.items:
+        if item.account_id not in account_ids_in_mailbox:
+            raise AccountNotFound(
+                f"Account '{item.account_id}' not found in mailbox '{mailbox_id}'."
+            )
+        items_by_account.setdefault(item.account_id, []).append(item.provider_message_id)
+
+    referenced_accounts = [a for a in accounts if str(a.get("account_id") or "") in items_by_account]
+
+    try:
+        auth_payloads, label_lookup = _build_auth_context(referenced_accounts, mailbox_id)
+        manager = build_manager_for_accounts(referenced_accounts)
+
+        updated_tokens = manager.authenticate_all_silent(auth_payloads)
+        if updated_tokens:
+            _persist_refreshed_tokens(updated_tokens, label_lookup)
+        raise_on_silent_auth_errors(manager.get_last_errors(), fallback=MoveToTrashError)
+
+        total_affected = 0
+        for account_id, msg_ids in items_by_account.items():
+            account_label = f"{mailbox_id}__{account_id}"
+            id_mapping = manager.move_to_trash(account_label, msg_ids)
+            if id_mapping:
+                rows = [(old, new, account_id) for old, new in id_mapping.items()]
+                affected = move_to_trash_batch(account_id, rows)
+                total_affected += affected
+
+        return MoveToTrashResult(affected=total_affected)
+    except ApiError:
+        raise
+    except CoreError as exc:
+        raise translate_core_error(exc, fallback=MoveToTrashError) from exc
+    except Exception as exc:
+        logger.warning("Unexpected move-to-trash error (%s): %s", type(exc).__name__, exc)
+        raise MoveToTrashError("Failed to move emails to trash.") from exc

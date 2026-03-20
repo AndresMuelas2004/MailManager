@@ -32,7 +32,7 @@ from core.email import (
 )
 
 
-from tests.integration.conftest import MAILBOX_URL as _MAILBOX_URL
+from tests.integration.conftest import MAILBOX_URL as _MAILBOX_URL, _setup_mailbox_and_account
 
 
 # ==================================================================
@@ -310,6 +310,125 @@ def test_send_additional_core_error_translations(
     resp = failing_test_client.post(
         f"{_MAILBOX_URL}/{mid}/emails/send",
         json={"account_id": aid, "subject": "S", "body": "B", "recipients": ["a@b.com"]},
+    )
+    assert resp.status_code == expected_status
+    assert resp.json()["error"]["code"] == expected_code
+
+
+# ==================================================================
+# manage_trash - CoreError during delete/restore (translate_core_error)
+# ==================================================================
+
+@pytest.mark.parametrize(
+    "failing_test_client, expected_status, expected_code",
+    [
+        ({"delete_exc": EmailExternalAPIError("API fail")}, 502, "external_api_error"),
+        ({"delete_exc": EmailAuthError("auth expired")}, 409, "account_not_connected"),
+        ({"delete_exc": RuntimeError("unexpected crash")}, 500, "trash_operation_error"),
+    ],
+    indirect=["failing_test_client"],
+)
+def test_trash_delete_core_error_translations(
+    failing_test_client, expected_status, expected_code, isolated_db,
+):
+    mid, aid = _setup_mailbox_and_account(failing_test_client)
+    # Sync emails to persist m1, m2, m3
+    failing_test_client.post(f"{_MAILBOX_URL}/{mid}/emails/sync-metadata")
+    # Move m1 to TRASH so the pre-check passes
+    with isolated_db.cursor() as cur:
+        cur.execute(
+            "UPDATE email_metadata SET box = 'TRASH' "
+            "WHERE provider_message_id = 'm1' AND account_id = %s::uuid",
+            (aid,),
+        )
+    resp = failing_test_client.post(
+        f"{_MAILBOX_URL}/{mid}/emails/trash",
+        json={
+            "action": "delete",
+            "items": [{"provider_message_id": "m1", "account_id": aid}],
+        },
+    )
+    assert resp.status_code == expected_status
+    assert resp.json()["error"]["code"] == expected_code
+
+
+@pytest.mark.parametrize(
+    "failing_test_client, expected_status, expected_code",
+    [
+        ({"restore_exc": EmailExternalAPIError("API fail")}, 502, "external_api_error"),
+        ({"restore_exc": EmailAuthError("auth expired")}, 409, "account_not_connected"),
+        ({"restore_exc": RuntimeError("unexpected crash")}, 500, "trash_operation_error"),
+    ],
+    indirect=["failing_test_client"],
+)
+def test_trash_restore_core_error_translations(
+    failing_test_client, expected_status, expected_code, isolated_db,
+):
+    mid, aid = _setup_mailbox_and_account(failing_test_client)
+    # Sync emails to persist m1, m2, m3
+    failing_test_client.post(f"{_MAILBOX_URL}/{mid}/emails/sync-metadata")
+    # Move m1 to TRASH so the pre-check passes
+    with isolated_db.cursor() as cur:
+        cur.execute(
+            "UPDATE email_metadata SET box = 'TRASH' "
+            "WHERE provider_message_id = 'm1' AND account_id = %s::uuid",
+            (aid,),
+        )
+    resp = failing_test_client.post(
+        f"{_MAILBOX_URL}/{mid}/emails/trash",
+        json={
+            "action": "restore",
+            "items": [{"provider_message_id": "m1", "account_id": aid}],
+        },
+    )
+    assert resp.status_code == expected_status
+    assert resp.json()["error"]["code"] == expected_code
+
+
+# ==================================================================
+# move_to_trash - silent auth error
+# ==================================================================
+
+@pytest.mark.parametrize(
+    "failing_test_client",
+    [{"auth_silent_exc": EmailAuthError("Refresh token expired.")}],
+    indirect=True,
+)
+def test_move_to_trash_silent_auth_error(failing_test_client, setup_mailbox_and_account):
+    """Silent auth failure before move-to-trash -> AccountNotConnected (409)."""
+    mid, aid = setup_mailbox_and_account(failing_test_client)
+    resp = failing_test_client.post(
+        f"{_MAILBOX_URL}/{mid}/emails/move-to-trash",
+        json={
+            "items": [{"provider_message_id": "m1", "account_id": aid}],
+        },
+    )
+    assert resp.status_code == 409
+    assert resp.json()["error"]["code"] == "account_not_connected"
+
+
+# ==================================================================
+# move_to_trash - CoreError during move_to_trash (translate_core_error)
+# ==================================================================
+
+@pytest.mark.parametrize(
+    "failing_test_client, expected_status, expected_code",
+    [
+        ({"move_to_trash_exc": EmailExternalAPIError("API fail")}, 502, "external_api_error"),
+        ({"move_to_trash_exc": EmailAuthError("auth expired")}, 409, "account_not_connected"),
+        ({"move_to_trash_exc": RuntimeError("unexpected crash")}, 502, "move_to_trash_error"),
+    ],
+    indirect=["failing_test_client"],
+)
+def test_move_to_trash_core_error_translations(
+    failing_test_client, expected_status, expected_code,
+):
+    mid, aid = _setup_mailbox_and_account(failing_test_client)
+    resp = failing_test_client.post(
+        f"{_MAILBOX_URL}/{mid}/emails/move-to-trash",
+        json={
+            "items": [{"provider_message_id": "m1", "account_id": aid}],
+        },
     )
     assert resp.status_code == expected_status
     assert resp.json()["error"]["code"] == expected_code

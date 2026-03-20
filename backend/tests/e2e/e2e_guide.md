@@ -85,12 +85,22 @@ No global "skip all after first failure". Each test checks its own prerequisites
 | 19 | `POST .../emails/send` (gmail) | independent |
 | 20 | `POST .../emails/send` (outlook) | independent |
 
-### Section 5: Auth lifecycle — MUST BE LAST (tests 21–22)
+### Section 5: Trash lifecycle — pre-existing accounts (tests 21–25)
 
 | Test | Endpoint | Dependencies |
 |---|---|---|
-| 21 | `POST /auth/logout` | independent → produces `logged_out` |
-| 22 | `GET /auth/me` → 401 | requires `logged_out` |
+| 21 | `POST .../emails/move-to-trash` (gmail + outlook) | requires `gmail_path1_done` AND `outlook_path1_done` → produces `move_to_trash_done` |
+| 22 | `POST .../emails/trash` (gmail, restore) | requires `move_to_trash_done` → produces `gmail_restore_done` |
+| 23 | `POST .../emails/trash` (gmail, delete) | requires `move_to_trash_done` → produces `gmail_delete_done` |
+| 24 | `POST .../emails/trash` (outlook, delete) | requires `move_to_trash_done` → produces `outlook_delete_done` |
+| 25 | `POST .../emails/trash` (outlook, restore) | requires `move_to_trash_done` → produces `outlook_restore_done` |
+
+### Section 6: Auth lifecycle — MUST BE LAST (tests 26–27)
+
+| Test | Endpoint | Dependencies |
+|---|---|---|
+| 26 | `POST /auth/logout` | independent → produces `logged_out` |
+| 27 | `GET /auth/me` → 401 | requires `logged_out` |
 
 ## Behavioral Contracts — Traps to Avoid
 
@@ -104,9 +114,9 @@ The pre-existing user, mailboxes, and accounts (defined in `e2e_config.py`) must
 
 ### Auth lifecycle tests must be last
 
-`POST /auth/logout` (test 21) invalidates the session cookie. Any test running after it will get 401. This is why Section 5 is the final section.
+`POST /auth/logout` (test 26) invalidates the session cookie. Any test running after it will get 401. This is why Section 6 is the final section.
 
-### Section 6. Extension Checklist
+### Section 7. Extension Checklist
 
 When adding a new provider:
 
