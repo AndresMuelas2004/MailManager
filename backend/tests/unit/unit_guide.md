@@ -28,3 +28,18 @@ Tests for service modules (`test_accounts_service.py`, `test_mailboxes_service.p
 ### Database fakes
 
 `tests/shared/database_fakes.py` provides `FakeCursor`, `FakeConnection`, `patch_connection`, and `patch_connection_error` — used by all database repository unit tests. Less discoverable than `tests/shared/email_fakes.py` (which provides `FakeEmailClient` and `build_metadata`).
+
+### Trash management coverage
+
+- `manage_trash` service function is covered by `TestManageTrash` in `test_emails_service.py`.
+- The 4 trash helpers (`load_stored_message_ids`, `get_trash_emails_by_ids`, `mark_as_deleted_batch`, `restore_from_trash_batch`) are covered in `test_services_helpers.py`.
+- `is_auth_error`, `unwrap_secret`, `_wrap_secret` utility functions are also covered in `test_services_helpers.py`.
+
+### Move-to-trash coverage
+
+- `move_to_trash` service function is covered by `TestMoveToTrash` in `test_emails_service.py`.
+- `move_to_trash_batch` helper is covered in `test_services_helpers.py`.
+- `GmailClient.move_to_trash` is covered by `TestMoveToTrash` in `test_gmail_client.py`.
+- `OutlookClient.move_to_trash` is covered by `TestMoveToTrash` in `test_outlook_client.py`.
+- `EmailManager.move_to_trash` delegation is covered by standalone functions (`test_move_to_trash_delegates_to_client`, `test_move_to_trash_unknown_label_raises`) in `test_email_manager.py`.
+- `PgEmailMetadataStore.move_to_trash_batch` is covered in `test_email_metadata_repository.py`.

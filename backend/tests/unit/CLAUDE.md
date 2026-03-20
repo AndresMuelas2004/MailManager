@@ -7,7 +7,7 @@ This is the `CLAUDE.md` for the **unit test** layer. It serves as the general ar
 **Reusable.** Copy this file into a new project to establish the unit test layer architecture from day one. The project-specific guide extends these rules with domain details but must never contradict them.
 
 **Precedence.** In case of conflict between this file and a project-specific guide, these rules take precedence.
-
+**Immutable.** This file must never be edited. All project-specific changes go in the `*_guide.md` file referenced at the end of this document.
 ## 1. Scope
 
 Unit tests validate individual modules in isolation. They do **not** require:

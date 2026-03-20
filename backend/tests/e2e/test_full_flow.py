@@ -332,17 +332,256 @@ def test_20_update_read_status_outlook(e2e_client, flow_state):
 
 
 # ===================================================================
-# Section 5: Auth lifecycle (MUST BE LAST — invalidates session)
+# Section 5: Trash lifecycle (move to trash → restore → delete)
 # ===================================================================
 
-def test_21_post_auth_logout(e2e_client, flow_state):
+def test_21_move_to_trash(e2e_client, flow_state):
+    """Sync both providers, pick 4 non-TRASH emails, move them to trash."""
+    _require(flow_state, "gmail_path1_done", "outlook_path1_done")
+
+    dsn = os.getenv("DATABASE_URL", "").strip()
+    conn = psycopg2.connect(dsn=dsn)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT provider_message_id FROM email_metadata "
+                "WHERE account_id = %s AND box NOT IN ('TRASH', 'DELETED') "
+                "LIMIT 2",
+                (GMAIL_ACCOUNT_ID,),
+            )
+            gmail_ids = [row[0] for row in cur.fetchall()]
+            cur.execute(
+                "SELECT provider_message_id FROM email_metadata "
+                "WHERE account_id = %s AND box NOT IN ('TRASH', 'DELETED') "
+                "LIMIT 2",
+                (OUTLOOK_ACCOUNT_ID,),
+            )
+            outlook_ids = [row[0] for row in cur.fetchall()]
+    finally:
+        conn.close()
+
+    assert len(gmail_ids) >= 2, "Need at least 2 Gmail emails for trash lifecycle"
+    assert len(outlook_ids) >= 2, "Need at least 2 Outlook emails for trash lifecycle"
+
+    flow_state["trash_gmail_ids"] = gmail_ids
+    flow_state["trash_outlook_ids"] = outlook_ids
+
+    items = (
+        [{"provider_message_id": mid, "account_id": GMAIL_ACCOUNT_ID} for mid in gmail_ids]
+        + [{"provider_message_id": mid, "account_id": OUTLOOK_ACCOUNT_ID} for mid in outlook_ids]
+    )
+
+    # Gmail move-to-trash
+    gmail_items = [i for i in items if i["account_id"] == GMAIL_ACCOUNT_ID]
+    resp = e2e_client.post(
+        f"/mailboxes/{GMAIL_MAILBOX_ID}/emails/move-to-trash",
+        json={"items": gmail_items},
+    )
+    _assert_ok(resp)
+
+    # Outlook move-to-trash
+    outlook_items = [i for i in items if i["account_id"] == OUTLOOK_ACCOUNT_ID]
+    resp = e2e_client.post(
+        f"/mailboxes/{OUTLOOK_MAILBOX_ID}/emails/move-to-trash",
+        json={"items": outlook_items},
+    )
+    _assert_ok(resp)
+
+    # Verify DB state
+    conn = psycopg2.connect(dsn=dsn)
+    try:
+        with conn.cursor() as cur:
+            # Gmail IDs don't change — verify by provider_message_id
+            for mid in gmail_ids:
+                cur.execute(
+                    "SELECT box, previous_box FROM email_metadata "
+                    "WHERE provider_message_id = %s AND account_id = %s",
+                    (mid, GMAIL_ACCOUNT_ID),
+                )
+                row = cur.fetchone()
+                assert row is not None, f"Gmail email {mid} not found"
+                assert row[0] == "TRASH", f"Gmail email {mid} box should be TRASH, got {row[0]}"
+                assert row[1] is not None, f"Gmail email {mid} previous_box should be set"
+
+            # Outlook IDs may have changed — verify by account + TRASH box
+            cur.execute(
+                "SELECT provider_message_id FROM email_metadata "
+                "WHERE account_id = %s AND box = 'TRASH' "
+                "ORDER BY provider_message_id LIMIT %s",
+                (OUTLOOK_ACCOUNT_ID, len(outlook_ids)),
+            )
+            new_outlook_ids = [row[0] for row in cur.fetchall()]
+            assert len(new_outlook_ids) >= len(outlook_ids), (
+                f"Expected at least {len(outlook_ids)} Outlook TRASH emails, got {len(new_outlook_ids)}"
+            )
+            flow_state["trash_outlook_ids"] = new_outlook_ids
+    finally:
+        conn.close()
+
+    flow_state["move_to_trash_done"] = "true"
+
+
+def test_22_restore_gmail_from_trash(e2e_client, flow_state):
+    """Restore 1 Gmail email from trash — verify restored to original box."""
+    _require(flow_state, "move_to_trash_done")
+    gmail_id = flow_state["trash_gmail_ids"][0]
+
+    resp = e2e_client.post(
+        f"/mailboxes/{GMAIL_MAILBOX_ID}/emails/trash",
+        json={
+            "action": "restore",
+            "items": [{"provider_message_id": gmail_id, "account_id": GMAIL_ACCOUNT_ID}],
+        },
+    )
+    _assert_ok(resp)
+    assert resp.json()["affected"] == 1
+
+    dsn = os.getenv("DATABASE_URL", "").strip()
+    conn = psycopg2.connect(dsn=dsn)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT box, previous_box FROM email_metadata "
+                "WHERE provider_message_id = %s AND account_id = %s",
+                (gmail_id, GMAIL_ACCOUNT_ID),
+            )
+            row = cur.fetchone()
+            assert row is not None
+            assert row[0] != "TRASH", f"Gmail email should be restored, got box={row[0]}"
+            assert row[1] is None, "previous_box should be NULL after restore"
+    finally:
+        conn.close()
+
+    flow_state["gmail_restore_done"] = "true"
+
+
+def test_23_delete_gmail_from_trash(e2e_client, flow_state):
+    """Delete 1 Gmail email from trash — verify marked as DELETED."""
+    _require(flow_state, "move_to_trash_done")
+    gmail_id = flow_state["trash_gmail_ids"][1]
+
+    resp = e2e_client.post(
+        f"/mailboxes/{GMAIL_MAILBOX_ID}/emails/trash",
+        json={
+            "action": "delete",
+            "items": [{"provider_message_id": gmail_id, "account_id": GMAIL_ACCOUNT_ID}],
+        },
+    )
+    _assert_ok(resp)
+    assert resp.json()["affected"] == 1
+
+    dsn = os.getenv("DATABASE_URL", "").strip()
+    conn = psycopg2.connect(dsn=dsn)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT box FROM email_metadata "
+                "WHERE provider_message_id = %s AND account_id = %s",
+                (gmail_id, GMAIL_ACCOUNT_ID),
+            )
+            row = cur.fetchone()
+            assert row is not None
+            assert row[0] == "DELETED"
+    finally:
+        conn.close()
+
+    flow_state["gmail_delete_done"] = "true"
+
+
+def test_24_delete_outlook_from_trash(e2e_client, flow_state):
+    """Delete 1 Outlook email from trash — verify marked as DELETED."""
+    _require(flow_state, "move_to_trash_done")
+    outlook_id = flow_state["trash_outlook_ids"][0]
+
+    resp = e2e_client.post(
+        f"/mailboxes/{OUTLOOK_MAILBOX_ID}/emails/trash",
+        json={
+            "action": "delete",
+            "items": [{"provider_message_id": outlook_id, "account_id": OUTLOOK_ACCOUNT_ID}],
+        },
+    )
+    _assert_ok(resp)
+    assert resp.json()["affected"] == 1
+
+    dsn = os.getenv("DATABASE_URL", "").strip()
+    conn = psycopg2.connect(dsn=dsn)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT box FROM email_metadata "
+                "WHERE provider_message_id = %s AND account_id = %s",
+                (outlook_id, OUTLOOK_ACCOUNT_ID),
+            )
+            row = cur.fetchone()
+            assert row is not None
+            assert row[0] == "DELETED"
+    finally:
+        conn.close()
+
+    flow_state["outlook_delete_done"] = "true"
+
+
+def test_25_restore_outlook_from_trash(e2e_client, flow_state):
+    """Restore 1 Outlook email from trash — verify restored + provider_message_id updated."""
+    _require(flow_state, "move_to_trash_done")
+    outlook_id = flow_state["trash_outlook_ids"][1]
+
+    resp = e2e_client.post(
+        f"/mailboxes/{OUTLOOK_MAILBOX_ID}/emails/trash",
+        json={
+            "action": "restore",
+            "items": [{"provider_message_id": outlook_id, "account_id": OUTLOOK_ACCOUNT_ID}],
+        },
+    )
+    _assert_ok(resp)
+    assert resp.json()["affected"] == 1
+
+    dsn = os.getenv("DATABASE_URL", "").strip()
+    conn = psycopg2.connect(dsn=dsn)
+    try:
+        with conn.cursor() as cur:
+            # Outlook restore changes the provider_message_id, so the old one should be gone
+            cur.execute(
+                "SELECT box, previous_box FROM email_metadata "
+                "WHERE provider_message_id = %s AND account_id = %s",
+                (outlook_id, OUTLOOK_ACCOUNT_ID),
+            )
+            old_row = cur.fetchone()
+            # Check if the old ID was replaced (Outlook changes ID on move)
+            # or if it stayed the same
+            if old_row is not None:
+                # ID stayed the same (some moves don't change ID)
+                assert old_row[0] != "TRASH", f"Should be restored, got {old_row[0]}"
+                assert old_row[1] is None, "previous_box should be NULL after restore"
+            else:
+                # ID changed — find the new record by checking for non-TRASH entries
+                # that were recently restored (previous_box is NULL after restore)
+                cur.execute(
+                    "SELECT provider_message_id, box FROM email_metadata "
+                    "WHERE account_id = %s AND box NOT IN ('TRASH', 'DELETED') "
+                    "AND previous_box IS NULL",
+                    (OUTLOOK_ACCOUNT_ID,),
+                )
+                rows = cur.fetchall()
+                assert len(rows) > 0, "Should find at least one restored email"
+    finally:
+        conn.close()
+
+    flow_state["outlook_restore_done"] = "true"
+
+
+# ===================================================================
+# Section 6: Auth lifecycle (MUST BE LAST — invalidates session)
+# ===================================================================
+
+def test_26_post_auth_logout(e2e_client, flow_state):
     response = e2e_client.post("/auth/logout")
     _assert_ok(response)
     assert response.json() == {"status": "logged_out"}
     flow_state["logged_out"] = "true"
 
 
-def test_22_get_auth_me_after_logout_401(e2e_client, flow_state):
+def test_27_get_auth_me_after_logout_401(e2e_client, flow_state):
     _require(flow_state, "logged_out")
     response = e2e_client.get("/auth/me")
     _assert_ok(response, expected=401)

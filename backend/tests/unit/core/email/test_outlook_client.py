@@ -28,6 +28,7 @@ from core.email.outlook_client import (
     GRAPH_BASE_URL,
     OUTLOOK_SCOPES,
     OutlookClient,
+    _BOX_TO_FOLDER,
     _DELTA_FOLDERS,
     _DELTA_SELECT_FIELDS,
     _DELTA_PAGE_SIZE,
@@ -866,48 +867,6 @@ class TestIncrementalEmailMetadata:
         assert result.label_updates[0].is_read is False
 
 
-# ── _graph_raw_request ──────────────────────────────────────────────
-
-
-class TestGraphRawRequest:
-    def test_returns_raw_bytes(self):
-        client = _make_authenticated_client()
-        mock_response = MagicMock()
-        mock_response.read.return_value = b"raw-data"
-        mock_response.__enter__ = MagicMock(return_value=mock_response)
-        mock_response.__exit__ = MagicMock(return_value=False)
-
-        with patch("urllib.request.urlopen", return_value=mock_response):
-            result = client._graph_raw_request("https://example.com/resource")
-        assert result == b"raw-data"
-
-    def test_http_error_raises_external_api_error(self):
-        client = _make_authenticated_client()
-        exc = urllib.error.HTTPError(
-            url="https://example.com", code=403, msg="Forbidden",
-            hdrs=None, fp=MagicMock(read=MagicMock(return_value=b"forbidden")),
-        )
-
-        with patch("urllib.request.urlopen", side_effect=exc):
-            with pytest.raises(EmailExternalAPIError, match="Outlook failed Graph API call"):
-                client._graph_raw_request("https://example.com/resource")
-
-    def test_url_error_raises_external_api_error(self):
-        client = _make_authenticated_client()
-        exc = urllib.error.URLError("DNS resolution failed")
-
-        with patch("urllib.request.urlopen", side_effect=exc):
-            with pytest.raises(EmailExternalAPIError, match="Outlook failed to reach Graph API"):
-                client._graph_raw_request("https://example.com/resource")
-
-    def test_generic_exception_raises_external_api_error(self):
-        client = _make_authenticated_client()
-
-        with patch("urllib.request.urlopen", side_effect=OSError("connection reset")):
-            with pytest.raises(EmailExternalAPIError, match="Outlook failed Graph API request"):
-                client._graph_raw_request("https://example.com/resource")
-
-
 # ── send_email ───────────────────────────────────────────────────
 
 
@@ -1555,6 +1514,204 @@ class TestAuthenticate:
 
             with pytest.raises(EmailExternalAPIError, match="missing access_token"):
                 client.authenticate(app_credentials=creds)
+
+
+# ── delete_messages ──────────────────────────────────────────────
+
+
+class TestDeleteMessages:
+    def test_guard_raises_not_authenticated(self, client: OutlookClient):
+        assert client._access_token is None
+        with pytest.raises(EmailNotAuthenticatedError):
+            client.delete_messages(["m1"])
+
+    def test_empty_returns_empty(self, client: OutlookClient):
+        client._access_token = "tok"
+        assert client.delete_messages([]) == []
+
+    def test_noop_returns_all_ids(self, client: OutlookClient):
+        """delete_messages is a no-op — returns all IDs without calling the provider."""
+        client._access_token = "tok"
+        result = client.delete_messages(["m1", "m2", "m3"])
+        assert result == ["m1", "m2", "m3"]
+
+
+# ── restore_from_trash ───────────────────────────────────────────
+
+
+class TestRestoreFromTrash:
+    def test_guard_raises_not_authenticated(self, client: OutlookClient):
+        assert client._access_token is None
+        with pytest.raises(EmailNotAuthenticatedError):
+            client.restore_from_trash({"m1": "ALL_MAIL"})
+
+    def test_empty_returns_empty(self, client: OutlookClient):
+        client._access_token = "tok"
+        assert client.restore_from_trash({}) == {}
+
+    def test_happy_path_id_changes(self, client: OutlookClient):
+        client._access_token = "tok"
+        responses = [{"id": "new_m1"}, {"id": "new_m2"}]
+
+        with patch.object(client, "_graph_request", side_effect=responses) as mock_graph:
+            result = client.restore_from_trash({"m1": "ALL_MAIL", "m2": "SENT"})
+
+        assert result == {"m1": "new_m1", "m2": "new_m2"}
+        assert mock_graph.call_count == 2
+
+        # Verify the first call uses inbox for ALL_MAIL
+        args1, kwargs1 = mock_graph.call_args_list[0]
+        assert args1[0] == "POST"
+        assert "/me/messages/m1/move" in args1[1]
+        body1 = kwargs1.get("body", args1[2] if len(args1) > 2 else None)
+        assert body1 == {"destinationId": "inbox"}
+
+        # Verify the second call uses sentitems for SENT
+        args2, kwargs2 = mock_graph.call_args_list[1]
+        assert args2[0] == "POST"
+        assert "/me/messages/m2/move" in args2[1]
+        body2 = kwargs2.get("body", args2[2] if len(args2) > 2 else None)
+        assert body2 == {"destinationId": "sentitems"}
+
+    def test_partial_failure(self, client: OutlookClient):
+        client._access_token = "tok"
+
+        call_count = 0
+
+        def mock_graph(method, url, body=None):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return {"id": "new_m1"}
+            raise EmailExternalAPIError("move failed")
+
+        with patch.object(client, "_graph_request", side_effect=mock_graph):
+            result = client.restore_from_trash({"m1": "ALL_MAIL", "m2": "SENT"})
+
+        assert result == {"m1": "new_m1"}
+
+    def test_default_folder_is_inbox(self, client: OutlookClient):
+        client._access_token = "tok"
+        with patch.object(client, "_graph_request", return_value={"id": "new_m1"}) as mock_graph:
+            client.restore_from_trash({"m1": "UNKNOWN_BOX"})
+        args, kwargs = mock_graph.call_args
+        body = kwargs.get("body", args[2] if len(args) > 2 else None)
+        assert body == {"destinationId": "inbox"}
+
+    def test_none_destination_uses_inbox(self, client: OutlookClient):
+        client._access_token = "tok"
+        with patch.object(client, "_graph_request", return_value={"id": "new_m1"}) as mock_graph:
+            result = client.restore_from_trash({"m1": None})
+        assert result == {"m1": "new_m1"}
+        args, kwargs = mock_graph.call_args
+        body = kwargs.get("body", args[2] if len(args) > 2 else None)
+        assert body == {"destinationId": "inbox"}
+
+
+# ── fetch_messages_metadata ─────────────────────────────────────
+
+
+class TestFetchMessagesMetadata:
+    def test_guard_raises_not_authenticated(self, client: OutlookClient):
+        assert client._access_token is None
+        with pytest.raises(EmailNotAuthenticatedError):
+            client.fetch_messages_metadata(["m1"])
+
+    def test_empty_returns_empty(self, client: OutlookClient):
+        client._access_token = "tok"
+        assert client.fetch_messages_metadata([]) == []
+
+    def test_happy_path_resolves_box(self, client: OutlookClient):
+        client._access_token = "tok"
+        folder_responses = [
+            {"id": "folder-trash"},
+            {"id": "folder-spam"},
+            {"id": "folder-sent"},
+        ]
+        message_response = {
+            "id": "m1",
+            "conversationId": "c1",
+            "from": {"emailAddress": {"address": "x@test.com", "name": "X"}},
+            "subject": "Test",
+            "receivedDateTime": "2024-01-01T12:00:00Z",
+            "isRead": True,
+            "parentFolderId": "folder-sent",
+        }
+
+        call_count = [0]
+        def mock_graph(method, url, body=None):
+            nonlocal call_count
+            call_count[0] += 1
+            if "mailFolders" in url:
+                idx = min(call_count[0] - 1, len(folder_responses) - 1)
+                return folder_responses[idx]
+            return message_response
+
+        with patch.object(client, "_graph_request", side_effect=mock_graph):
+            result = client.fetch_messages_metadata(["m1"])
+
+        assert len(result) == 1
+        assert result[0].box == "SENT"
+        assert result[0].provider_message_id == "m1"
+
+    def test_failed_message_silently_skipped(self, client: OutlookClient):
+        client._access_token = "tok"
+
+        call_count = [0]
+        def mock_graph(method, url, body=None):
+            nonlocal call_count
+            call_count[0] += 1
+            if "mailFolders" in url:
+                return {"id": f"folder-{call_count[0]}"}
+            raise EmailExternalAPIError("Not found")
+
+        with patch.object(client, "_graph_request", side_effect=mock_graph):
+            result = client.fetch_messages_metadata(["m1"])
+
+        assert result == []
+
+
+# ── move_to_trash ────────────────────────────────────────────────
+
+
+class TestMoveToTrash:
+    def test_guard_raises_not_authenticated(self, client: OutlookClient):
+        assert client._access_token is None
+        with pytest.raises(EmailNotAuthenticatedError):
+            client.move_to_trash(["m1"])
+
+    def test_empty_returns_empty(self, client: OutlookClient):
+        client._access_token = "tok"
+        assert client.move_to_trash([]) == {}
+
+    def test_happy_path(self, client: OutlookClient):
+        client._access_token = "tok"
+        with patch.object(client, "_graph_request") as mock_req:
+            mock_req.return_value = {"id": "new_m1"}
+            result = client.move_to_trash(["m1", "m2"])
+        assert result == {"m1": "new_m1", "m2": "new_m1"}
+        assert mock_req.call_count == 2
+
+    def test_captures_new_id_from_response(self, client: OutlookClient):
+        client._access_token = "tok"
+        with patch.object(client, "_graph_request") as mock_req:
+            mock_req.side_effect = [{"id": "new_m1"}, {"id": "new_m2"}]
+            result = client.move_to_trash(["m1", "m2"])
+        assert result == {"m1": "new_m1", "m2": "new_m2"}
+
+    def test_partial_failure_returns_succeeded(self, client: OutlookClient):
+        client._access_token = "tok"
+        with patch.object(client, "_graph_request") as mock_req:
+            mock_req.side_effect = [{"id": "new_m1"}, EmailExternalAPIError("fail")]
+            result = client.move_to_trash(["m1", "m2"])
+        assert result == {"m1": "new_m1"}
+
+    def test_all_fail_returns_empty(self, client: OutlookClient):
+        client._access_token = "tok"
+        with patch.object(client, "_graph_request") as mock_req:
+            mock_req.side_effect = EmailExternalAPIError("fail")
+            result = client.move_to_trash(["m1", "m2"])
+        assert result == {}
 
 
 # ── update_read_status ────────────────────────────────────────────

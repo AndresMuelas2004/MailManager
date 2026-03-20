@@ -42,8 +42,5 @@ except AuthTokenError:    # Guard: re-raise before generic catch
 
 Beyond `CLAUDE.md` § 9:
 
-- Create `auth/<provider>_auth/<provider>.py` with `verify_<provider>_token(...)`.
-- If the provider requires new env vars, add them to `settings.py` and `AuthSettings`.
-- Re-export the verification function from `auth/__init__.py`.
 - The existing `AuthTokenError` subclasses (`AuthTokenNetworkError`, `AuthTokenInvalidError`, `AuthTokenProviderError`) are provider-agnostic. Only create new subclasses if a provider introduces a failure mode that needs a different HTTP response.
 - Update this guide (capture technique ordering) with the new provider's exception ordering.

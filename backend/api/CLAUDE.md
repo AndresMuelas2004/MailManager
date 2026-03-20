@@ -1,5 +1,4 @@
 # General API Layer Rules
-
 This is the `CLAUDE.md` for the **HTTP API** layer. It serves as the general architectural reference for this layer, describing its separation of responsibilities, its error handling and escalation model, its structural rules, and its common behavior. Every aspect covered here is transferable to any application that follows this layered architecture — nothing is specific to a single project.
 
 **Project-agnostic by design.** Nothing here references a concrete domain, entity, or feature. Every rule applies to any repository that follows this layered architecture.
@@ -7,7 +6,7 @@ This is the `CLAUDE.md` for the **HTTP API** layer. It serves as the general arc
 **Reusable.** Copy this file into a new project to establish the API layer architecture from day one. The project-specific guide extends these rules with domain details but must never contradict them.
 
 **Precedence.** In case of conflict between this file and a project-specific guide, these rules take precedence.
-
+**Immutable.** This file must never be edited. All project-specific changes go in the `*_guide.md` file referenced at the end of this document.
 ## 1. Package Structure
 
 The API layer is organized into four sub-packages:

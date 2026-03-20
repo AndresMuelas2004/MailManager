@@ -45,13 +45,29 @@ Load credentials with `load_wrapped_app_credentials(provider)` / `load_wrapped_a
 
 ### Metadata sync helpers
 
-Five helpers in `services_helpers.py` support the email metadata sync flow:
+Six helpers in `services_helpers.py` support the email metadata sync flow:
 
 - `persist_email_metadata_batch(account_id, metadata_list)` — batch upsert to database.
 - `load_sync_cursors(label_lookup)` — loads sync cursors per account, keyed by account label.
 - `update_sync_cursor(mailbox_id, account_id, cursor)` — persists a new sync cursor.
 - `delete_email_metadata_batch(account_id, message_ids)` — deletes email metadata rows by provider message IDs.
 - `update_email_metadata_labels_batch(account_id, label_updates)` — updates is_read and box labels for existing rows.
+- `load_stored_message_ids(account_id)` — loads all `provider_message_id`s stored for an account. Used by ghost email reconciliation after bootstrap sync.
+
+### Trash management helpers
+
+Four helpers in `services_helpers.py` support the trash management flow:
+
+- `get_trash_emails_by_ids(account_id, message_ids)` — returns list of dicts for emails in TRASH matching the given IDs.
+- `mark_as_deleted_batch(account_id, message_ids)` — marks TRASH emails as DELETED in the database.
+- `restore_from_trash_batch(account_id, rows)` — restores TRASH emails with a known `previous_box`, updating `provider_message_id`, `box` (from DB's `COALESCE(previous_box, 'ALL_MAIL')`), and clearing `previous_box`. Rows are tuples of `(old_id, new_id, account_id)`.
+- `restore_from_trash_discovered_batch(account_id, rows)` — restores TRASH emails where `previous_box` was NULL. The caller provides the discovered box (fetched from the provider after restore). Rows are tuples of `(old_id, new_id, account_id, discovered_box)`.
+
+### Move-to-trash helpers
+
+One helper in `services_helpers.py` supports the move-to-trash flow:
+
+- `move_to_trash_batch(account_id, rows)` — updates `provider_message_id` (in case the provider assigned a new ID), saves the current `box` into `previous_box`, and sets `box = 'TRASH'` in the database. Rows are tuples of `(old_id, new_id, account_id)`. Returns count of affected rows.
 
 ### Read-status endpoint
 
@@ -75,6 +91,42 @@ Inspects the per-account error dict from `manager.authenticate_all_silent()`. No
 ### Post-fetch error inspection
 
 After `fetch_all_email_metadata()`, the service checks `manager.get_last_errors()` for per-client failures and raises either `AccountNotConnected` (auth errors) or `EmailFetchError` (other errors).
+
+### `manage_trash` — trash operation flow
+
+Handles permanent delete and restore of emails from trash. Key behavioral contracts:
+
+1. **TRASH verification gate**: before any provider call, all referenced emails are verified to be in TRASH via `get_trash_emails_by_ids`. If any email is missing from trash, raises `EmailNotInTrash` (409 Conflict) — not 404, because the email exists but is not in the expected state.
+2. **Provider-first rule**: provider delete/restore executes before any DB update. Only messages where the provider call succeeded are persisted locally (see root CLAUDE.md § 2.9).
+3. **Per-account grouping**: items are grouped by `account_id`. Auth context is built only for referenced accounts.
+4. **Delete branch**: calls `manager.delete_messages`, then `mark_as_deleted_batch` for succeeded IDs.
+5. **Restore branch**: calls `manager.restore_from_trash` (passing `None` for items with unknown `previous_box`), then splits the result by `previous_box` state:
+   - **Known** (`previous_box` is not NULL): routed to `restore_from_trash_batch`, which reads `COALESCE(previous_box, 'ALL_MAIL')` from the DB.
+   - **Unknown** (`previous_box` is NULL): calls `manager.fetch_messages_metadata` on the new IDs to discover the post-restore box from the provider, then routes to `restore_from_trash_discovered_batch` with the discovered box.
+
+Error classes: `EmailNotInTrash` (409) and `TrashOperationError` (500 — catch-all for unexpected failures).
+
+### `move_to_trash` — move-to-trash operation flow
+
+Moves emails to trash at the provider and updates the database. Key behavioral contracts:
+
+1. **Provider-first rule**: calls `manager.move_to_trash` at the provider before any DB update. Only messages where the provider call succeeded are persisted locally (see root CLAUDE.md § 2.9).
+2. **Per-account grouping**: items are grouped by `account_id`. Auth context is built only for referenced accounts.
+3. **ID mapping**: `move_to_trash` returns `{old_id: new_id}` — Outlook assigns new IDs on move, Gmail keeps the same ID. The service builds tuples `(old_id, new_id, account_id)` from the mapping.
+4. **DB update**: calls `move_to_trash_batch` with tuples, which updates `provider_message_id`, copies the current `box` into `previous_box`, and sets `box = 'TRASH'`.
+5. **Result reporting**: returns `MoveToTrashResult` with the total count of affected rows (affected: int).
+
+Error classes: `MoveToTrashError` (502 — provider-side failure, code `move_to_trash_error`).
+
+Request/response schemas: `MoveToTrashRequest`, `MoveToTrashResult`.
+
+### Ghost email reconciliation
+
+After a full (bootstrap) sync, `_reconcile_ghost_emails` detects emails stored in the DB that the provider no longer returns. It loads stored IDs, compares against bootstrap results, verifies suspects at the provider via `verify_message_existence`, and hard-deletes confirmed ghosts. **Best-effort**: any error at any step silently skips reconciliation for that account.
+
+### `send_email` — fire-and-forget metadata persistence
+
+After a successful send, the service persists the sent email's metadata. If persistence fails, the error is logged but swallowed — the send is still reported as successful. This is deliberate: the user cares that the email was sent, not that we tracked it internally.
 
 ## Extension
 

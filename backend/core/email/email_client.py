@@ -18,7 +18,7 @@ class EmailMetadata:
     subject: str
     received_at: datetime
     is_read: bool
-    box: str  # "ALL_MAIL" | "SENT" | "SPAM" | "TRASH"
+    box: str  # "ALL_MAIL" | "SENT" | "SPAM" | "TRASH" | "DELETED"
     account_id: str = ""  # Stamped by the service layer before persistence
 
 
@@ -27,7 +27,7 @@ class LabelUpdate:
     """Partial update carrying only label-derived fields for an existing message."""
     provider_message_id: str
     is_read: bool
-    box: str  # "ALL_MAIL" | "SENT" | "SPAM" | "TRASH"
+    box: str  # "ALL_MAIL" | "SENT" | "SPAM" | "TRASH" | "DELETED"
 
 
 @dataclass
@@ -107,6 +107,34 @@ class EmailClient(ABC):
     @abstractmethod
     def verify_message_existence(self, message_ids: list[str]) -> list[str]:
         """Return the subset of message_ids that still exist at the provider."""
+
+    @abstractmethod
+    def delete_messages(self, message_ids: list[str]) -> list[str]:
+        """Permanently delete messages at the provider.
+        Returns the list of provider_message_ids that were successfully deleted.
+        Implementations that cannot delete at the provider (e.g. scope limitations)
+        should return all IDs as succeeded — the service layer handles local cleanup."""
+
+    @abstractmethod
+    def restore_from_trash(self, items: dict[str, str | None]) -> dict[str, str]:
+        """Restore messages from trash at the provider.
+        items maps provider_message_id → destination_box ('ALL_MAIL', 'SENT', 'SPAM')
+        or None when the original box is unknown.
+        Returns dict mapping original_id → new_id for successfully restored messages.
+        For providers where the ID doesn't change on restore, original_id == new_id."""
+
+    @abstractmethod
+    def fetch_messages_metadata(self, message_ids: list[str]) -> list[EmailMetadata]:
+        """Fetch current metadata for specific messages by ID.
+        Returns metadata with box determined by the provider's label/folder state
+        using the standard priority (SPAM > SENT > ALL_MAIL).
+        Messages that cannot be fetched are silently skipped."""
+
+    @abstractmethod
+    def move_to_trash(self, message_ids: list[str]) -> dict[str, str]:
+        """Move messages to trash at the provider.
+        Returns dict mapping original_id → new_id for successfully trashed messages.
+        For providers where the ID doesn't change on trash, original_id == new_id."""
 
     @abstractmethod
     def update_read_status(self, message_ids: list[str], is_read: bool) -> list[str]:

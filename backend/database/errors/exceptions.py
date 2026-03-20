@@ -54,6 +54,11 @@ class TokenDecryptError(DatabaseError):
     default_message = "Failed to decrypt account token."
 
 
+class TokenEncryptError(DatabaseError):
+    code = "token_encrypt_error"
+    default_message = "Token encryption failed."
+
+
 class TokenValidationError(DatabaseError):
     code = "token_validation_error"
     default_message = "Token integrity validation failed."

@@ -83,7 +83,7 @@ This section contains details specific to MailManager. Update it when the projec
 - **Authentication**: Google OIDC.
 - **Database**: PostgreSQL with Alembic migrations.
 
-### 2.3 Request Flow
+### 2.2 Request Flow
 
 ```
 Routers (FastAPI)
@@ -98,7 +98,7 @@ Routers (FastAPI)
 
 
 
-### 2.4 Key Identifiers
+### 2.3 Key Identifiers
 
 - `mailbox_id` — groups accounts under a mailbox.
 - `account_id` — unique per account record.
@@ -107,30 +107,34 @@ Routers (FastAPI)
 - `user_id` — UUID identifying an authenticated user (from `users` table).
 - `owner_user_id` — FK on `mailboxes` linking to the owning user (NOT NULL, CASCADE on user delete).
 
-### 2.5 Testing
+### 2.4 Testing
 
 - **Unit tests** (`backend/tests/unit/`) — use `FakeEmailClient` from `tests/shared/email_fakes.py`. Cover service logic, auth settings, error translation.
 - **Integration tests** (`backend/tests/integration/`) — use `FastAPI TestClient`, monkeypatch `build_manager_for_accounts` with fakes, isolate via `isolated_db` (transaction rollback). `require_session` overridden to return a fixed test user_id.
-- Both test layers share `FakeEmailClient` and `build_metadata` via `tests/shared/`.
+- Both test layers share `FakeEmailClient`, `build_metadata`, and database fakes (`FakeCursor`, `FakeConnection`) via `tests/shared/`.
 - **E2E tests** (`backend/tests/e2e/`) — automated like unit and integration tests. They test all endpoints except interactive OAuth flows (`POST /auth/google`, `POST .../connect`) and `DELETE /auth/me` (cannot create a test user without the interactive login). Real third-party APIs and real DB persistence. Pre-configured test accounts are already inserted in the database with valid tokens and must never be deleted — E2E tests can be run without additional setup.
 
-### 2.6 Frontend
+### 2.5 Frontend
 
 Stack: React + Vite + TypeScript + Tailwind. Structure:
 
 - `src/api/` — HTTP client, typed endpoints, DTOs.
 - `src/features/`, `src/pages/`, `src/components/` — feature-based organization.
 
-### 2.7 Docker
+### 2.6 Docker
 
-`docker-compose.yml` orchestrates `db` (PostgreSQL 16) and `backend` (port 8000). The frontend service is currently commented out. Backend waits for database via `service_healthy`. OAuth credentials mounted from `./credentials/`.
+`docker-compose.yml` orchestrates `db` (PostgreSQL 16) and `backend` (port 8000). The frontend service is currently commented out. Backend waits for database via `service_healthy`. OAuth credentials mounted as a read-only volume; the host path is developer-specific (configured in docker-compose.yml).
 
-### 2.8 Extensibility
+### 2.7 Extensibility
 
 - **New email provider**: follow the Core layer's `*_guide.md` (referenced from `backend/core/CLAUDE.md`).
 - **New identity provider**: follow the Auth layer's `*_guide.md` (referenced from `backend/auth/CLAUDE.md`).
 - **New API endpoint**: follow the API layer's `*_guide.md` (referenced from `backend/api/CLAUDE.md`).
 
-### 2.9 Document Maintenance
+### 2.8 Document Maintenance
 
 Update this section when: architecture layers change, new providers are introduced, commands change, or key identifiers are added. Do not modify Section 1 or any layer-level `CLAUDE.md` files.
+
+### 2.9 Provider-First Rule
+
+For any operation that modifies email state both at the provider and in our database, always call the provider API first. Only update the DB for messages where the provider call succeeded. Never persist a state change locally if the provider rejected or failed the operation. This ensures our DB always reflects the real state of the user's mailbox at the provider.

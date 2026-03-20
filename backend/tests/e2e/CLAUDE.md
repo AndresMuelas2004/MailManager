@@ -7,7 +7,7 @@ This is the `CLAUDE.md` for the **end-to-end test** layer. It serves as the gene
 **Reusable.** Copy this file into a new project to establish the E2E test layer architecture from day one. The project-specific guide extends these rules with domain details but must never contradict them.
 
 **Precedence.** In case of conflict between this file and a project-specific guide, these rules take precedence.
-
+**Immutable.** This file must never be edited. All project-specific changes go in the `*_guide.md` file referenced at the end of this document.
 ## 1. Scope
 
 E2E tests validate the full backend flow against real external APIs and real authentication. **Nothing is mocked or faked** — every component runs exactly as it would in production.
@@ -22,7 +22,7 @@ Interactive endpoints (OAuth login, provider connect) are excluded from the auto
 | Session validation | Real dependency — cookie verified against DB |
 | External providers | Real API calls |
 | Database | Real persistence |
-| DB cleanup | Module/session transaction rollback at teardown |
+| DB cleanup | Direct SQL DELETE of temp mailboxes and sessions at teardown |
 
 ## 3. Prerequisites
 

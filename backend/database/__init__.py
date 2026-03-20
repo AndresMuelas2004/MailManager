@@ -13,6 +13,7 @@ from database.errors import (
     QueryError,
     SettingsError,
     TokenDecryptError,
+    TokenEncryptError,
     TokenValidationError,
     UnknownProviderError,
 )
@@ -35,6 +36,7 @@ __all__ = [
     "session_store",
     "SettingsError",
     "TokenDecryptError",
+    "TokenEncryptError",
     "TokenValidationError",
     "UnknownProviderError",
     "user_store",

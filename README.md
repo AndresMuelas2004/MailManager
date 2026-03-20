@@ -9,6 +9,7 @@ It lets you group Gmail and Outlook accounts under mailbox entities, connect the
 - Multi-provider support: Gmail and Outlook are implemented.
 - Unified inbox per mailbox across all connected accounts.
 - Send email from a specific account in a mailbox.
+- Trash management: move emails to trash, permanently delete, or restore.
 - OAuth 2.0 interactive connect flow plus silent re-authentication.
 - PostgreSQL persistence for mailboxes, accounts, and tokens.
 - Strict layered architecture with centralized API error mapping.
@@ -99,6 +100,7 @@ Required:
 - `MIA_GMAIL_CREDENTIALS_PATH`
 - `MIA_OUTLOOK_CREDENTIALS_PATH`
 - `TOKEN_ENCRYPTION_KEY`
+- `GOOGLE_CLIENT_ID`
 
 Example (PowerShell):
 
@@ -153,10 +155,9 @@ Frontend URL: `http://localhost:5173`
 Instead of manual setup, run everything with Docker Compose:
 
 ```bash
-# (Optional) Place OAuth credentials in credentials/
-mkdir credentials
-# cp /path/to/gmail_oauth.json credentials/gmail_credentials.json
-# cp /path/to/outlook_oauth.json credentials/outlook_credentials.json
+# Configure the credentials volume in docker-compose.yml
+# The volume mount path is developer-specific — edit the 'volumes' entry
+# to point to your local OAuth credentials directory.
 
 docker compose up --build
 ```
@@ -218,6 +219,8 @@ Emails:
 
 - `POST /mailboxes/{mailbox_id}/emails/sync-metadata`
 - `POST /mailboxes/{mailbox_id}/emails/send`
+- `POST /mailboxes/{mailbox_id}/emails/trash`
+- `POST /mailboxes/{mailbox_id}/emails/move-to-trash`
 
 Auth:
 
@@ -266,6 +269,9 @@ Primary API error codes include:
 - `email_fetch_error`
 - `email_send_error`
 - `external_api_error`
+- `email_not_in_trash`
+- `trash_operation_error`
+- `move_to_trash_error`
 
 ## Testing
 

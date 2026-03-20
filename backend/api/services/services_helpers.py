@@ -75,6 +75,7 @@ from database import (
     QueryError,
     SettingsError,
     TokenDecryptError,
+    TokenEncryptError,
     TokenValidationError,
     UnknownProviderError,
 )
@@ -114,6 +115,7 @@ _DB_TO_API_MAP: list[tuple[type[DatabaseError], type[ApiError]]] = [
     (QueryError, DatabaseQueryError),
     (MigrationError, DatabaseMigrationError),
     (SettingsError, EnvVarError),
+    (TokenEncryptError, TokenDecryptionError),
     (TokenDecryptError, TokenDecryptionError),
     (TokenValidationError, TokenIntegrityError),
     (CredentialReadError, CredentialFileError),
@@ -475,6 +477,71 @@ def load_stored_message_ids(account_id: str) -> list[str]:
     except Exception as exc:
         logger.warning("Unexpected stored message IDs load error (%s): %s", type(exc).__name__, exc)
         raise ApiError("Failed to load stored message IDs.") from exc
+
+
+def get_trash_emails_by_ids(account_id: str, message_ids: list[str]) -> list[dict[str, Any]]:
+    """Get emails in TRASH by their provider_message_ids."""
+    if not message_ids:
+        return []
+    try:
+        return email_metadata_store.get_trash_emails_by_ids(account_id, message_ids)
+    except DatabaseError as exc:
+        raise translate_database_error(exc) from exc
+    except Exception as exc:
+        logger.warning("Unexpected get trash emails error (%s): %s", type(exc).__name__, exc)
+        raise ApiError("Failed to get trash emails.") from exc
+
+
+def mark_as_deleted_batch(account_id: str, message_ids: list[str]) -> int:
+    """Mark emails as DELETED in the database."""
+    if not message_ids:
+        return 0
+    try:
+        return email_metadata_store.mark_as_deleted_batch(account_id, message_ids)
+    except DatabaseError as exc:
+        raise translate_database_error(exc) from exc
+    except Exception as exc:
+        logger.warning("Unexpected mark as deleted error (%s): %s", type(exc).__name__, exc)
+        raise ApiError("Failed to mark emails as deleted.") from exc
+
+
+def restore_from_trash_batch(account_id: str, rows: list[tuple]) -> int:
+    """Restore emails from trash in the database."""
+    if not rows:
+        return 0
+    try:
+        return email_metadata_store.restore_from_trash_batch(account_id, rows)
+    except DatabaseError as exc:
+        raise translate_database_error(exc) from exc
+    except Exception as exc:
+        logger.warning("Unexpected restore from trash error (%s): %s", type(exc).__name__, exc)
+        raise ApiError("Failed to restore emails from trash.") from exc
+
+
+def restore_from_trash_discovered_batch(account_id: str, rows: list[tuple]) -> int:
+    """Restore emails from trash with a discovered box in the database."""
+    if not rows:
+        return 0
+    try:
+        return email_metadata_store.restore_from_trash_discovered_batch(account_id, rows)
+    except DatabaseError as exc:
+        raise translate_database_error(exc) from exc
+    except Exception as exc:
+        logger.warning("Unexpected restore discovered box error (%s): %s", type(exc).__name__, exc)
+        raise ApiError("Failed to restore emails with discovered box.") from exc
+
+
+def move_to_trash_batch(account_id: str, rows: list[tuple]) -> int:
+    """Move emails to trash in the database."""
+    if not rows:
+        return 0
+    try:
+        return email_metadata_store.move_to_trash_batch(account_id, rows)
+    except DatabaseError as exc:
+        raise translate_database_error(exc) from exc
+    except Exception as exc:
+        logger.warning("Unexpected move to trash error (%s): %s", type(exc).__name__, exc)
+        raise ApiError("Failed to move emails to trash.") from exc
 
 
 def update_sync_cursor(mailbox_id: str, account_id: str, cursor: str) -> None:

@@ -4,6 +4,8 @@ Pydantic schemas for email API contracts.
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 
@@ -32,6 +34,28 @@ class SyncResultOut(BaseModel):
 
     total_synced: int
     accounts: list[AccountSyncDetail]
+
+
+class TrashItem(BaseModel):
+    provider_message_id: str = Field(..., min_length=1)
+    account_id: str = Field(..., min_length=1)
+
+
+class TrashActionRequest(BaseModel):
+    action: Literal["delete", "restore"]
+    items: list[TrashItem] = Field(..., min_length=1)
+
+
+class TrashActionResult(BaseModel):
+    affected: int
+
+
+class MoveToTrashRequest(BaseModel):
+    items: list[TrashItem] = Field(..., min_length=1)
+
+
+class MoveToTrashResult(BaseModel):
+    affected: int
 
 
 class ReadStatusItem(BaseModel):
