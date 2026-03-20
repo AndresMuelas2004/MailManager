@@ -61,6 +61,12 @@ Added in migration `0008` to the `box` CHECK constraint. Acts as a soft-delete m
 - **`list_provider_message_ids(account_id) → list[str]`** — returns all stored `provider_message_id` values for an account. Used by ghost email reconciliation.
 - **`update_labels_batch(account_id, rows) → int`** — bulk-updates `is_read` and `box` for email metadata. Uses the same `CASE` expression as `UPSERT_EMAIL_METADATA_BATCH` to protect `DELETED` rows from being reverted to `TRASH` by provider sync.
 
+## Behavioral Contracts — Email Metadata
+
+### `EmailMetadataStore.update_read_status_batch(account_id, rows) → int`
+
+Batch-updates the `is_read` column for existing email metadata rows. Uses a dedicated SQL query (`UPDATE_READ_STATUS_BATCH`) that only touches `is_read` — it does **not** modify the `box` column. This is intentionally separate from `update_labels_batch`, because read-status updates should never change box classification. `rows` format: `list[tuple]` of `(provider_message_id, account_id, is_read)`. Returns the number of rows updated.
+
 ## Extension
 
 ### Adding a new provider

@@ -182,6 +182,7 @@ Beyond `authenticate`, `authenticate_silent`, and `fetch_email_metadata`, the `E
 - **`restore_from_trash(items) → dict[str, str]`** — restore messages from trash (see Trash Management Operations above).
 - **`fetch_messages_metadata(message_ids) → list[EmailMetadata]`** — fetch current metadata for specific messages by ID. Returns metadata with `box` determined by the provider's label/folder state. Messages that cannot be fetched are silently skipped. Gmail: reuses the internal batch-fetch mechanism (`_execute_batch_get` + `_parse_metadata_response`). Outlook: resolves special folder IDs, fetches each message individually via `_graph_request`, classifies by `parentFolderId`.
 - **`move_to_trash(message_ids) → dict[str, str]`** — move messages to trash at the provider (see Trash Management Operations above).
+- **`update_read_status(message_ids, is_read) → list[str]`** — mark messages as read or unread at the provider. Returns the list of `provider_message_id`s that were successfully updated. Messages not found at the provider are silently skipped (no error raised). Gmail adds/removes the `UNREAD` label via batch `messages.modify`. Outlook patches each message with `PATCH /me/messages/{id}` setting `{"isRead": bool}`. Raises `EmailNotAuthenticatedError` if the client is not authenticated (guard), and `EmailExternalAPIError` on provider-level failures.
 - **`get_account_label() → str`** — return the label identifying this account within the app.
 
 ## Extension

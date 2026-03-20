@@ -84,6 +84,8 @@ No global "skip all after first failure". Each test checks its own prerequisites
 | 18 | `POST .../emails/sync-metadata` (outlook, path 2 — incremental) | requires `outlook_path1_done` |
 | 19 | `POST .../emails/send` (gmail) | independent |
 | 20 | `POST .../emails/send` (outlook) | independent |
+| 21 | `PATCH .../emails/read-status` (gmail) | independent |
+| 22 | `PATCH .../emails/read-status` (outlook) | independent |
 
 ### Section 5: Trash lifecycle — pre-existing accounts (tests 21–25)
 

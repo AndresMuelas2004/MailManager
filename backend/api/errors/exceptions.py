@@ -117,3 +117,7 @@ class TrashOperationError(ApiError):
 
 class MoveToTrashError(ApiError):
     code = "move_to_trash_error"
+
+
+class ReadStatusUpdateError(ApiError):
+    code = "read_status_update_error"

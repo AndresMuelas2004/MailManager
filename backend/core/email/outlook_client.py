@@ -730,6 +730,21 @@ class OutlookClient(EmailClient):
                 logger.warning("Outlook fetch_messages_metadata: failed to fetch %s", msg_id)
         return results
 
+    def update_read_status(self, message_ids: list[str], is_read: bool) -> list[str]:
+        """Mark messages as read/unread via Microsoft Graph API. Returns IDs successfully updated."""
+        if self._access_token is None:
+            raise EmailNotAuthenticatedError("Outlook update_read_status requires authentication.")
+        if not message_ids:
+            return []
+        updated: list[str] = []
+        for msg_id in message_ids:
+            try:
+                self._graph_request("PATCH", f"{GRAPH_BASE_URL}/me/messages/{msg_id}", body={"isRead": is_read})
+                updated.append(msg_id)
+            except EmailExternalAPIError:
+                pass  # 404 or other → skip silently (message may not exist)
+        return updated
+
     def verify_message_existence(self, message_ids: list[str]) -> list[str]:
         if self._access_token is None:
             raise EmailNotAuthenticatedError("Outlook verify_message_existence requires authentication.")

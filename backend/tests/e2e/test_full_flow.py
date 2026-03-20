@@ -258,6 +258,79 @@ def test_20_send_email_outlook(e2e_client):
     _assert_ok(response)
 
 
+def test_19_update_read_status_gmail(e2e_client, flow_state):
+    """Sync metadata, pick a message, mark as read."""
+    sync_resp = e2e_client.post(f"/mailboxes/{GMAIL_MAILBOX_ID}/emails/sync-metadata")
+    _assert_ok(sync_resp)
+
+    dsn = os.getenv("DATABASE_URL", "").strip()
+    conn = psycopg2.connect(dsn=dsn)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT provider_message_id FROM email_metadata "
+                "WHERE account_id = %s LIMIT 1",
+                (GMAIL_ACCOUNT_ID,),
+            )
+            row = cur.fetchone()
+    finally:
+        conn.close()
+
+    if row is None:
+        pytest.skip("No synced emails found for Gmail test account")
+
+    msg_id = row[0]
+    response = e2e_client.patch(
+        f"/mailboxes/{GMAIL_MAILBOX_ID}/emails/read-status",
+        json={
+            "is_read": True,
+            "items": [{"account_id": GMAIL_ACCOUNT_ID, "provider_message_id": msg_id}],
+        },
+    )
+    _assert_ok(response)
+    data = response.json()
+    assert data["updated_count"] >= 1
+    assert len(data["accounts"]) == 1
+    assert data["accounts"][0]["account_id"] == GMAIL_ACCOUNT_ID
+    flow_state["gmail_read_status_done"] = "true"
+
+
+def test_20_update_read_status_outlook(e2e_client, flow_state):
+    """Sync metadata, pick a message, mark as unread."""
+    sync_resp = e2e_client.post(f"/mailboxes/{OUTLOOK_MAILBOX_ID}/emails/sync-metadata")
+    _assert_ok(sync_resp)
+
+    dsn = os.getenv("DATABASE_URL", "").strip()
+    conn = psycopg2.connect(dsn=dsn)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT provider_message_id FROM email_metadata "
+                "WHERE account_id = %s LIMIT 1",
+                (OUTLOOK_ACCOUNT_ID,),
+            )
+            row = cur.fetchone()
+    finally:
+        conn.close()
+
+    if row is None:
+        pytest.skip("No synced emails found for Outlook test account")
+
+    msg_id = row[0]
+    response = e2e_client.patch(
+        f"/mailboxes/{OUTLOOK_MAILBOX_ID}/emails/read-status",
+        json={
+            "is_read": False,
+            "items": [{"account_id": OUTLOOK_ACCOUNT_ID, "provider_message_id": msg_id}],
+        },
+    )
+    _assert_ok(response)
+    data = response.json()
+    assert data["updated_count"] >= 1
+    assert len(data["accounts"]) == 1
+    assert data["accounts"][0]["account_id"] == OUTLOOK_ACCOUNT_ID
+
+
 # ===================================================================
 # Section 5: Trash lifecycle (move to trash → restore → delete)
 # ===================================================================

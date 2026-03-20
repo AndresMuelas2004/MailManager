@@ -1,5 +1,6 @@
 """
-Unit tests for emails_service.sync_email_metadata and emails_service.send_email.
+Unit tests for emails_service.sync_email_metadata, emails_service.send_email,
+and emails_service.update_read_status.
 
 All external dependencies are monkeypatched so tests run without DB or provider APIs.
 """
@@ -18,8 +19,10 @@ from api.errors.exceptions import (
     EmailSendError,
     ExternalAPIError,
     MoveToTrashError,
+    ReadStatusUpdateError,
     TrashOperationError,
 )
+from api.schemas.email import ReadStatusItem, ReadStatusRequest
 # Note: EmailExternalAPIError maps to ExternalAPIError via _CORE_TO_API_MAP,
 # while generic (non-CoreError) exceptions fall back to the caller-specified fallback.
 from api.services import emails_service
@@ -713,3 +716,235 @@ class TestMoveToTrash:
             emails_service.move_to_trash(
                 _MAILBOX_ID, self._make_payload(), _USER_ID,
             )
+
+
+# ==================================================================
+# update_read_status
+# ==================================================================
+
+_ACCOUNT_ID_2 = "acc2"
+_LABEL_2 = f"{_MAILBOX_ID}__{_ACCOUNT_ID_2}"
+
+
+def _patch_read_status(monkeypatch, *, accounts=None, fake_client_kwargs=None):
+    """Apply monkeypatches specific to update_read_status tests."""
+    if accounts is None:
+        accounts = [_fake_account()]
+
+    monkeypatch.setattr(
+        emails_service, "ensure_mailbox_access",
+        lambda _mb, _uid: {"mailbox_id": _MAILBOX_ID, "owner_user_id": _USER_ID},
+    )
+    monkeypatch.setattr(
+        emails_service.account_store, "list_by_mailbox",
+        lambda _mb: accounts,
+    )
+    monkeypatch.setattr(
+        emails_service, "load_wrapped_app_credentials",
+        lambda _prov: {"client_id": "cid", "client_secret": "cs"},
+    )
+    monkeypatch.setattr(
+        emails_service, "load_wrapped_account_tokens",
+        lambda _mb, _acc, _prov: {"access_token": "at", "refresh_token": "rt"},
+    )
+    monkeypatch.setattr(
+        emails_service.account_store, "upsert_tokens",
+        lambda *_a, **_kw: None,
+    )
+    monkeypatch.setattr(
+        emails_service, "update_email_read_status_batch",
+        lambda _aid, _ids, _read: len(_ids),
+    )
+
+    kwargs = fake_client_kwargs or {}
+
+    def _build(accs):
+        manager = EmailManager()
+        for acc in accs:
+            mid = str(acc.get("mailbox_id", ""))
+            aid = str(acc.get("account_id", ""))
+            label = f"{mid}__{aid}"
+            manager.add_client(FakeEmailClient(
+                label,
+                auth_return={"access_token": "tok", "refresh_token": "ref"},
+                **kwargs,
+            ))
+        return manager
+
+    monkeypatch.setattr(emails_service, "build_manager_for_accounts", _build)
+
+
+class TestUpdateReadStatus:
+
+    @staticmethod
+    def _make_payload(items, is_read=True):
+        return ReadStatusRequest(
+            is_read=is_read,
+            items=[ReadStatusItem(account_id=aid, provider_message_id=mid)
+                   for aid, mid in items],
+        )
+
+    def test_happy_path_single_account(self, monkeypatch):
+        _patch_read_status(monkeypatch)
+        payload = self._make_payload([
+            (_ACCOUNT_ID, "m1"),
+            (_ACCOUNT_ID, "m2"),
+        ], is_read=True)
+        result = emails_service.update_read_status(_MAILBOX_ID, payload, _USER_ID)
+        assert result.updated_count == 2
+        assert len(result.accounts) == 1
+        assert result.accounts[0].account_id == _ACCOUNT_ID
+        assert result.accounts[0].updated == 2
+
+    def test_happy_path_multi_account(self, monkeypatch):
+        accounts = [
+            _fake_account(_ACCOUNT_ID),
+            _fake_account(_ACCOUNT_ID_2),
+        ]
+        _patch_read_status(monkeypatch, accounts=accounts)
+        payload = self._make_payload([
+            (_ACCOUNT_ID, "m1"),
+            (_ACCOUNT_ID_2, "m2"),
+        ], is_read=False)
+        result = emails_service.update_read_status(_MAILBOX_ID, payload, _USER_ID)
+        assert result.updated_count == 2
+        assert len(result.accounts) == 2
+        returned_aids = {d.account_id for d in result.accounts}
+        assert _ACCOUNT_ID in returned_aids
+        assert _ACCOUNT_ID_2 in returned_aids
+
+    def test_account_not_in_mailbox_raises_not_found(self, monkeypatch):
+        _patch_read_status(monkeypatch)
+        payload = self._make_payload([("nonexistent", "m1")])
+        with pytest.raises(AccountNotFound):
+            emails_service.update_read_status(_MAILBOX_ID, payload, _USER_ID)
+
+    def test_auth_error_raises_not_connected(self, monkeypatch):
+        _patch_read_status(monkeypatch, fake_client_kwargs={
+            "auth_silent_exc": EmailAuthError("expired"),
+        })
+        payload = self._make_payload([(_ACCOUNT_ID, "m1")])
+        with pytest.raises(AccountNotConnected):
+            emails_service.update_read_status(_MAILBOX_ID, payload, _USER_ID)
+
+    def test_core_error_translates_via_mapping(self, monkeypatch):
+        _patch_read_status(monkeypatch, fake_client_kwargs={
+            "update_read_status_exc": EmailExternalAPIError("API fail"),
+        })
+        payload = self._make_payload([(_ACCOUNT_ID, "m1")])
+        with pytest.raises(ExternalAPIError):
+            emails_service.update_read_status(_MAILBOX_ID, payload, _USER_ID)
+
+    def test_unexpected_error_raises_read_status_update_error(self, monkeypatch):
+        _patch_read_status(monkeypatch, fake_client_kwargs={
+            "update_read_status_exc": RuntimeError("unexpected"),
+        })
+        payload = self._make_payload([(_ACCOUNT_ID, "m1")])
+        with pytest.raises(ReadStatusUpdateError):
+            emails_service.update_read_status(_MAILBOX_ID, payload, _USER_ID)
+
+    def test_db_helper_called_only_for_updated_ids(self, monkeypatch):
+        """FakeEmailClient returns all IDs by default; override to return subset."""
+        accounts = [_fake_account()]
+        monkeypatch.setattr(
+            emails_service, "ensure_mailbox_access",
+            lambda _mb, _uid: {"mailbox_id": _MAILBOX_ID, "owner_user_id": _USER_ID},
+        )
+        monkeypatch.setattr(
+            emails_service.account_store, "list_by_mailbox",
+            lambda _mb: accounts,
+        )
+        monkeypatch.setattr(
+            emails_service, "load_wrapped_app_credentials",
+            lambda _prov: {"client_id": "cid", "client_secret": "cs"},
+        )
+        monkeypatch.setattr(
+            emails_service, "load_wrapped_account_tokens",
+            lambda _mb, _acc, _prov: {"access_token": "at", "refresh_token": "rt"},
+        )
+        monkeypatch.setattr(
+            emails_service.account_store, "upsert_tokens",
+            lambda *_a, **_kw: None,
+        )
+
+        # Build a manager whose FakeEmailClient returns only "m1" (not "m2")
+        def _build_partial(accs):
+            manager = EmailManager()
+            for acc in accs:
+                mid = str(acc.get("mailbox_id", ""))
+                aid = str(acc.get("account_id", ""))
+                label = f"{mid}__{aid}"
+
+                class _PartialFake(FakeEmailClient):
+                    def update_read_status(self, message_ids, is_read):
+                        return ["m1"]  # only m1 succeeded
+
+                manager.add_client(_PartialFake(
+                    label,
+                    auth_return={"access_token": "tok", "refresh_token": "ref"},
+                ))
+            return manager
+
+        monkeypatch.setattr(emails_service, "build_manager_for_accounts", _build_partial)
+
+        db_calls = []
+        monkeypatch.setattr(
+            emails_service, "update_email_read_status_batch",
+            lambda aid, ids, is_read: (db_calls.append((aid, list(ids), is_read)), len(ids))[1],
+        )
+
+        payload = self._make_payload([
+            (_ACCOUNT_ID, "m1"),
+            (_ACCOUNT_ID, "m2"),
+        ], is_read=True)
+        result = emails_service.update_read_status(_MAILBOX_ID, payload, _USER_ID)
+        assert result.updated_count == 1
+        assert len(db_calls) == 1
+        assert db_calls[0][1] == ["m1"]
+
+    def test_persists_refreshed_tokens(self, monkeypatch):
+        accounts = [_fake_account()]
+        monkeypatch.setattr(
+            emails_service, "ensure_mailbox_access",
+            lambda _mb, _uid: {"mailbox_id": _MAILBOX_ID, "owner_user_id": _USER_ID},
+        )
+        monkeypatch.setattr(
+            emails_service.account_store, "list_by_mailbox",
+            lambda _mb: accounts,
+        )
+        monkeypatch.setattr(
+            emails_service, "load_wrapped_app_credentials",
+            lambda _prov: {"client_id": "cid", "client_secret": "cs"},
+        )
+        monkeypatch.setattr(
+            emails_service, "load_wrapped_account_tokens",
+            lambda _mb, _acc, _prov: {"access_token": "at", "refresh_token": "rt"},
+        )
+        monkeypatch.setattr(
+            emails_service, "update_email_read_status_batch",
+            lambda _aid, _ids, _read: len(_ids),
+        )
+
+        upsert_calls = []
+        monkeypatch.setattr(
+            emails_service.account_store, "upsert_tokens",
+            lambda *args, **kwargs: upsert_calls.append(args),
+        )
+
+        def _build_refreshing(accs):
+            manager = EmailManager()
+            for acc in accs:
+                mid = str(acc.get("mailbox_id", ""))
+                aid = str(acc.get("account_id", ""))
+                label = f"{mid}__{aid}"
+                manager.add_client(FakeEmailClient(
+                    label,
+                    auth_silent_return={"access_token": "new_tok", "refresh_token": "new_ref"},
+                ))
+            return manager
+
+        monkeypatch.setattr(emails_service, "build_manager_for_accounts", _build_refreshing)
+
+        payload = self._make_payload([(_ACCOUNT_ID, "m1")])
+        emails_service.update_read_status(_MAILBOX_ID, payload, _USER_ID)
+        assert len(upsert_calls) >= 1

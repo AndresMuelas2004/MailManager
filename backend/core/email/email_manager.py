@@ -174,6 +174,16 @@ class EmailManager:
         client = self._get_client_or_raise(account_label)
         return client.send_email(subject, body, recipients)
 
+    def update_read_status(
+        self,
+        account_label: str,
+        message_ids: list[str],
+        is_read: bool,
+    ) -> list[str]:
+        """Mark messages as read/unread for the given account. Returns successfully updated IDs."""
+        client = self._get_client_or_raise(account_label)
+        return client.update_read_status(message_ids, is_read)
+
     def get_last_errors(self) -> dict[str, Exception]:
         """
         Return a snapshot of the most recent errors per account label.

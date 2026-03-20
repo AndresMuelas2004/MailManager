@@ -137,6 +137,10 @@ class EmailClient(ABC):
         For providers where the ID doesn't change on trash, original_id == new_id."""
 
     @abstractmethod
+    def update_read_status(self, message_ids: list[str], is_read: bool) -> list[str]:
+        """Mark messages as read/unread at the provider. Returns IDs successfully updated."""
+
+    @abstractmethod
     def get_account_label(self) -> str:
         """
         Return a human-readable label for this account (for example,

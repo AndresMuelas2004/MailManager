@@ -16,14 +16,18 @@ from api.errors.exceptions import (
     EmailNotInTrash,
     EmailSendError,
     MoveToTrashError,
+    ReadStatusUpdateError,
     TrashOperationError,
 )
 from core.email import CoreError
 from api.schemas.email import (
+    AccountReadStatusDetail,
     AccountSyncDetail,
     EmailSendRequest,
     MoveToTrashRequest,
     MoveToTrashResult,
+    ReadStatusRequest,
+    ReadStatusResponse,
     SyncResultOut,
     TrashActionRequest,
     TrashActionResult,
@@ -49,6 +53,7 @@ from api.services.services_helpers import (
     translate_database_error,
     unwrap_secret,
     update_email_metadata_labels_batch,
+    update_email_read_status_batch,
     update_sync_cursor,
 )
 from database import account_store, DatabaseError
@@ -430,3 +435,90 @@ def move_to_trash(mailbox_id: str, payload: MoveToTrashRequest, user_id: str) ->
     except Exception as exc:
         logger.warning("Unexpected move-to-trash error (%s): %s", type(exc).__name__, exc)
         raise MoveToTrashError("Failed to move emails to trash.") from exc
+
+
+def update_read_status(
+    mailbox_id: str,
+    payload: ReadStatusRequest,
+    user_id: str,
+) -> ReadStatusResponse:
+    """Mark messages as read/unread across accounts in a mailbox."""
+    ensure_mailbox_access(mailbox_id, user_id)
+
+    items_by_account: dict[str, list[str]] = {}
+    for item in payload.items:
+        items_by_account.setdefault(item.account_id, []).append(item.provider_message_id)
+
+    try:
+        accounts = account_store.list_by_mailbox(mailbox_id)
+    except DatabaseError as exc:
+        raise translate_database_error(exc) from exc
+    except Exception as exc:
+        logger.warning(
+            "Unexpected account listing error (%s): %s",
+            type(exc).__name__, exc,
+        )
+        raise ApiError("Failed to list accounts for read status update.") from exc
+
+    account_map = {str(a["account_id"]): a for a in accounts}
+    for aid in items_by_account:
+        if aid not in account_map:
+            raise AccountNotFound(
+                f"Account '{aid}' not found in mailbox '{mailbox_id}' "
+                "during read status update."
+            )
+
+    referenced_accounts = [account_map[aid] for aid in items_by_account]
+
+    try:
+        auth_payloads, label_lookup = _build_auth_context(
+            referenced_accounts, mailbox_id,
+        )
+        manager = build_manager_for_accounts(referenced_accounts)
+
+        updated_tokens = manager.authenticate_all_silent(auth_payloads)
+        if updated_tokens:
+            _persist_refreshed_tokens(updated_tokens, label_lookup)
+        raise_on_silent_auth_errors(
+            manager.get_last_errors(), fallback=ReadStatusUpdateError,
+        )
+
+        account_details: list[AccountReadStatusDetail] = []
+        total_updated = 0
+
+        for aid, message_ids in items_by_account.items():
+            account_label = f"{mailbox_id}__{aid}"
+
+            try:
+                updated_ids = manager.update_read_status(
+                    account_label, message_ids, payload.is_read,
+                )
+            except CoreError as exc:
+                raise translate_core_error(
+                    exc, fallback=ReadStatusUpdateError,
+                    context={"account_id": aid, "account_label": account_label},
+                ) from exc
+
+            if updated_ids:
+                update_email_read_status_batch(aid, updated_ids, payload.is_read)
+
+            account_details.append(AccountReadStatusDetail(
+                account_id=aid,
+                updated=len(updated_ids),
+            ))
+            total_updated += len(updated_ids)
+
+        return ReadStatusResponse(
+            updated_count=total_updated,
+            accounts=account_details,
+        )
+    except ApiError:
+        raise
+    except Exception as exc:
+        logger.warning(
+            "Unexpected read status update error (%s): %s",
+            type(exc).__name__, exc,
+        )
+        raise ReadStatusUpdateError(
+            "Failed to update email read status."
+        ) from exc

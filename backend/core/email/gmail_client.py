@@ -965,6 +965,101 @@ class GmailClient(EmailClient):
         )
         return [msg_id for msg_id in message_ids if msg_id in raw]
 
+    # ------------------------------------------------------------------
+    # Read status
+    # ------------------------------------------------------------------
+
+    def update_read_status(self, message_ids: list[str], is_read: bool) -> list[str]:
+        """Mark messages as read/unread via Gmail label modification. Returns IDs successfully updated."""
+        if self.service is None:
+            raise EmailNotAuthenticatedError("Gmail update_read_status requires authentication.")
+        if not message_ids:
+            return []
+        if is_read:
+            return self._batch_modify_labels(message_ids, remove_labels=["UNREAD"])
+        else:
+            return self._batch_modify_labels(message_ids, add_labels=["UNREAD"])
+
+    def _batch_modify_labels(
+        self,
+        message_ids: list[str],
+        *,
+        add_labels: list[str] | None = None,
+        remove_labels: list[str] | None = None,
+    ) -> list[str]:
+        """Batch-modify labels on messages. Returns list of successfully modified IDs."""
+        body: dict[str, Any] = {}
+        if add_labels:
+            body["addLabelIds"] = add_labels
+        if remove_labels:
+            body["removeLabelIds"] = remove_labels
+
+        all_updated: list[str] = []
+
+        for chunk_start in range(0, len(message_ids), _BATCH_SIZE):
+            chunk = message_ids[chunk_start:chunk_start + _BATCH_SIZE]
+            pending_ids = list(chunk)
+
+            for attempt in range(_BATCH_MAX_RETRIES + 1):
+                chunk_updated: list[str] = []
+                failed_in_attempt: list[str] = []
+
+                def _callback(
+                    request_id: str, response: Any, exception: Any,
+                    _u: list[str] = chunk_updated,
+                    _f: list[str] = failed_in_attempt,
+                ) -> None:
+                    if exception is not None:
+                        if _is_retryable(exception):
+                            _f.append(request_id)
+                        # Non-retryable (404, 400, etc.) → silently skip
+                        return
+                    _u.append(request_id)
+
+                try:
+                    batch = self.service.new_batch_http_request(callback=_callback)
+                    for msg_id in pending_ids:
+                        batch.add(
+                            self.service.users().messages().modify(
+                                userId="me", id=msg_id, body=body,
+                            ),
+                            request_id=msg_id,
+                        )
+                    batch.execute()
+                except EmailExternalAPIError:
+                    raise
+                except HttpError as exc:
+                    status, reason = http_error_detail(exc)
+                    raise EmailExternalAPIError(
+                        f"Gmail batch label modify failed (HTTP {status}: {reason})."
+                    ) from exc
+                except Exception as exc:
+                    raise EmailExternalAPIError(
+                        f"Gmail unexpected batch label modify error ({type(exc).__name__}): {exc}"
+                    ) from exc
+
+                all_updated.extend(chunk_updated)
+
+                if not failed_in_attempt:
+                    break
+
+                if attempt < _BATCH_MAX_RETRIES:
+                    logger.warning(
+                        "Gmail batch modify: %d/%d messages failed (attempt %d/%d), retrying",
+                        len(failed_in_attempt), len(pending_ids),
+                        attempt + 1, _BATCH_MAX_RETRIES + 1,
+                    )
+                    time.sleep(_BATCH_RETRY_DELAY)
+                    pending_ids = failed_in_attempt
+                else:
+                    logger.warning(
+                        "Gmail batch modify: %d messages lost after %d attempts: %s",
+                        len(failed_in_attempt), _BATCH_MAX_RETRIES + 1,
+                        failed_in_attempt[:10],
+                    )
+
+        return all_updated
+
     def get_account_label(self) -> str:
         """
         Return the label that identifies this Gmail account inside the app.

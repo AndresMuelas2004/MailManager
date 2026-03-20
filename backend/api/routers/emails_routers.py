@@ -11,6 +11,8 @@ from api.schemas.email import (
     EmailSendRequest,
     MoveToTrashRequest,
     MoveToTrashResult,
+    ReadStatusRequest,
+    ReadStatusResponse,
     SyncResultOut,
     TrashActionRequest,
     TrashActionResult,
@@ -66,3 +68,15 @@ def move_to_trash(
     Move emails to trash.
     """
     return emails_service.move_to_trash(mailbox_id, payload, user_id)
+
+
+@router.patch("/read-status", response_model=ReadStatusResponse)
+def update_read_status(
+    mailbox_id: str,
+    payload: ReadStatusRequest,
+    user_id: str = Depends(require_session),
+) -> ReadStatusResponse:
+    """
+    Mark emails as read or unread across accounts in a mailbox.
+    """
+    return emails_service.update_read_status(mailbox_id, payload, user_id)

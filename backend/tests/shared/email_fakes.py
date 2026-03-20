@@ -54,6 +54,7 @@ class FakeEmailClient(EmailClient):
         restore_exc: Exception | None = None,
         move_to_trash_exc: Exception | None = None,
         fetch_messages_metadata_exc: Exception | None = None,
+        update_read_status_exc: Exception | None = None,
         metadata: list[EmailMetadata] | None = None,
         sync_cursor_return: str = DEFAULT_SYNC_CURSOR,
         auth_return: dict | None = None,
@@ -77,6 +78,7 @@ class FakeEmailClient(EmailClient):
         self._restore_exc = restore_exc
         self._move_to_trash_exc = move_to_trash_exc
         self._fetch_messages_metadata_exc = fetch_messages_metadata_exc
+        self._update_read_status_exc = update_read_status_exc
         self._metadata = list(metadata or [])
         self._sync_cursor_return = sync_cursor_return
         self._auth_return = auth_return
@@ -97,6 +99,7 @@ class FakeEmailClient(EmailClient):
         self.restore_calls = 0
         self.move_to_trash_calls = 0
         self.fetch_messages_metadata_calls = 0
+        self.update_read_status_calls: list[tuple[list[str], bool]] = []
         self.sent_emails: list[tuple[str, str, list[str]]] = []
         self.deleted_message_ids: list[str] = []
         self.restored_items: list[dict] = []
@@ -174,6 +177,12 @@ class FakeEmailClient(EmailClient):
         result = self._move_to_trash_return if self._move_to_trash_return is not None else {mid: mid for mid in message_ids}
         self.trashed_items.append(dict(result))
         return result
+
+    def update_read_status(self, message_ids: list[str], is_read: bool) -> list[str]:
+        self.update_read_status_calls.append((list(message_ids), is_read))
+        if self._update_read_status_exc:
+            raise self._update_read_status_exc
+        return list(message_ids)
 
     def send_email(self, subject: str, body: str, recipients: list[str]) -> EmailMetadata:
         if self._send_exc:
