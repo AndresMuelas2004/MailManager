@@ -293,3 +293,42 @@ def test_list_provider_message_ids_generic_raises_query_error(monkeypatch):
 
     with pytest.raises(QueryError, match="RuntimeError"):
         em_module.email_metadata_store.list_provider_message_ids("acc1")
+
+
+# ===== update_read_status_batch =====
+
+
+def test_update_read_status_batch_happy_path(monkeypatch):
+    cursor = FakeCursor()
+    patch_connection(monkeypatch, em_module, [cursor])
+    monkeypatch.setattr(em_module.psycopg2.extras, "execute_values", _stub_execute_values)
+
+    rows = [("m1", "acc1", True), ("m2", "acc1", True)]
+    result = em_module.email_metadata_store.update_read_status_batch("acc1", rows)
+    assert result == 2
+    assert len(cursor.executed) == 1
+
+
+def test_update_read_status_batch_empty_returns_zero(monkeypatch):
+    result = em_module.email_metadata_store.update_read_status_batch("acc1", [])
+    assert result == 0
+
+
+def test_update_read_status_batch_psycopg2_raises_query_error(monkeypatch):
+    cursor = FakeCursor()
+    patch_connection(monkeypatch, em_module, [cursor])
+
+    def _raise_execute_values(cur, sql, rows, **kwargs):
+        raise psycopg2.OperationalError("connection lost")
+
+    monkeypatch.setattr(em_module.psycopg2.extras, "execute_values", _raise_execute_values)
+
+    with pytest.raises(QueryError, match="Failed to update email read status"):
+        em_module.email_metadata_store.update_read_status_batch("acc1", [("m1",)])
+
+
+def test_update_read_status_batch_propagates_database_error(monkeypatch):
+    patch_connection_error(monkeypatch, em_module, ConnectionPoolError("pool down"))
+
+    with pytest.raises(ConnectionPoolError, match="pool down"):
+        em_module.email_metadata_store.update_read_status_batch("acc1", [("m1",)])

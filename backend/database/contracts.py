@@ -94,6 +94,10 @@ class EmailMetadataStore(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    def update_read_status_batch(self, account_id: str, rows: list[tuple]) -> int:
+        raise NotImplementedError
+
+    @abstractmethod
     def list_provider_message_ids(self, account_id: str) -> list[str]:
         raise NotImplementedError
 

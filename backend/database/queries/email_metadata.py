@@ -41,6 +41,14 @@ UPDATE_LABELS_BATCH = """
        AND em.account_id          = v.account_id::UUID
 """
 
+UPDATE_READ_STATUS_BATCH = """
+    UPDATE email_metadata AS em
+       SET is_read = v.is_read
+      FROM (VALUES %s) AS v(provider_message_id, account_id, is_read)
+     WHERE em.provider_message_id = v.provider_message_id::VARCHAR
+       AND em.account_id          = v.account_id::UUID
+"""
+
 LIST_PROVIDER_MESSAGE_IDS_BY_ACCOUNT = """
     SELECT provider_message_id
     FROM email_metadata

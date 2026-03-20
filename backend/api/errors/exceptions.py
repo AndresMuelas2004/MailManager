@@ -105,3 +105,7 @@ class TokenIntegrityError(ApiError):
 
 class UserNotFound(ApiError):
     code = "user_not_found"
+
+
+class ReadStatusUpdateError(ApiError):
+    code = "read_status_update_error"

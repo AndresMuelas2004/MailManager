@@ -120,6 +120,28 @@ class PgEmailMetadataStore(EmailMetadataStore):
             ) from exc
 
 
+    def update_read_status_batch(self, account_id: str, rows: list[tuple]) -> int:
+        if not rows:
+            return 0
+        try:
+            with connection.get_connection() as conn:
+                with conn.cursor() as cur:
+                    psycopg2.extras.execute_values(
+                        cur,
+                        queries.UPDATE_READ_STATUS_BATCH,
+                        rows,
+                        page_size=500,
+                    )
+                    return cur.rowcount
+        except DatabaseError:
+            raise
+        except psycopg2.Error as exc:
+            raise QueryError("Failed to update email read status batch.") from exc
+        except Exception as exc:
+            raise QueryError(
+                f"Unexpected email read status update error ({type(exc).__name__}): {exc}"
+            ) from exc
+
     def list_provider_message_ids(self, account_id: str) -> list[str]:
         try:
             with connection.get_connection() as conn:

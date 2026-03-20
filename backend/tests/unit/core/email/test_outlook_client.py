@@ -1555,3 +1555,65 @@ class TestAuthenticate:
 
             with pytest.raises(EmailExternalAPIError, match="missing access_token"):
                 client.authenticate(app_credentials=creds)
+
+
+# ── update_read_status ────────────────────────────────────────────
+
+
+class TestUpdateReadStatus:
+    def test_not_authenticated_raises(self):
+        client = OutlookClient(account_label="mb__outlook")
+        with pytest.raises(EmailNotAuthenticatedError):
+            client.update_read_status(["m1"], True)
+
+    def test_empty_returns_empty(self):
+        client = _make_authenticated_client()
+        assert client.update_read_status([], True) == []
+
+    def test_mark_as_read_sends_patch_is_read_true(self):
+        client = _make_authenticated_client()
+        graph_calls = []
+
+        def mock_graph(method, url, body=None):
+            graph_calls.append((method, url, body))
+            return {}
+
+        with patch.object(client, "_graph_request", side_effect=mock_graph):
+            result = client.update_read_status(["m1"], True)
+
+        assert result == ["m1"]
+        assert len(graph_calls) == 1
+        method, url, body = graph_calls[0]
+        assert method == "PATCH"
+        assert "/me/messages/m1" in url
+        assert body == {"isRead": True}
+
+    def test_mark_as_unread_sends_patch_is_read_false(self):
+        client = _make_authenticated_client()
+        graph_calls = []
+
+        def mock_graph(method, url, body=None):
+            graph_calls.append((method, url, body))
+            return {}
+
+        with patch.object(client, "_graph_request", side_effect=mock_graph):
+            result = client.update_read_status(["m1"], False)
+
+        assert result == ["m1"]
+        assert len(graph_calls) == 1
+        method, url, body = graph_calls[0]
+        assert method == "PATCH"
+        assert body == {"isRead": False}
+
+    def test_missing_message_skipped(self):
+        client = _make_authenticated_client()
+
+        def mock_graph(method, url, body=None):
+            if "m2" in url:
+                raise EmailExternalAPIError("404 Not Found")
+            return {}
+
+        with patch.object(client, "_graph_request", side_effect=mock_graph):
+            result = client.update_read_status(["m1", "m2", "m3"], True)
+
+        assert result == ["m1", "m3"]

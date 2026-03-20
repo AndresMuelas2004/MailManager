@@ -50,6 +50,7 @@ class FakeEmailClient(EmailClient):
         fetch_exc: Exception | None = None,
         send_exc: Exception | None = None,
         verify_exc: Exception | None = None,
+        update_read_status_exc: Exception | None = None,
         metadata: list[EmailMetadata] | None = None,
         sync_cursor_return: str = DEFAULT_SYNC_CURSOR,
         auth_return: dict | None = None,
@@ -65,6 +66,7 @@ class FakeEmailClient(EmailClient):
         self._fetch_exc = fetch_exc
         self._send_exc = send_exc
         self._verify_exc = verify_exc
+        self._update_read_status_exc = update_read_status_exc
         self._metadata = list(metadata or [])
         self._sync_cursor_return = sync_cursor_return
         self._auth_return = auth_return
@@ -77,6 +79,7 @@ class FakeEmailClient(EmailClient):
         self.authenticate_silent_calls = 0
         self.fetch_calls = 0
         self.verify_calls = 0
+        self.update_read_status_calls: list[tuple[list[str], bool]] = []
         self.sent_emails: list[tuple[str, str, list[str]]] = []
         self.last_app_credentials = None
         self.last_user_tokens = None
@@ -119,6 +122,12 @@ class FakeEmailClient(EmailClient):
         if self._verify_exc:
             raise self._verify_exc
         return [mid for mid in message_ids if mid in self._existing_message_ids]
+
+    def update_read_status(self, message_ids: list[str], is_read: bool) -> list[str]:
+        self.update_read_status_calls.append((list(message_ids), is_read))
+        if self._update_read_status_exc:
+            raise self._update_read_status_exc
+        return list(message_ids)
 
     def send_email(self, subject: str, body: str, recipients: list[str]) -> EmailMetadata:
         if self._send_exc:
