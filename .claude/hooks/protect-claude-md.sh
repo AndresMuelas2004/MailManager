@@ -46,6 +46,11 @@ except Exception:
     repo_root = None
 
 if repo_root:
+    # If the file is outside this repository, the hook does not apply.
+    file_path_norm = file_path.rstrip('/').lower()
+    if not file_path_norm.startswith(repo_root.rstrip('/').lower() + '/'):
+        sys.exit(0)
+
     parent_dir = '/'.join(parts[:-1])
     # Normalize both paths for comparison
     repo_root_norm = repo_root.rstrip('/').lower()
