@@ -52,7 +52,9 @@ PersonalNotes.md
 
 # Local scripts / experimental code
 backend/Scripts/*
+!backend/Scripts/CLAUDE.md
 !backend/Scripts/cli_utilities/
+backend/Scripts/cli_utilities/__pycache__/
 
 # Runtime persisted data (local only)
 backend/data/

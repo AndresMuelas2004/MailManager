@@ -20,6 +20,24 @@ class PgEmailMetadataStore(EmailMetadataStore):
     PostgreSQL-backed email metadata persistence.
     """
 
+    def _execute_batch_values(self, query: str, rows: list[tuple], error_msg: str) -> int:
+        """Shared helper for execute_values batch operations."""
+        if not rows:
+            return 0
+        try:
+            with connection.get_connection() as conn:
+                with conn.cursor() as cur:
+                    psycopg2.extras.execute_values(cur, query, rows, page_size=500)
+                    return cur.rowcount
+        except DatabaseError:
+            raise
+        except psycopg2.Error as exc:
+            raise QueryError(error_msg) from exc
+        except Exception as exc:
+            raise QueryError(
+                f"Unexpected {error_msg.lower()} ({type(exc).__name__}): {exc}"
+            ) from exc
+
     def upsert_batch(self, account_id: str, rows: list[tuple]) -> int:
         if not rows:
             return 0
@@ -76,7 +94,6 @@ class PgEmailMetadataStore(EmailMetadataStore):
                 f"Unexpected email metadata delete error ({type(exc).__name__}): {exc}"
             ) from exc
 
-
     def delete_batch_by_message_ids(self, account_id: str, message_ids: list[str]) -> int:
         if not message_ids:
             return 0
@@ -119,7 +136,6 @@ class PgEmailMetadataStore(EmailMetadataStore):
                 f"Unexpected email metadata label update error ({type(exc).__name__}): {exc}"
             ) from exc
 
-
     def update_read_status_batch(self, account_id: str, rows: list[tuple]) -> int:
         if not rows:
             return 0
@@ -159,6 +175,65 @@ class PgEmailMetadataStore(EmailMetadataStore):
                 f"Unexpected list provider message IDs error ({type(exc).__name__}): {exc}"
             ) from exc
 
+
+    def get_trash_emails_by_ids(self, account_id: str, message_ids: list[str]) -> list[dict[str, Any]]:
+        if not message_ids:
+            return []
+        try:
+            with connection.get_connection() as conn:
+                with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                    cur.execute(
+                        queries.GET_TRASH_EMAILS_BY_IDS,
+                        {"account_id": account_id, "message_ids": message_ids},
+                    )
+                    rows = cur.fetchall()
+        except psycopg2.errors.InvalidTextRepresentation:
+            return []
+        except DatabaseError:
+            raise
+        except psycopg2.Error as exc:
+            raise QueryError("Failed to get trash emails by IDs.") from exc
+        except Exception as exc:
+            raise QueryError(
+                f"Unexpected get trash emails error ({type(exc).__name__}): {exc}"
+            ) from exc
+        return [dict(row) for row in rows]
+
+    def mark_as_deleted_batch(self, account_id: str, message_ids: list[str]) -> int:
+        if not message_ids:
+            return 0
+        try:
+            with connection.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        queries.MARK_AS_DELETED_BATCH,
+                        {"account_id": account_id, "message_ids": message_ids},
+                    )
+                    return cur.rowcount
+        except DatabaseError:
+            raise
+        except psycopg2.Error as exc:
+            raise QueryError("Failed to mark emails as deleted.") from exc
+        except Exception as exc:
+            raise QueryError(
+                f"Unexpected mark as deleted error ({type(exc).__name__}): {exc}"
+            ) from exc
+
+    def restore_from_trash_batch(self, account_id: str, rows: list[tuple]) -> int:
+        return self._execute_batch_values(
+            queries.RESTORE_FROM_TRASH_BATCH, rows, "Failed to restore emails from trash.",
+        )
+
+    def restore_from_trash_discovered_batch(self, account_id: str, rows: list[tuple]) -> int:
+        return self._execute_batch_values(
+            queries.RESTORE_FROM_TRASH_DISCOVERED_BATCH, rows,
+            "Failed to restore emails with discovered box.",
+        )
+
+    def move_to_trash_batch(self, account_id: str, rows: list[tuple]) -> int:
+        return self._execute_batch_values(
+            queries.MOVE_TO_TRASH_BATCH, rows, "Failed to move emails to trash.",
+        )
 
     def update_spam_status_batch(self, account_id: str, rows: list[tuple]) -> int:
         if not rows:

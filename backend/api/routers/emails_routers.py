@@ -9,11 +9,15 @@ from fastapi import APIRouter, Depends
 from api.routers.routers_helpers import require_session
 from api.schemas.email import (
     EmailSendRequest,
+    MoveToTrashRequest,
+    MoveToTrashResult,
     ReadStatusRequest,
     ReadStatusResponse,
     SpamRequest,
     SpamResponse,
     SyncResultOut,
+    TrashActionRequest,
+    TrashActionResult,
 )
 from api.services import emails_service
 
@@ -42,6 +46,30 @@ def send_email(
     Send an email using a specific account under the mailbox.
     """
     return emails_service.send_email(mailbox_id, payload, user_id)
+
+
+@router.post("/trash", response_model=TrashActionResult)
+def manage_trash(
+    mailbox_id: str,
+    payload: TrashActionRequest,
+    user_id: str = Depends(require_session),
+) -> TrashActionResult:
+    """
+    Delete permanently or restore emails from trash.
+    """
+    return emails_service.manage_trash(mailbox_id, payload, user_id)
+
+
+@router.post("/move-to-trash", response_model=MoveToTrashResult)
+def move_to_trash(
+    mailbox_id: str,
+    payload: MoveToTrashRequest,
+    user_id: str = Depends(require_session),
+) -> MoveToTrashResult:
+    """
+    Move emails to trash.
+    """
+    return emails_service.move_to_trash(mailbox_id, payload, user_id)
 
 
 @router.patch("/read-status", response_model=ReadStatusResponse)

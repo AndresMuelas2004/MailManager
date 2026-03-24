@@ -26,17 +26,20 @@ from api.errors.exceptions import (
     DatabaseMigrationError,
     DatabaseQueryError,
     EmailFetchError,
+    EmailNotInTrash,
     EmailSendError,
     EnvVarError,
     ExternalAPIError,
     Forbidden,
     MailboxNotFound,
+    MoveToTrashError,
     RecipientsMissing,
     ReadStatusUpdateError,
     SpamMoveError,
     SpamRestoreError,
     TokenDecryptionError,
     TokenIntegrityError,
+    TrashOperationError,
     Unauthorized,
     UserNotFound,
 )
@@ -68,6 +71,9 @@ _STATUS_MAP: dict[type[ApiError], int] = {
     DatabaseQueryError: status.HTTP_503_SERVICE_UNAVAILABLE,
     TokenDecryptionError: status.HTTP_500_INTERNAL_SERVER_ERROR,
     TokenIntegrityError: status.HTTP_500_INTERNAL_SERVER_ERROR,
+    EmailNotInTrash: status.HTTP_409_CONFLICT,
+    TrashOperationError: status.HTTP_500_INTERNAL_SERVER_ERROR,
+    MoveToTrashError: status.HTTP_502_BAD_GATEWAY,
 }
 
 

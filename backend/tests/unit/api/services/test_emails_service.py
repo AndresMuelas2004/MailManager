@@ -16,11 +16,14 @@ from api.errors.exceptions import (
     AccountNotConnected,
     AccountNotFound,
     EmailFetchError,
+    EmailNotInTrash,
     EmailSendError,
     ExternalAPIError,
+    MoveToTrashError,
     ReadStatusUpdateError,
     SpamMoveError,
     SpamRestoreError,
+    TrashOperationError,
 )
 from api.schemas.email import ReadStatusItem, ReadStatusRequest, SpamItem, SpamRequest
 # Note: EmailExternalAPIError maps to ExternalAPIError via _CORE_TO_API_MAP,
@@ -199,6 +202,53 @@ class TestSyncEmailMetadata:
         emails_service.sync_email_metadata(_MAILBOX_ID, _USER_ID)
         assert len(persist_calls) >= 1
 
+    def test_list_by_mailbox_database_error(self, monkeypatch):
+        from database import DatabaseError
+        _patch_common(monkeypatch)
+        monkeypatch.setattr(
+            emails_service.account_store, "list_by_mailbox",
+            MagicMock(side_effect=DatabaseError("db fail")),
+        )
+        from api.errors.exceptions import ApiError
+        with pytest.raises(ApiError):
+            emails_service.sync_email_metadata(_MAILBOX_ID, _USER_ID)
+
+    def test_list_by_mailbox_unexpected_error(self, monkeypatch):
+        _patch_common(monkeypatch)
+        monkeypatch.setattr(
+            emails_service.account_store, "list_by_mailbox",
+            MagicMock(side_effect=RuntimeError("unexpected")),
+        )
+        from api.errors.exceptions import ApiError
+        with pytest.raises(ApiError):
+            emails_service.sync_email_metadata(_MAILBOX_ID, _USER_ID)
+
+    def test_persist_tokens_database_error(self, monkeypatch):
+        from database import DatabaseError
+        _patch_common(monkeypatch)
+
+        def _build_refreshing(accounts):
+            from core.email import EmailManager
+            manager = EmailManager()
+            for acc in accounts:
+                mid = str(acc.get("mailbox_id", ""))
+                aid = str(acc.get("account_id", ""))
+                label = f"{mid}__{aid}"
+                manager.add_client(FakeEmailClient(
+                    label,
+                    auth_silent_return={"access_token": "new_tok", "refresh_token": "new_ref"},
+                ))
+            return manager
+
+        monkeypatch.setattr(emails_service, "build_manager_for_accounts", _build_refreshing)
+        monkeypatch.setattr(
+            emails_service.account_store, "upsert_tokens",
+            MagicMock(side_effect=DatabaseError("db fail")),
+        )
+        from api.errors.exceptions import ApiError
+        with pytest.raises(ApiError):
+            emails_service.sync_email_metadata(_MAILBOX_ID, _USER_ID)
+
 
 # ==================================================================
 # send_email
@@ -298,7 +348,6 @@ class TestReconciliation:
 
     def test_full_sync_triggers_reconciliation(self, monkeypatch):
         """Bootstrap (is_full_sync=True) should trigger ghost reconciliation."""
-        meta = build_metadata(provider_message_id="m1")
         _patch_common(monkeypatch, fake_client_kwargs={
             "is_full_sync": True,
             "existing_message_ids": ["m1"],
@@ -332,7 +381,6 @@ class TestReconciliation:
 
     def test_verification_error_skips_gracefully(self, monkeypatch):
         """If verify_message_existence fails, reconciliation should skip."""
-        meta = build_metadata(provider_message_id="m1")
         _patch_common(monkeypatch, fake_client_kwargs={
             "is_full_sync": True,
             "verify_exc": RuntimeError("API down"),
@@ -347,7 +395,6 @@ class TestReconciliation:
 
     def test_no_ghosts_means_no_deletes(self, monkeypatch):
         """If all stored IDs are in bootstrap set, no deletes should happen."""
-        meta = build_metadata(provider_message_id="m1")
         _patch_common(monkeypatch, fake_client_kwargs={
             "is_full_sync": True,
             "existing_message_ids": ["m1"],
@@ -369,7 +416,6 @@ class TestReconciliation:
 
     def test_all_suspects_are_ghosts(self, monkeypatch):
         """When none of the suspect IDs exist at provider, all are deleted."""
-        meta = build_metadata(provider_message_id="m1")
         _patch_common(monkeypatch, fake_client_kwargs={
             "is_full_sync": True,
             "existing_message_ids": [],  # nothing exists at provider
@@ -387,6 +433,292 @@ class TestReconciliation:
         all_deleted = [mid for _, ids in delete_calls for mid in ids]
         assert "ghost1" in all_deleted
         assert "ghost2" in all_deleted
+
+
+# ==================================================================
+# manage_trash
+# ==================================================================
+
+
+class TestManageTrash:
+
+    def _make_payload(self, action="delete", items=None):
+        from api.schemas.email import TrashActionRequest, TrashItem
+        if items is None:
+            items = [TrashItem(provider_message_id="m1", account_id=_ACCOUNT_ID)]
+        return TrashActionRequest(action=action, items=items)
+
+    def _patch_trash_common(self, monkeypatch, *, fake_client_kwargs=None, previous_box="ALL_MAIL"):
+        _patch_common(monkeypatch, fake_client_kwargs=fake_client_kwargs)
+        monkeypatch.setattr(
+            emails_service, "get_trash_emails_by_ids",
+            lambda _aid, _ids: [
+                {"provider_message_id": mid, "box": "TRASH", "previous_box": previous_box}
+                for mid in _ids
+            ],
+        )
+        monkeypatch.setattr(
+            emails_service, "mark_as_deleted_batch",
+            lambda _aid, _ids: len(_ids),
+        )
+        monkeypatch.setattr(
+            emails_service, "restore_from_trash_batch",
+            lambda _aid, _rows: len(_rows),
+        )
+        monkeypatch.setattr(
+            emails_service, "restore_from_trash_discovered_batch",
+            lambda _aid, _rows: len(_rows),
+        )
+
+    def test_delete_happy_path(self, monkeypatch):
+        self._patch_trash_common(monkeypatch)
+        result = emails_service.manage_trash(
+            _MAILBOX_ID, self._make_payload("delete"), _USER_ID,
+        )
+        assert result.affected == 1
+
+    def test_restore_happy_path(self, monkeypatch):
+        self._patch_trash_common(monkeypatch)
+        result = emails_service.manage_trash(
+            _MAILBOX_ID, self._make_payload("restore"), _USER_ID,
+        )
+        assert result.affected == 1
+
+    def test_delete_marks_deleted_in_db(self, monkeypatch):
+        self._patch_trash_common(monkeypatch)
+        mark_calls = []
+        monkeypatch.setattr(
+            emails_service, "mark_as_deleted_batch",
+            lambda aid, ids: (mark_calls.append((aid, ids)), len(ids))[1],
+        )
+        emails_service.manage_trash(
+            _MAILBOX_ID, self._make_payload("delete"), _USER_ID,
+        )
+        assert len(mark_calls) == 1
+        assert mark_calls[0][0] == _ACCOUNT_ID
+        assert "m1" in mark_calls[0][1]
+
+    def test_restore_calls_restore_batch(self, monkeypatch):
+        self._patch_trash_common(monkeypatch)
+        restore_calls = []
+        monkeypatch.setattr(
+            emails_service, "restore_from_trash_batch",
+            lambda aid, rows: (restore_calls.append((aid, rows)), len(rows))[1],
+        )
+        emails_service.manage_trash(
+            _MAILBOX_ID, self._make_payload("restore"), _USER_ID,
+        )
+        assert len(restore_calls) == 1
+
+    def test_partial_provider_failure_only_updates_succeeded(self, monkeypatch):
+        """Provider-first: if provider only deletes 1 of 2, DB only marks 1."""
+        from api.schemas.email import TrashItem
+        self._patch_trash_common(monkeypatch, fake_client_kwargs={
+            "delete_return": ["m1"],  # only m1 succeeds
+        })
+        payload = self._make_payload("delete", items=[
+            TrashItem(provider_message_id="m1", account_id=_ACCOUNT_ID),
+            TrashItem(provider_message_id="m2", account_id=_ACCOUNT_ID),
+        ])
+        result = emails_service.manage_trash(_MAILBOX_ID, payload, _USER_ID)
+        assert result.affected == 1
+
+    def test_account_not_in_mailbox_raises(self, monkeypatch):
+        self._patch_trash_common(monkeypatch)
+        from api.schemas.email import TrashItem
+        payload = self._make_payload("delete", items=[
+            TrashItem(provider_message_id="m1", account_id="nonexistent"),
+        ])
+        with pytest.raises(AccountNotFound):
+            emails_service.manage_trash(_MAILBOX_ID, payload, _USER_ID)
+
+    def test_email_not_in_trash_raises(self, monkeypatch):
+        self._patch_trash_common(monkeypatch)
+        monkeypatch.setattr(
+            emails_service, "get_trash_emails_by_ids",
+            lambda _aid, _ids: [],  # no emails found in trash
+        )
+        with pytest.raises(EmailNotInTrash):
+            emails_service.manage_trash(
+                _MAILBOX_ID, self._make_payload("delete"), _USER_ID,
+            )
+
+    def test_auth_error_raises_account_not_connected(self, monkeypatch):
+        self._patch_trash_common(monkeypatch, fake_client_kwargs={
+            "auth_silent_exc": EmailAuthError("expired"),
+        })
+        with pytest.raises(AccountNotConnected):
+            emails_service.manage_trash(
+                _MAILBOX_ID, self._make_payload("delete"), _USER_ID,
+            )
+
+    def test_core_error_translated(self, monkeypatch):
+        self._patch_trash_common(monkeypatch, fake_client_kwargs={
+            "delete_exc": EmailExternalAPIError("API fail"),
+        })
+        with pytest.raises(ExternalAPIError):
+            emails_service.manage_trash(
+                _MAILBOX_ID, self._make_payload("delete"), _USER_ID,
+            )
+
+    def test_generic_exception_raises_trash_operation_error(self, monkeypatch):
+        self._patch_trash_common(monkeypatch, fake_client_kwargs={
+            "delete_exc": RuntimeError("unexpected"),
+        })
+        with pytest.raises(TrashOperationError):
+            emails_service.manage_trash(
+                _MAILBOX_ID, self._make_payload("delete"), _USER_ID,
+            )
+
+    def test_restore_null_previous_box_calls_discovered_batch(self, monkeypatch):
+        """When previous_box is None, restore uses fetch_messages_metadata + discovered batch."""
+        discovered_meta = build_metadata(provider_message_id="m1", box="SENT")
+        self._patch_trash_common(
+            monkeypatch,
+            fake_client_kwargs={"fetch_messages_metadata_return": [discovered_meta]},
+            previous_box=None,
+        )
+        discovered_calls = []
+        monkeypatch.setattr(
+            emails_service, "restore_from_trash_discovered_batch",
+            lambda aid, rows: (discovered_calls.append((aid, rows)), len(rows))[1],
+        )
+        restore_calls = []
+        monkeypatch.setattr(
+            emails_service, "restore_from_trash_batch",
+            lambda aid, rows: (restore_calls.append((aid, rows)), len(rows))[1],
+        )
+        result = emails_service.manage_trash(
+            _MAILBOX_ID, self._make_payload("restore"), _USER_ID,
+        )
+        assert result.affected == 1
+        assert len(discovered_calls) == 1
+        assert discovered_calls[0][1][0][3] == "SENT"
+        assert len(restore_calls) == 0
+
+    def test_restore_known_previous_box_uses_normal_batch(self, monkeypatch):
+        """When previous_box is known, normal restore_from_trash_batch is used."""
+        self._patch_trash_common(monkeypatch, previous_box="SPAM")
+        restore_calls = []
+        monkeypatch.setattr(
+            emails_service, "restore_from_trash_batch",
+            lambda aid, rows: (restore_calls.append((aid, rows)), len(rows))[1],
+        )
+        discovered_calls = []
+        monkeypatch.setattr(
+            emails_service, "restore_from_trash_discovered_batch",
+            lambda aid, rows: (discovered_calls.append((aid, rows)), len(rows))[1],
+        )
+        result = emails_service.manage_trash(
+            _MAILBOX_ID, self._make_payload("restore"), _USER_ID,
+        )
+        assert result.affected == 1
+        assert len(restore_calls) == 1
+        assert len(discovered_calls) == 0
+
+    def test_restore_null_previous_box_defaults_to_all_mail_on_fetch_miss(self, monkeypatch):
+        """When fetch_messages_metadata returns nothing, discovered box defaults to ALL_MAIL."""
+        self._patch_trash_common(
+            monkeypatch,
+            fake_client_kwargs={"fetch_messages_metadata_return": []},
+            previous_box=None,
+        )
+        discovered_calls = []
+        monkeypatch.setattr(
+            emails_service, "restore_from_trash_discovered_batch",
+            lambda aid, rows: (discovered_calls.append((aid, rows)), len(rows))[1],
+        )
+        emails_service.manage_trash(
+            _MAILBOX_ID, self._make_payload("restore"), _USER_ID,
+        )
+        assert len(discovered_calls) == 1
+        assert discovered_calls[0][1][0][3] == "ALL_MAIL"
+
+
+# ==================================================================
+# move_to_trash
+# ==================================================================
+
+
+class TestMoveToTrash:
+
+    def _make_payload(self, items=None):
+        from api.schemas.email import MoveToTrashRequest, TrashItem
+        if items is None:
+            items = [TrashItem(provider_message_id="m1", account_id=_ACCOUNT_ID)]
+        return MoveToTrashRequest(items=items)
+
+    def _patch_move_common(self, monkeypatch, *, fake_client_kwargs=None):
+        _patch_common(monkeypatch, fake_client_kwargs=fake_client_kwargs)
+        monkeypatch.setattr(
+            emails_service, "move_to_trash_batch",
+            lambda _aid, _rows: len(_rows),
+        )
+
+    def test_happy_path(self, monkeypatch):
+        self._patch_move_common(monkeypatch)
+        result = emails_service.move_to_trash(
+            _MAILBOX_ID, self._make_payload(), _USER_ID,
+        )
+        assert result.affected == 1
+
+    def test_provider_partial_failure_only_updates_succeeded(self, monkeypatch):
+        """Provider-first: if provider only trashes 1 of 2, DB only updates 1."""
+        from api.schemas.email import TrashItem
+        self._patch_move_common(monkeypatch, fake_client_kwargs={
+            "move_to_trash_return": {"m1": "m1"},  # only m1 succeeds
+        })
+        payload = self._make_payload(items=[
+            TrashItem(provider_message_id="m1", account_id=_ACCOUNT_ID),
+            TrashItem(provider_message_id="m2", account_id=_ACCOUNT_ID),
+        ])
+        result = emails_service.move_to_trash(_MAILBOX_ID, payload, _USER_ID)
+        assert result.affected == 1
+
+    def test_all_provider_failure_returns_zero(self, monkeypatch):
+        self._patch_move_common(monkeypatch, fake_client_kwargs={
+            "move_to_trash_return": {},
+        })
+        result = emails_service.move_to_trash(
+            _MAILBOX_ID, self._make_payload(), _USER_ID,
+        )
+        assert result.affected == 0
+
+    def test_account_not_in_mailbox_raises(self, monkeypatch):
+        self._patch_move_common(monkeypatch)
+        from api.schemas.email import TrashItem
+        payload = self._make_payload(items=[
+            TrashItem(provider_message_id="m1", account_id="nonexistent"),
+        ])
+        with pytest.raises(AccountNotFound):
+            emails_service.move_to_trash(_MAILBOX_ID, payload, _USER_ID)
+
+    def test_auth_error_raises_account_not_connected(self, monkeypatch):
+        self._patch_move_common(monkeypatch, fake_client_kwargs={
+            "auth_silent_exc": EmailAuthError("expired"),
+        })
+        with pytest.raises(AccountNotConnected):
+            emails_service.move_to_trash(
+                _MAILBOX_ID, self._make_payload(), _USER_ID,
+            )
+
+    def test_core_error_translated(self, monkeypatch):
+        self._patch_move_common(monkeypatch, fake_client_kwargs={
+            "move_to_trash_exc": EmailExternalAPIError("API fail"),
+        })
+        with pytest.raises(ExternalAPIError):
+            emails_service.move_to_trash(
+                _MAILBOX_ID, self._make_payload(), _USER_ID,
+            )
+
+    def test_generic_exception_raises_move_to_trash_error(self, monkeypatch):
+        self._patch_move_common(monkeypatch, fake_client_kwargs={
+            "move_to_trash_exc": RuntimeError("unexpected"),
+        })
+        with pytest.raises(MoveToTrashError):
+            emails_service.move_to_trash(
+                _MAILBOX_ID, self._make_payload(), _USER_ID,
+            )
 
 
 # ==================================================================

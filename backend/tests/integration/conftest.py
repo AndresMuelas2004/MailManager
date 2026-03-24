@@ -219,6 +219,10 @@ def configurable_test_client(test_client_base, sample_metadata, monkeypatch):
         "is_full_sync": False,
         "existing_message_ids": [],
         "sync_cursor_return": "fake_cursor_12345",
+        "delete_return": None,
+        "restore_return": None,
+        "move_to_trash_return": None,
+        "fetch_messages_metadata_return": None,
     }
 
     def _build_manager(accounts):
@@ -235,6 +239,10 @@ def configurable_test_client(test_client_base, sample_metadata, monkeypatch):
                 is_full_sync=config["is_full_sync"],
                 existing_message_ids=config["existing_message_ids"],
                 sync_cursor_return=config["sync_cursor_return"],
+                delete_return=config["delete_return"],
+                restore_return=config["restore_return"],
+                move_to_trash_return=config["move_to_trash_return"],
+                fetch_messages_metadata_return=config["fetch_messages_metadata_return"],
                 auth_return={"access_token": "tok", "refresh_token": "ref"},
             ))
         return manager

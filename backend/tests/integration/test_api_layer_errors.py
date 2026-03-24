@@ -20,6 +20,7 @@ from database import (
     QueryError,
     SettingsError,
     TokenCryptoError,
+    TokenDecryptError,
     TokenValidationError,
     UnknownProviderError,
 )
@@ -274,14 +275,20 @@ def test_delete_mailbox_database_query_error(test_client, monkeypatch):
 
 
 def test_list_mailboxes_migration_error(test_client, monkeypatch):
-    monkeypatch.setattr(mailbox_store, "list_by_owner", lambda uid: (_ for _ in ()).throw(MigrationError("fail")))
+    def _raise(uid):
+        raise MigrationError("fail")
+
+    monkeypatch.setattr(mailbox_store, "list_by_owner", _raise)
     resp = test_client.get(_MAILBOX_URL)
     assert resp.status_code == 500
     assert resp.json()["error"]["code"] == "database_migration_error"
 
 
 def test_list_mailboxes_settings_error(test_client, monkeypatch):
-    monkeypatch.setattr(mailbox_store, "list_by_owner", lambda uid: (_ for _ in ()).throw(SettingsError("fail")))
+    def _raise(uid):
+        raise SettingsError("fail")
+
+    monkeypatch.setattr(mailbox_store, "list_by_owner", _raise)
     resp = test_client.get(_MAILBOX_URL)
     assert resp.status_code == 500
     assert resp.json()["error"]["code"] == "env_var_error"
@@ -295,21 +302,30 @@ def test_list_mailboxes_token_crypto_error(test_client, monkeypatch):
 
 
 def test_list_mailboxes_token_validation_error(test_client, monkeypatch):
-    monkeypatch.setattr(mailbox_store, "list_by_owner", lambda uid: (_ for _ in ()).throw(TokenValidationError("fail")))
+    def _raise(uid):
+        raise TokenValidationError("fail")
+
+    monkeypatch.setattr(mailbox_store, "list_by_owner", _raise)
     resp = test_client.get(_MAILBOX_URL)
     assert resp.status_code == 500
     assert resp.json()["error"]["code"] == "token_integrity_error"
 
 
 def test_list_mailboxes_credential_read_error(test_client, monkeypatch):
-    monkeypatch.setattr(mailbox_store, "list_by_owner", lambda uid: (_ for _ in ()).throw(CredentialReadError("fail")))
+    def _raise(uid):
+        raise CredentialReadError("fail")
+
+    monkeypatch.setattr(mailbox_store, "list_by_owner", _raise)
     resp = test_client.get(_MAILBOX_URL)
     assert resp.status_code == 500
     assert resp.json()["error"]["code"] == "credential_file_error"
 
 
 def test_list_mailboxes_unknown_provider_error(test_client, monkeypatch):
-    monkeypatch.setattr(mailbox_store, "list_by_owner", lambda uid: (_ for _ in ()).throw(UnknownProviderError("fail")))
+    def _raise(uid):
+        raise UnknownProviderError("fail")
+
+    monkeypatch.setattr(mailbox_store, "list_by_owner", _raise)
     resp = test_client.get(_MAILBOX_URL)
     assert resp.status_code == 400
     assert resp.json()["error"]["code"] == "account_misconfigured"
@@ -356,5 +372,122 @@ def test_read_status_missing_fields_422(test_client, setup_mailbox_and_account):
     resp = test_client.patch(
         f"{_MAILBOX_URL}/{mid}/emails/read-status",
         json={"items": [{"account_id": "x"}]},
+    )
+    assert resp.status_code == 422
+
+
+# ==================================================================
+# Trash endpoint errors
+# ==================================================================
+
+
+def test_trash_missing_mailbox(test_client):
+    resp = test_client.post(
+        f"{_MAILBOX_URL}/nonexistent/emails/trash",
+        json={
+            "action": "delete",
+            "items": [{"provider_message_id": "m1", "account_id": "acc1"}],
+        },
+    )
+    assert resp.status_code == 404
+    assert resp.json()["error"]["code"] == "mailbox_not_found"
+
+
+def test_trash_email_not_in_trash(test_client, setup_mailbox_and_account):
+    mid, aid = setup_mailbox_and_account(test_client)
+    resp = test_client.post(
+        f"{_MAILBOX_URL}/{mid}/emails/trash",
+        json={
+            "action": "delete",
+            "items": [{"provider_message_id": "nonexistent", "account_id": aid}],
+        },
+    )
+    assert resp.status_code == 409
+    assert resp.json()["error"]["code"] == "email_not_in_trash"
+
+
+def test_trash_invalid_account(test_client, setup_mailbox_and_account):
+    mid, _ = setup_mailbox_and_account(test_client)
+    resp = test_client.post(
+        f"{_MAILBOX_URL}/{mid}/emails/trash",
+        json={
+            "action": "delete",
+            "items": [{"provider_message_id": "m1", "account_id": "nonexistent"}],
+        },
+    )
+    assert resp.status_code == 404
+    assert resp.json()["error"]["code"] == "account_not_found"
+
+
+def test_trash_empty_items_returns_422(test_client, setup_mailbox_and_account):
+    mid, _ = setup_mailbox_and_account(test_client)
+    resp = test_client.post(
+        f"{_MAILBOX_URL}/{mid}/emails/trash",
+        json={"action": "delete", "items": []},
+    )
+    assert resp.status_code == 422
+
+
+def test_trash_email_exists_but_not_in_trash(test_client, setup_mailbox_and_account, isolated_db):
+    mid, aid = setup_mailbox_and_account(test_client)
+    # Sync emails (persists m1, m2, m3 in ALL_MAIL)
+    test_client.post(f"{_MAILBOX_URL}/{mid}/emails/sync-metadata")
+    # Try to delete m1 which is in ALL_MAIL, not TRASH
+    resp = test_client.post(
+        f"{_MAILBOX_URL}/{mid}/emails/trash",
+        json={
+            "action": "delete",
+            "items": [{"provider_message_id": "m1", "account_id": aid}],
+        },
+    )
+    assert resp.status_code == 409
+    assert resp.json()["error"]["code"] == "email_not_in_trash"
+
+
+def test_trash_invalid_action_returns_422(test_client, setup_mailbox_and_account):
+    mid, aid = setup_mailbox_and_account(test_client)
+    resp = test_client.post(
+        f"{_MAILBOX_URL}/{mid}/emails/trash",
+        json={
+            "action": "invalid_action",
+            "items": [{"provider_message_id": "m1", "account_id": aid}],
+        },
+    )
+    assert resp.status_code == 422
+
+
+# ==================================================================
+# Move-to-trash endpoint errors
+# ==================================================================
+
+
+def test_move_to_trash_missing_mailbox(test_client):
+    resp = test_client.post(
+        f"{_MAILBOX_URL}/nonexistent/emails/move-to-trash",
+        json={
+            "items": [{"provider_message_id": "m1", "account_id": "acc1"}],
+        },
+    )
+    assert resp.status_code == 404
+    assert resp.json()["error"]["code"] == "mailbox_not_found"
+
+
+def test_move_to_trash_invalid_account(test_client, setup_mailbox_and_account):
+    mid, _ = setup_mailbox_and_account(test_client)
+    resp = test_client.post(
+        f"{_MAILBOX_URL}/{mid}/emails/move-to-trash",
+        json={
+            "items": [{"provider_message_id": "m1", "account_id": "nonexistent"}],
+        },
+    )
+    assert resp.status_code == 404
+    assert resp.json()["error"]["code"] == "account_not_found"
+
+
+def test_move_to_trash_empty_items_returns_422(test_client, setup_mailbox_and_account):
+    mid, _ = setup_mailbox_and_account(test_client)
+    resp = test_client.post(
+        f"{_MAILBOX_URL}/{mid}/emails/move-to-trash",
+        json={"items": []},
     )
     assert resp.status_code == 422

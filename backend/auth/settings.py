@@ -38,8 +38,8 @@ def _read_int(name: str, default: int, *, minimum: int = 1) -> int:
         return default
     try:
         value = int(raw.strip())
-    except ValueError:
-        raise AuthSettingsError(f"{name} must be an integer, got {raw!r}.") from None
+    except ValueError as exc:
+        raise AuthSettingsError(f"{name} must be an integer, got {raw!r}.") from exc
     if value < minimum:
         raise AuthSettingsError(f"{name} must be >= {minimum}, got {value}.")
     return value

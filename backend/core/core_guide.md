@@ -53,7 +53,7 @@ Partial update carrying only label-derived fields for an existing message:
 
 - `provider_message_id: str`
 - `is_read: bool`
-- `box: str` — one of `"ALL_MAIL"`, `"SENT"`, `"SPAM"`, `"TRASH"`
+- `box: str` — one of `"ALL_MAIL"`, `"SENT"`, `"SPAM"`, `"TRASH"`, `"DELETED"`
 
 ## Error Hierarchy
 
@@ -144,12 +144,54 @@ Delta queries are **per folder** — Microsoft Graph v1.0 does not support delta
 
 **Fault tolerance**: if a folder fails during bootstrap delta initialization, it is skipped (logged) and excluded from the cursor. During incremental sync, a failed folder keeps its previous deltaLink in the new cursor. If **all** folders fail during incremental, an error is raised to trigger bootstrap fallback.
 
+## Trash Management Operations
+
+### `delete_messages(message_ids) → list[str]`
+
+Mark messages as deleted locally without calling the provider API. Returns all provided IDs as "succeeded" so the service layer marks them as `DELETED` in the database. **This is the only operation that intentionally breaks the Provider-First Rule** (root `CLAUDE.md` § 2.9): it does not act on the provider before updating the DB.
+
+**Why**: Gmail's `gmail.modify` scope cannot call `messages.delete` (requires the restricted `mail.google.com` scope). Since one provider cannot perform permanent deletion, we adopt a uniform no-op approach across all providers — regardless of whether their individual scopes support it — so the behavior is consistent and predictable.
+
+**Effect**: the provider retains the messages in Trash until its own retention policy purges them (Gmail: 30 days auto-clean; Outlook: per-tenant retention). The `DELETED` box value in the DB is a soft-delete marker that prevents sync from overwriting the user's explicit delete intent (see `DELETED` box value section below).
+
+- **Gmail**: no-op. Returns all IDs.
+- **Outlook**: no-op. Returns all IDs.
+
+### `restore_from_trash(items) → dict[str, str]`
+
+Restore messages from trash at the provider. `items` maps `provider_message_id → destination_box` (or `None` when the original box is unknown). Returns `{original_id: new_id}` for successfully restored messages.
+
+- **Gmail**: splits items into two groups based on the destination value:
+  - **Known** (`destination_box` is not `None`): batch `messages.modify` with `removeLabelIds: ["TRASH"]` and `addLabelIds` from `_BOX_TO_GMAIL_LABELS` mapping (`ALL_MAIL` → `["INBOX"]`, `SPAM` → `["SPAM"]`, other → `[]`).
+  - **Unknown** (`destination_box` is `None`): batch `messages.untrash`, which lets Gmail restore the message's original label state automatically.
+  - ID does not change in either case (`original_id == new_id`).
+- **Outlook**: `POST /messages/{id}/move` with `destinationId` (well-known folder name). `None` destination defaults to `inbox`. Serial loop. **The message ID changes** — the response contains the new message object with the new `id` field. Returns `{old_id: new_id}`. Folder mapping via `_BOX_TO_FOLDER`: `ALL_MAIL→inbox`, `SENT→sentitems`, `SPAM→junkemail`.
+
+### `move_to_trash(message_ids) → dict[str, str]`
+
+Move messages to trash at the provider. Returns `{original_id: new_id}` for successfully trashed messages. For providers where the ID doesn't change on trash, `original_id == new_id`.
+
+- **Gmail**: batch `messages.trash` in chunks of `_BATCH_SIZE` (100). Uses the same batch callback pattern as other batch operations. ID does not change on trash (`original_id == new_id`).
+- **Outlook**: calls `POST /messages/{id}/move` with `destinationId` set to `deleteditems`. Serial loop per message. **The message ID changes** — the response contains the new message object with the new `id` field. Returns `{old_id: new_id}`.
+
+### `DELETED` box value
+
+A soft-delete marker. When the sync pipeline encounters a `DELETED` row and the provider reports `box = 'TRASH'`, the `CASE` logic in `UPSERT_EMAIL_METADATA_BATCH` and `UPDATE_LABELS_BATCH` preserves `DELETED` (prevents sync from overwriting the user's explicit delete). If sync reports a box **other than** `TRASH` for a `DELETED` row, it means the user restored the email manually at the provider, and the row is updated to the new box.
+
+### `previous_box` column
+
+Set by the `move_to_trash` operation. Before setting `box = 'TRASH'`, the current `box` value is copied into `previous_box`. The `restore` action reads `previous_box` to determine the destination folder. When `previous_box` is `NULL` (e.g. the email was already in trash when first synced), the service layer uses `fetch_messages_metadata` to discover the post-restore box from the provider instead of falling back to a hardcoded default.
+
 ## Public Operations
 
 Beyond `authenticate`, `authenticate_silent`, and `fetch_email_metadata`, the `EmailClient` contract requires:
 
-- **`send_email(subject, body, recipients) -> EmailMetadata`** — send a plain text email. Returns the metadata of the sent message.
+- **`send_email(subject, body, recipients) → EmailMetadata`** — send a plain text email. Returns metadata of the sent message.
 - **`verify_message_existence(message_ids) → list[str]`** — return the subset of IDs that still exist at the provider. Used to confirm deletions or detect stale references.
+- **`delete_messages(message_ids) → list[str]`** — permanently delete messages at the provider (see Trash Management Operations above).
+- **`restore_from_trash(items) → dict[str, str]`** — restore messages from trash (see Trash Management Operations above).
+- **`fetch_messages_metadata(message_ids) → list[EmailMetadata]`** — fetch current metadata for specific messages by ID. Returns metadata with `box` determined by the provider's label/folder state. Messages that cannot be fetched are silently skipped. Gmail: reuses the internal batch-fetch mechanism (`_execute_batch_get` + `_parse_metadata_response`). Outlook: resolves special folder IDs, fetches each message individually via `_graph_request`, classifies by `parentFolderId`.
+- **`move_to_trash(message_ids) → dict[str, str]`** — move messages to trash at the provider (see Trash Management Operations above).
 - **`update_read_status(message_ids, is_read) → list[str]`** — mark messages as read or unread at the provider. Returns the list of `provider_message_id`s that were successfully updated. Messages not found at the provider are silently skipped (no error raised). Gmail adds/removes the `UNREAD` label via batch `messages.modify`. Outlook patches each message with `PATCH /me/messages/{id}` setting `{"isRead": bool}`. Raises `EmailNotAuthenticatedError` if the client is not authenticated (guard), and `EmailExternalAPIError` on provider-level failures.
 - **`move_to_spam(message_ids) → list[SpamMoveResult]`** — move messages to spam at the provider. Gmail adds the `SPAM` label via batch `messages.modify`. Outlook uses `POST /me/messages/{id}/move` with `destinationId: "junkemail"`. Returns `SpamMoveResult` pairs with `old_id` and `new_id`. **Outlook caveat**: the `/move` endpoint returns a new message ID; `SpamMoveResult.new_id` captures this (for Gmail, `new_id == old_id`). Raises `EmailNotAuthenticatedError` if not authenticated; silently skips failures for individual messages.
 - **`restore_from_spam(message_ids) → list[SpamMoveResult]`** — restore messages from spam. Gmail removes the `SPAM` label and adds `INBOX` (replicating the "Not Spam" button behavior). Outlook uses `POST /me/messages/{id}/move` with `destinationId: "inbox"`. Same ID-change caveat as `move_to_spam`.
@@ -175,11 +217,12 @@ When Outlook moves a message between folders (via `POST /me/messages/{id}/move`)
 Core layer:
 
 - [ ] Implement `EmailClient` in `backend/core/email/<provider>_client.py`.
-- [ ] Implement all abstract methods: `authenticate`, `authenticate_silent`, `fetch_email_metadata`, `send_email`, `verify_message_existence`, `update_read_status`, `move_to_spam`, `restore_from_spam`, `get_account_label`.
+- [ ] Implement all abstract methods: `authenticate`, `authenticate_silent`, `fetch_email_metadata`, `send_email`, `verify_message_existence`, `delete_messages`, `restore_from_trash`, `fetch_messages_metadata`, `move_to_trash`, `update_read_status`, `move_to_spam`, `restore_from_spam`, `get_account_label`.
 - [ ] Reuse helper functions from `helpers.py`.
 - [ ] Add provider branch in `EmailManager._build_client`.
 - [ ] Raise typed `CoreError` subclasses for all failure paths.
 - [ ] Export new public symbols in `core/email/__init__.py`.
+- [ ] Add a PostToolUse hook in `.claude/settings.local.json` for the new `*_client.py` (see `.claude/hooks/reuse-reminder.sh`).
 
 Cross-layer:
 

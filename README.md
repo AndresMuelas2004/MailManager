@@ -10,6 +10,7 @@ It lets you group Gmail and Outlook accounts under mailbox entities, connect the
 - Unified inbox per mailbox across all connected accounts.
 - Send email from a specific account in a mailbox.
 - Batch read/unread status management across accounts.
+- Trash management: move emails to trash, permanently delete, or restore.
 - Spam operations: move to spam and restore from spam with cross-provider support.
 - OAuth 2.0 interactive connect flow plus silent re-authentication.
 - PostgreSQL persistence for mailboxes, accounts, and tokens.
@@ -101,6 +102,7 @@ Required:
 - `MIA_GMAIL_CREDENTIALS_PATH`
 - `MIA_OUTLOOK_CREDENTIALS_PATH`
 - `TOKEN_ENCRYPTION_KEY`
+- `GOOGLE_CLIENT_ID`
 
 Example (PowerShell):
 
@@ -155,8 +157,9 @@ Frontend URL: `http://localhost:5173`
 Instead of manual setup, run everything with Docker Compose:
 
 ```bash
-# (Optional) Place OAuth credentials — host source path is environment-dependent.
-# Credentials are volume-mounted into /app/credentials inside the container.
+# Configure the credentials volume in docker-compose.yml
+# The volume mount path is developer-specific — edit the 'volumes' entry
+# to point to your local OAuth credentials directory.
 
 docker compose up --build
 ```
@@ -219,6 +222,8 @@ Emails:
 - `POST /mailboxes/{mailbox_id}/emails/sync-metadata`
 - `POST /mailboxes/{mailbox_id}/emails/send`
 - `PATCH /mailboxes/{mailbox_id}/emails/read-status` — Batch-update read/unread status
+- `POST /mailboxes/{mailbox_id}/emails/trash`
+- `POST /mailboxes/{mailbox_id}/emails/move-to-trash`
 - `POST /mailboxes/{mailbox_id}/emails/spam` — Move emails to spam
 - `POST /mailboxes/{mailbox_id}/emails/restore-from-spam` — Restore emails from spam
 
@@ -270,6 +275,9 @@ Primary API error codes include:
 - `email_send_error`
 - `external_api_error`
 - `read_status_update_error` — 502
+- `email_not_in_trash`
+- `trash_operation_error`
+- `move_to_trash_error`
 - `spam_move_error` — 502
 - `spam_restore_error` — 502
 

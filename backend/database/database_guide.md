@@ -33,6 +33,34 @@ The plaintext token columns (`access_token`, `refresh_token`) remain temporarily
 - `_backfill_plaintext_tokens` is best-effort: failures are logged as warnings and never propagate. The backfill retries on the next read.
 - A malformed `TOKEN_ENCRYPTION_KEY` raises `SettingsError` immediately via `get_fernet()` — it is never silently treated as "key absent".
 
+## Trash Management — `DELETED` Box and `previous_box` Column
+
+### `previous_box` column
+
+Added in migration `0008`. Nullable `VARCHAR(20)` with CHECK constraint allowing `ALL_MAIL`, `SENT`, `SPAM`. Set by `move_to_trash_batch`, which copies the current `box` into `previous_box` before setting `box = 'TRASH'`. On restore, `restore_from_trash_batch` uses `COALESCE(previous_box, 'ALL_MAIL')` for rows with a known value. Rows where `previous_box` is `NULL` go through `restore_from_trash_discovered_batch`, which receives the actual box from the caller (discovered at the provider after restore).
+
+### `DELETED` box value
+
+Added in migration `0008` to the `box` CHECK constraint. Acts as a soft-delete marker for emails deleted from trash. The sync pipeline's `UPSERT_EMAIL_METADATA_BATCH` and `UPDATE_LABELS_BATCH` queries use a `CASE` expression to prevent the provider's `TRASH` status from overwriting a `DELETED` row. If the provider reports a box other than `TRASH`, it means the user restored the email at the provider and the row is updated.
+
+### `LIST_BY_ACCOUNT` filter
+
+`LIST_BY_ACCOUNT` excludes `DELETED` rows (`box != 'DELETED'`) so they don't appear in the user's email list.
+
+### `EmailMetadataStore` trash method contracts
+
+- **`mark_as_deleted_batch(account_id, message_ids) → int`** — soft-deletes by setting `box = 'DELETED'`. **Only updates rows where `box = 'TRASH'`** — if a row has a different box, it is silently skipped. Returns count of affected rows.
+- **`restore_from_trash_batch(account_id, rows) → int`** — restores emails: replaces `provider_message_id` with the new ID from the provider, sets `box` from `COALESCE(previous_box, 'ALL_MAIL')`, and clears `previous_box`. **Only updates rows where `box = 'TRASH'`** — rows with a different box are silently skipped. Each tuple in `rows` is `(old_id, new_id, account_id)`.
+- **`restore_from_trash_discovered_batch(account_id, rows) → int`** — same as `restore_from_trash_batch` but for rows where `previous_box` was `NULL`. Instead of reading `COALESCE(previous_box, ...)` from the DB, it receives the discovered box from the caller as part of each tuple. Each tuple in `rows` is `(old_id, new_id, account_id, discovered_box)`. **Only updates rows where `box = 'TRASH'`**.
+- **`move_to_trash_batch(account_id, rows) → int`** — replaces `provider_message_id` with the new ID from the provider (Outlook assigns a new ID on move), copies the current `box` into `previous_box`, and sets `box = 'TRASH'`. Each tuple in `rows` is `(old_id, new_id, account_id)`. **Only updates rows where `box` is NOT already `'TRASH'` or `'DELETED'`** — rows already in trash or deleted are silently skipped. Returns count of affected rows.
+
+`restore_from_trash_batch`, `restore_from_trash_discovered_batch`, and `move_to_trash_batch` all delegate to the internal `_execute_batch_values` helper, which wraps `psycopg2.extras.execute_values` with standard error handling.
+
+- **`delete_batch_by_message_ids(account_id, message_ids) → int`** — **hard-deletes** rows permanently. Used by ghost email reconciliation, NOT by user-facing trash operations. Do not confuse with `mark_as_deleted_batch` (soft-delete).
+- **`get_trash_emails_by_ids(account_id, message_ids) → list[dict]`** — returns rows where `box = 'TRASH'` matching the given IDs. Each dict includes `provider_message_id`, `account_id`, `box`, and `previous_box`. Used to verify emails are in trash before acting.
+- **`list_provider_message_ids(account_id) → list[str]`** — returns all stored `provider_message_id` values for an account. Used by ghost email reconciliation.
+- **`update_labels_batch(account_id, rows) → int`** — bulk-updates `is_read` and `box` for email metadata. Uses the same `CASE` expression as `UPSERT_EMAIL_METADATA_BATCH` to protect `DELETED` rows from being reverted to `TRASH` by provider sync.
+
 ## Behavioral Contracts — Email Metadata
 
 ### `EmailMetadataStore.update_read_status_batch(account_id, rows) → int`

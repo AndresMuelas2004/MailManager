@@ -87,9 +87,9 @@ def get_account(mailbox_id: str, account_id: str, user_id: str) -> AccountOut:
         raise translate_database_error(exc) from exc
     except Exception as exc:
         logger.warning("Unexpected account lookup error (%s): %s", type(exc).__name__, exc)
-        raise ApiError("Failed to look up account.") from exc
+        raise ApiError("Failed to look up account for get.") from exc
     if record is None:
-        raise AccountNotFound(f"Account '{account_id}' not found.")
+        raise AccountNotFound(f"Account '{account_id}' not found for get.")
     return _build_response(record)
 
 
@@ -101,9 +101,9 @@ def update_account(mailbox_id: str, account_id: str, payload: AccountUpdate, use
         raise translate_database_error(exc) from exc
     except Exception as exc:
         logger.warning("Unexpected account lookup error (%s): %s", type(exc).__name__, exc)
-        raise ApiError("Failed to look up account.") from exc
+        raise ApiError("Failed to look up account for update.") from exc
     if record is None:
-        raise AccountNotFound(f"Account '{account_id}' not found.")
+        raise AccountNotFound(f"Account '{account_id}' not found for update.")
 
     if payload.display_label is not None:
         record["display_label"] = payload.display_label
@@ -128,9 +128,9 @@ def delete_account(mailbox_id: str, account_id: str, user_id: str) -> dict[str, 
         raise translate_database_error(exc) from exc
     except Exception as exc:
         logger.warning("Unexpected account lookup error (%s): %s", type(exc).__name__, exc)
-        raise ApiError("Failed to look up account.") from exc
+        raise ApiError("Failed to look up account for delete.") from exc
     if record is None:
-        raise AccountNotFound(f"Account '{account_id}' not found.")
+        raise AccountNotFound(f"Account '{account_id}' not found for delete.")
     # ON DELETE CASCADE removes associated tokens automatically.
     try:
         account_store.delete(mailbox_id, account_id)
@@ -150,9 +150,9 @@ def connect_account(mailbox_id: str, account_id: str, user_id: str) -> AccountCo
         raise translate_database_error(exc) from exc
     except Exception as exc:
         logger.warning("Unexpected account lookup error (%s): %s", type(exc).__name__, exc)
-        raise ApiError("Failed to look up account.") from exc
+        raise ApiError("Failed to look up account for connect.") from exc
     if record is None:
-        raise AccountNotFound(f"Account '{account_id}' not found.")
+        raise AccountNotFound(f"Account '{account_id}' not found for connect.")
 
     provider = str(record.get("provider") or "").lower()
     account_label = f"{mailbox_id}__{account_id}"

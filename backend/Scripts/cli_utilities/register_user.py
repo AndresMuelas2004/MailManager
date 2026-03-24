@@ -132,8 +132,8 @@ def main() -> None:
     for key, value in result.items():
         print(f"  {key}: {value}")
 
-    parametros = Path(__file__).resolve().parents[1] / "EXECUTION_MDs" / "parametros.md"
-    with parametros.open("a", encoding="utf-8") as f:
+    params_log = Path(__file__).resolve().parents[1] / "EXECUTION_MDs" / "parametros.md"
+    with params_log.open("a", encoding="utf-8") as f:
         f.write(f"user_id: {result['user_id']}\n")
 
 

@@ -25,13 +25,18 @@ from api.services.services_helpers import (
     build_manager_for_accounts,
     delete_email_metadata_batch,
     ensure_mailbox_access,
+    get_trash_emails_by_ids,
     is_auth_error,
     load_stored_message_ids,
     load_sync_cursors,
     load_wrapped_account_tokens,
     load_wrapped_app_credentials,
+    mark_as_deleted_batch,
+    move_to_trash_batch,
     persist_email_metadata_batch,
     raise_on_silent_auth_errors,
+    restore_from_trash_batch,
+    restore_from_trash_discovered_batch,
     translate_connect_error,
     unwrap_secret,
     update_email_metadata_labels_batch,
@@ -185,6 +190,18 @@ class TestRaiseOnSilentAuthErrors:
 # ------------------------------------------------------------------
 # translate_connect_error
 # ------------------------------------------------------------------
+
+class TestIsAuthError:
+
+    def test_true_for_email_auth_error(self):
+        assert is_auth_error(EmailAuthError("x")) is True
+
+    def test_false_for_non_auth_core_error(self):
+        assert is_auth_error(EmailExternalAPIError("x")) is False
+
+    def test_false_for_generic_exception(self):
+        assert is_auth_error(RuntimeError("x")) is False
+
 
 class TestTranslateConnectError:
 
@@ -373,6 +390,212 @@ class TestUpdateEmailMetadataLabelsBatch:
             mock_store.update_labels_batch.side_effect = RuntimeError("boom")
             with pytest.raises(ApiError, match="Failed to update email metadata labels"):
                 update_email_metadata_labels_batch("acc-1", updates)
+
+
+# ------------------------------------------------------------------
+# load_stored_message_ids
+# ------------------------------------------------------------------
+
+class TestLoadStoredMessageIds:
+
+    def test_happy_path_returns_id_list(self):
+        with patch("api.services.services_helpers.email_metadata_store") as mock_store:
+            mock_store.list_provider_message_ids.return_value = ["m1", "m2"]
+            result = load_stored_message_ids("acc-1")
+        assert result == ["m1", "m2"]
+
+    def test_database_error_translated(self):
+        with patch("api.services.services_helpers.email_metadata_store") as mock_store:
+            mock_store.list_provider_message_ids.side_effect = QueryError("DB fail")
+            with pytest.raises(DatabaseQueryError):
+                load_stored_message_ids("acc-1")
+
+    def test_generic_exception_raises_api_error(self):
+        with patch("api.services.services_helpers.email_metadata_store") as mock_store:
+            mock_store.list_provider_message_ids.side_effect = RuntimeError("boom")
+            with pytest.raises(ApiError, match="Failed to load stored message IDs"):
+                load_stored_message_ids("acc-1")
+
+
+# ------------------------------------------------------------------
+# get_trash_emails_by_ids
+# ------------------------------------------------------------------
+
+class TestGetTrashEmailsByIds:
+
+    def test_empty_list_returns_empty(self):
+        assert get_trash_emails_by_ids("acc-1", []) == []
+
+    def test_happy_path_returns_rows(self):
+        fake_rows = [
+            {"provider_message_id": "m1", "box": "TRASH", "previous_box": "ALL_MAIL"},
+        ]
+        with patch("api.services.services_helpers.email_metadata_store") as mock_store:
+            mock_store.get_trash_emails_by_ids.return_value = fake_rows
+            result = get_trash_emails_by_ids("acc-1", ["m1"])
+        assert result == fake_rows
+
+    def test_database_error_translated(self):
+        with patch("api.services.services_helpers.email_metadata_store") as mock_store:
+            mock_store.get_trash_emails_by_ids.side_effect = QueryError("DB fail")
+            with pytest.raises(DatabaseQueryError):
+                get_trash_emails_by_ids("acc-1", ["m1"])
+
+    def test_generic_exception_raises_api_error(self):
+        with patch("api.services.services_helpers.email_metadata_store") as mock_store:
+            mock_store.get_trash_emails_by_ids.side_effect = RuntimeError("boom")
+            with pytest.raises(ApiError, match="Failed to get trash emails"):
+                get_trash_emails_by_ids("acc-1", ["m1"])
+
+
+# ------------------------------------------------------------------
+# mark_as_deleted_batch
+# ------------------------------------------------------------------
+
+class TestMarkAsDeletedBatch:
+
+    def test_empty_list_returns_zero(self):
+        assert mark_as_deleted_batch("acc-1", []) == 0
+
+    def test_happy_path_returns_count(self):
+        with patch("api.services.services_helpers.email_metadata_store") as mock_store:
+            mock_store.mark_as_deleted_batch.return_value = 2
+            result = mark_as_deleted_batch("acc-1", ["m1", "m2"])
+        assert result == 2
+
+    def test_database_error_translated(self):
+        with patch("api.services.services_helpers.email_metadata_store") as mock_store:
+            mock_store.mark_as_deleted_batch.side_effect = QueryError("DB fail")
+            with pytest.raises(DatabaseQueryError):
+                mark_as_deleted_batch("acc-1", ["m1"])
+
+    def test_generic_exception_raises_api_error(self):
+        with patch("api.services.services_helpers.email_metadata_store") as mock_store:
+            mock_store.mark_as_deleted_batch.side_effect = RuntimeError("boom")
+            with pytest.raises(ApiError, match="Failed to mark emails as deleted"):
+                mark_as_deleted_batch("acc-1", ["m1"])
+
+
+# ------------------------------------------------------------------
+# restore_from_trash_batch
+# ------------------------------------------------------------------
+
+class TestRestoreFromTrashBatch:
+
+    def test_empty_list_returns_zero(self):
+        assert restore_from_trash_batch("acc-1", []) == 0
+
+    def test_happy_path_returns_count(self):
+        with patch("api.services.services_helpers.email_metadata_store") as mock_store:
+            mock_store.restore_from_trash_batch.return_value = 2
+            result = restore_from_trash_batch("acc-1", [("m1", "m1", "acc-1"), ("m2", "m2", "acc-1")])
+        assert result == 2
+
+    def test_database_error_translated(self):
+        with patch("api.services.services_helpers.email_metadata_store") as mock_store:
+            mock_store.restore_from_trash_batch.side_effect = QueryError("DB fail")
+            with pytest.raises(DatabaseQueryError):
+                restore_from_trash_batch("acc-1", [("m1", "m1", "acc-1")])
+
+    def test_generic_exception_raises_api_error(self):
+        with patch("api.services.services_helpers.email_metadata_store") as mock_store:
+            mock_store.restore_from_trash_batch.side_effect = RuntimeError("boom")
+            with pytest.raises(ApiError, match="Failed to restore emails from trash"):
+                restore_from_trash_batch("acc-1", [("m1", "m1", "acc-1")])
+
+
+# ------------------------------------------------------------------
+# restore_from_trash_discovered_batch
+# ------------------------------------------------------------------
+
+class TestRestoreFromTrashDiscoveredBatch:
+
+    def test_empty_list_returns_zero(self):
+        assert restore_from_trash_discovered_batch("acc-1", []) == 0
+
+    def test_happy_path_returns_count(self):
+        with patch("api.services.services_helpers.email_metadata_store") as mock_store:
+            mock_store.restore_from_trash_discovered_batch.return_value = 2
+            result = restore_from_trash_discovered_batch(
+                "acc-1", [("m1", "m1", "acc-1", "SENT"), ("m2", "m2", "acc-1", "SPAM")],
+            )
+        assert result == 2
+
+    def test_database_error_translated(self):
+        with patch("api.services.services_helpers.email_metadata_store") as mock_store:
+            mock_store.restore_from_trash_discovered_batch.side_effect = QueryError("DB fail")
+            with pytest.raises(DatabaseQueryError):
+                restore_from_trash_discovered_batch("acc-1", [("m1", "m1", "acc-1", "SENT")])
+
+    def test_generic_exception_raises_api_error(self):
+        with patch("api.services.services_helpers.email_metadata_store") as mock_store:
+            mock_store.restore_from_trash_discovered_batch.side_effect = RuntimeError("boom")
+            with pytest.raises(ApiError, match="Failed to restore emails with discovered box"):
+                restore_from_trash_discovered_batch("acc-1", [("m1", "m1", "acc-1", "SENT")])
+
+
+# ------------------------------------------------------------------
+# move_to_trash_batch
+# ------------------------------------------------------------------
+
+class TestMoveToTrashBatch:
+
+    def test_empty_list_returns_zero(self):
+        assert move_to_trash_batch("acc-1", []) == 0
+
+    def test_happy_path_returns_count(self):
+        with patch("api.services.services_helpers.email_metadata_store") as mock_store:
+            mock_store.move_to_trash_batch.return_value = 2
+            result = move_to_trash_batch("acc-1", [("m1", "m1", "acc-1"), ("m2", "m2", "acc-1")])
+        assert result == 2
+
+    def test_database_error_translated(self):
+        with patch("api.services.services_helpers.email_metadata_store") as mock_store:
+            mock_store.move_to_trash_batch.side_effect = QueryError("DB fail")
+            with pytest.raises(DatabaseQueryError):
+                move_to_trash_batch("acc-1", [("m1", "m1", "acc-1")])
+
+    def test_generic_exception_raises_api_error(self):
+        with patch("api.services.services_helpers.email_metadata_store") as mock_store:
+            mock_store.move_to_trash_batch.side_effect = RuntimeError("boom")
+            with pytest.raises(ApiError, match="Failed to move emails to trash"):
+                move_to_trash_batch("acc-1", [("m1", "m1", "acc-1")])
+
+
+# ------------------------------------------------------------------
+# unwrap_secret
+# ------------------------------------------------------------------
+
+class TestUnwrapSecret:
+
+    def test_none_returns_none(self):
+        assert unwrap_secret(None) is None
+
+    def test_secret_str_returns_value(self):
+        assert unwrap_secret(SecretStr("tok")) == "tok"
+
+    def test_plain_string_returns_as_is(self):
+        assert unwrap_secret("plain") == "plain"
+
+
+# ------------------------------------------------------------------
+# _wrap_secret
+# ------------------------------------------------------------------
+
+class TestWrapSecret:
+
+    def test_none_returns_none(self):
+        assert _wrap_secret(None) is None
+
+    def test_string_wraps_to_secret_str(self):
+        result = _wrap_secret("tok")
+        assert isinstance(result, SecretStr)
+        assert result.get_secret_value() == "tok"
+
+    def test_int_wraps_to_secret_str(self):
+        result = _wrap_secret(42)
+        assert isinstance(result, SecretStr)
+        assert result.get_secret_value() == "42"
 
 
 # ------------------------------------------------------------------

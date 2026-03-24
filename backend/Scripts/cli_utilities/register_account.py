@@ -33,8 +33,8 @@ def main() -> None:
     for key, value in result.model_dump().items():
         print(f"  {key}: {value}")
 
-    parametros = Path(__file__).resolve().parents[1] / "EXECUTION_MDs" / "parametros.md"
-    with parametros.open("a", encoding="utf-8") as f:
+    params_log = Path(__file__).resolve().parents[1] / "EXECUTION_MDs" / "parametros.md"
+    with params_log.open("a", encoding="utf-8") as f:
         f.write(f"account_id: {result.account_id} | provider: {result.provider} | display_label: {result.display_label}\n")
 
 

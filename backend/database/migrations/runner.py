@@ -87,14 +87,16 @@ _DDL_STATEMENTS = [
         received_at          TIMESTAMPTZ  NOT NULL,
         is_read              BOOLEAN      NOT NULL DEFAULT FALSE,
         box                  VARCHAR(20)  NOT NULL DEFAULT 'ALL_MAIL'
-                             CHECK (box IN ('ALL_MAIL', 'SENT', 'SPAM', 'TRASH')),
+                             CHECK (box IN ('ALL_MAIL', 'SPAM', 'TRASH', 'SENT', 'DELETED')),
+        previous_box         VARCHAR(20)  DEFAULT NULL
+                             CHECK (previous_box IS NULL OR previous_box IN ('ALL_MAIL', 'SENT', 'SPAM')),
         PRIMARY KEY (provider_message_id, account_id)
     );
     """,
     "CREATE INDEX IF NOT EXISTS idx_email_metadata_account_id ON email_metadata(account_id);",
     "CREATE INDEX IF NOT EXISTS idx_email_metadata_received_at ON email_metadata(received_at DESC);",
     "DELETE FROM alembic_version;",
-    "INSERT INTO alembic_version(version_num) VALUES ('0007_add_sent_box_value');",
+    "INSERT INTO alembic_version(version_num) VALUES ('0008_add_previous_box_and_deleted_box');",
 ]
 
 

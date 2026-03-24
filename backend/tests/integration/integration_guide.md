@@ -26,11 +26,12 @@ The `failing_test_client` fixture uses `@pytest.mark.parametrize(..., indirect=T
 Most tests run with `require_session` overridden to return `TEST_USER_ID`. Tests that verify real session validation (no cookie, expired session) temporarily remove the override:
 
 ```python
-app.dependency_overrides.pop(require_session, None)
+override = app.dependency_overrides.pop(require_session, None)
 try:
     # test code
 finally:
-    app.dependency_overrides[require_session] = override_fn
+    if override is not None:
+        app.dependency_overrides[require_session] = override
 ```
 
 The `finally` block is essential — without it, a test failure would leave the override removed, breaking all subsequent tests.
@@ -58,4 +59,19 @@ Tests mutate `config` between API calls to simulate different provider responses
 
 ### Missing claims tests for Google login
 
-`test_auth_endpoints.py` includes integration tests verifying that Google login correctly rejects tokens missing the `sub` or `email` claims with a 401 response. These complement the unit-level claim checks in `test_auth_service.py`.
+`test_auth_endpoints.py` covers 27 tests across: Google login (happy path, missing claims, auth error types), session management (GET /auth/me, expired session, deleted user), logout (happy path, DB errors, no cookie), DELETE /auth/me (cascade delete, user gone), and ownership enforcement (foreign mailbox 403, NULL owner defense).
+
+### Trash tests use manual DB UPDATE
+
+Trash management integration tests first sync emails via the normal sync endpoint, then manually `UPDATE email_metadata SET box = 'TRASH'` using `isolated_db` to simulate emails being in trash. Now that `move_to_trash` is implemented, new trash tests can use the API endpoint instead of raw SQL, but existing tests retain the manual approach for backward compatibility.
+
+### Move-to-trash integration coverage
+
+- Happy path: move-to-trash for a single account with successful provider response (`test_endpoints.py`).
+- Multi-account: move-to-trash across multiple accounts in a single request (`test_endpoints.py`).
+- Partial success: some messages succeed at the provider while others fail, verifying per-item result reporting (`test_endpoints.py`).
+- Error translations: `MoveToTrashError` from provider failures is tested via `failing_test_client` with `indirect=True` parametrize (`test_core_error_translation.py`).
+
+### `configurable_test_client` for multi-phase tests
+
+The `configurable_test_client` fixture (`conftest.py`) returns a tuple `(client, config)`. Mutating the `config` dict between API calls changes the `FakeEmailClient` behavior for subsequent requests (metadata, deletes, label updates, sync cursors, restore/delete/move-to-trash returns). Use it when a test needs to exercise multiple API calls with different provider responses. Compare: `test_client` provides a static fake, `failing_test_client` injects a single failure, `configurable_test_client` allows dynamic behavior changes.

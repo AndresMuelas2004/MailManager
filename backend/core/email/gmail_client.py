@@ -7,7 +7,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from email.utils import parseaddr
-from typing import Any
+from typing import Any, Callable
 
 logger = logging.getLogger(__name__)
 
@@ -249,7 +249,7 @@ class GmailClient(EmailClient):
         """Path 1: Full bootstrap fetch of message metadata."""
         history_id = self._get_current_history_id()
         message_ids = self._list_message_ids(max_total)
-        metadata_list = self._batch_fetch_metadata(message_ids)
+        metadata_list = self.fetch_messages_metadata(message_ids)
         return SyncResult(upserts=metadata_list, new_cursor=history_id, is_full_sync=True)
 
     def _list_message_ids(self, max_total: int) -> list[str]:
@@ -538,8 +538,12 @@ class GmailClient(EmailClient):
 
         return all_results
 
-    def _batch_fetch_metadata(self, message_ids: list[str]) -> list[EmailMetadata]:
+    def fetch_messages_metadata(self, message_ids: list[str]) -> list[EmailMetadata]:
         """Fetch metadata for message IDs using Gmail BatchHttpRequest."""
+        if self.service is None:
+            raise EmailNotAuthenticatedError("Gmail fetch_messages_metadata requires authentication.")
+        if not message_ids:
+            return []
         raw = self._execute_batch_get(
             message_ids,
             fmt="metadata",
@@ -555,7 +559,8 @@ class GmailClient(EmailClient):
                 continue
             try:
                 results.append(self._parse_metadata_response(msg))
-            except Exception:
+            except Exception as exc:
+                logger.debug("Gmail skipped unparseable message %s: %s", msg_id, exc)
                 skipped_ids.append(msg_id)
         _log_skipped_messages("metadata sync", skipped_ids, message_ids)
         return results
@@ -616,7 +621,8 @@ class GmailClient(EmailClient):
         try:
             profile = self.service.users().getProfile(userId="me").execute()
             self._sender_email = profile.get("emailAddress", "")
-        except Exception:
+        except Exception as exc:
+            logger.debug("Gmail failed to fetch sender email: %s", exc)
             self._sender_email = ""
         return self._sender_email
 
@@ -724,7 +730,7 @@ class GmailClient(EmailClient):
         label_only_ids = label_change_ids - need_get_ids - set(confirmed_deletes)
 
         # Step 4 — Batch fetch full metadata for need_get
-        upserts = self._batch_fetch_metadata(list(need_get_ids)) if need_get_ids else []
+        upserts = self.fetch_messages_metadata(list(need_get_ids)) if need_get_ids else []
 
         # Step 5 — Batch fetch label updates for label-only changes
         label_updates = (
@@ -807,7 +813,7 @@ class GmailClient(EmailClient):
         message_id = response.get("id", "")
         if message_id:
             try:
-                fetched = self._batch_fetch_metadata([message_id])
+                fetched = self.fetch_messages_metadata([message_id])
                 if fetched:
                     result = fetched[0]
                     if not result.subject:
@@ -835,6 +841,119 @@ class GmailClient(EmailClient):
             is_read=True,
             box="SENT",
         )
+
+    def delete_messages(self, message_ids: list[str]) -> list[str]:
+        if self.service is None:
+            raise EmailNotAuthenticatedError("Gmail delete_messages requires authentication.")
+        if not message_ids:
+            return []
+        # No-op: gmail.modify scope cannot call messages.delete (requires
+        # restricted mail.google.com scope). Return all IDs as "succeeded" so
+        # the service layer marks them DELETED locally. Gmail auto-cleans
+        # trash after 30 days; reconciliation removes stale DELETED rows.
+        return list(message_ids)
+
+    def _execute_batch_modify(
+        self,
+        message_ids: list[str],
+        request_builder: Callable[[str], Any],
+        operation_name: str,
+    ) -> list[str]:
+        """Execute a batch modify operation (trash, untrash) in chunks.
+        Returns the list of message IDs that succeeded."""
+        succeeded: list[str] = []
+
+        for chunk_start in range(0, len(message_ids), _BATCH_SIZE):
+            chunk = message_ids[chunk_start:chunk_start + _BATCH_SIZE]
+            failed: list[str] = []
+
+            def _callback(
+                request_id: str, response: Any, exception: Any,
+                _s: list[str] = succeeded,
+                _f: list[str] = failed,
+            ) -> None:
+                if exception is not None:
+                    _f.append(request_id)
+                    return
+                _s.append(request_id)
+
+            try:
+                batch = self.service.new_batch_http_request(callback=_callback)
+                for msg_id in chunk:
+                    batch.add(request_builder(msg_id), request_id=msg_id)
+                batch.execute()
+            except HttpError as exc:
+                status, reason = http_error_detail(exc)
+                raise EmailExternalAPIError(
+                    f"Gmail {operation_name} batch failed (HTTP {status}: {reason})."
+                ) from exc
+            except Exception as exc:
+                raise EmailExternalAPIError(
+                    f"Gmail unexpected {operation_name} error ({type(exc).__name__}): {exc}"
+                ) from exc
+
+            if failed:
+                logger.warning(
+                    "Gmail %s: %d/%d messages failed in chunk: %s",
+                    operation_name, len(failed), len(chunk), failed[:10],
+                )
+
+        return succeeded
+
+    _BOX_TO_GMAIL_LABELS: dict[str, list[str]] = {
+        "ALL_MAIL": ["INBOX"],
+        "SPAM": ["SPAM"],
+    }
+
+    def restore_from_trash(self, items: dict[str, str | None]) -> dict[str, str]:
+        if self.service is None:
+            raise EmailNotAuthenticatedError("Gmail restore_from_trash requires authentication.")
+        if not items:
+            return {}
+
+        known = {mid: dest for mid, dest in items.items() if dest is not None}
+        unknown = [mid for mid, dest in items.items() if dest is None]
+
+        result: dict[str, str] = {}
+
+        # Known destination: remove TRASH + add destination labels
+        if known:
+            succeeded = self._execute_batch_modify(
+                list(known.keys()),
+                lambda mid: self.service.users().messages().modify(
+                    userId="me", id=mid,
+                    body={
+                        "removeLabelIds": ["TRASH"],
+                        "addLabelIds": self._BOX_TO_GMAIL_LABELS.get(known[mid], []),
+                    },
+                ),
+                "restore_from_trash",
+            )
+            result.update({mid: mid for mid in succeeded})
+
+        # Unknown destination: untrash (restores original label state)
+        if unknown:
+            succeeded = self._execute_batch_modify(
+                unknown,
+                lambda mid: self.service.users().messages().untrash(userId="me", id=mid),
+                "restore_from_trash_untrash",
+            )
+            result.update({mid: mid for mid in succeeded})
+
+        return result
+
+    def move_to_trash(self, message_ids: list[str]) -> dict[str, str]:
+        if self.service is None:
+            raise EmailNotAuthenticatedError("Gmail move_to_trash requires authentication.")
+        if not message_ids:
+            return {}
+        succeeded = self._execute_batch_modify(
+            message_ids,
+            lambda mid: self.service.users().messages().trash(userId="me", id=mid),
+            "move_to_trash",
+        )
+        # Gmail ID doesn't change on trash
+        return {mid: mid for mid in succeeded}
 
     def verify_message_existence(self, message_ids: list[str]) -> list[str]:
         if self.service is None:

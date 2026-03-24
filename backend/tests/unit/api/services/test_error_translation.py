@@ -34,7 +34,7 @@ from api.services.services_helpers import (
     translate_core_error,
     translate_database_error,
 )
-from auth.errors.errors import (
+from auth import (
     AuthError,
     AuthSettingsError,
     AuthTokenError,
@@ -61,7 +61,7 @@ from core.email.errors import (
     EmailRecipientsMissingError,
     EmailRefreshFailedError,
 )
-from database.errors.exceptions import (
+from database import (
     ConnectionPoolError,
     CredentialReadError,
     DatabaseError,
@@ -69,6 +69,8 @@ from database.errors.exceptions import (
     QueryError,
     SettingsError,
     TokenCryptoError,
+    TokenDecryptError,
+    TokenEncryptError,
     TokenValidationError,
     UnknownProviderError,
 )
@@ -136,6 +138,8 @@ _DB_CASES = [
     (MigrationError, DatabaseMigrationError),
     (SettingsError, EnvVarError),
     (TokenCryptoError, TokenDecryptionError),
+    (TokenEncryptError, TokenDecryptionError),
+    (TokenDecryptError, TokenDecryptionError),
     (TokenValidationError, TokenIntegrityError),
     (CredentialReadError, CredentialFileError),
     (UnknownProviderError, AccountMisconfigured),

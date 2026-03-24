@@ -102,6 +102,26 @@ class EmailMetadataStore(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    def get_trash_emails_by_ids(self, account_id: str, message_ids: list[str]) -> list[dict[str, Any]]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def mark_as_deleted_batch(self, account_id: str, message_ids: list[str]) -> int:
+        raise NotImplementedError
+
+    @abstractmethod
+    def restore_from_trash_batch(self, account_id: str, rows: list[tuple]) -> int:
+        raise NotImplementedError
+
+    @abstractmethod
+    def restore_from_trash_discovered_batch(self, account_id: str, rows: list[tuple]) -> int:
+        raise NotImplementedError
+
+    @abstractmethod
+    def move_to_trash_batch(self, account_id: str, rows: list[tuple]) -> int:
+        raise NotImplementedError
+
+    @abstractmethod
     def update_spam_status_batch(self, account_id: str, rows: list[tuple]) -> int:
         raise NotImplementedError
 
