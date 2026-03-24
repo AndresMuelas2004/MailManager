@@ -24,9 +24,10 @@ if tool_name in ('Edit', 'Write'):
 
 elif tool_name == 'Bash':
     command = tool_input.get('command', '')
-    # Case-insensitive search for any mention of claude.md in the command
+    # Allow git commands (add, commit, diff, status, log, etc.) that reference CLAUDE.md
     if re.search(r'claude\.md', command, re.IGNORECASE):
-        deny('Bash commands that reference CLAUDE.md files are blocked. These files are fully protected.')
+        if not re.match(r'^\s*git\s+', command):
+            deny('Bash commands that modify CLAUDE.md files are blocked. These files are fully protected.')
 
 sys.exit(0)
 "
