@@ -13,7 +13,7 @@ This is the `CLAUDE.md` for the **integration test** layer. It serves as the gen
 Integration tests verify the full internal backend flow:
 
 ```
-router → router helpers → service → database → core
+router → router helpers → service → database → service → core
 ```
 
 These tests execute real framework endpoints and real database operations, while replacing external provider boundaries with fakes.
@@ -26,7 +26,7 @@ These tests execute real framework endpoints and real database operations, while
 | Routers and services | Real | Production modules |
 | Database | Real | Per-test transaction rollback isolation |
 | Core orchestration | Real | Built and used in tests |
-| External provider calls | Fake | Replaced with fake clients |
+| External APIs calls | Fake | Replaced with fake clients |
 | App credentials loading | Fake | Monkeypatched |
 | Token loading/saving | Fake | Monkeypatched |
 | Session authentication | Fake | Auth dependency overridden |
@@ -37,6 +37,7 @@ These tests execute real framework endpoints and real database operations, while
 - A shared connection is monkeypatched into all repository modules.
 - Schema is created once per test session (e.g. via migration tool).
 - A deterministic test user is seeded per test for ownership checks.
+- Tests are fully independent — no test relies on state produced by another. The per-test rollback and seed fixtures guarantee a clean, deterministic starting state for every test.
 
 ## 4. Auth Override Pattern
 
@@ -73,8 +74,6 @@ Integration tests separate two major error surfaces:
 - Real provider HTTP traffic
 - Real token refresh against live endpoints
 - Frontend behavior
-
-Those are covered by E2E tests.
 
 ## 9. Project-Specific Guide
 

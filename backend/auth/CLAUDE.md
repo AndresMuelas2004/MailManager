@@ -172,4 +172,4 @@ No context manager exists for auth translation — there are typically only a fe
 
 This file covers the general, transferable rules for the authentication layer. For project-specific details — concrete rules, architectural decisions, and implementation details that apply these general principles to the current application — consult [`auth_guide.md`](auth_guide.md).
 
-The guide complements these rules but never contradicts them. In case of conflict, this `CLAUDE.md` has absolute precedence. Code in this layer must respect both levels: first these general rules, then the project-specific guide.
+The guide complements these rules but never contradicts them. In case of conflict, this `CLAUDE.md` has absolute precedence. Code in this layer must respect both levels: first these general rules, then the project-specific guide auth_guide.md.

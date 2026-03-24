@@ -15,18 +15,21 @@ The `database/` package is a framework-agnostic layer — it has **no imports fr
 ## 2. Package Structure
 
 ```
-database/
-├── __init__.py              # Public facade (re-exports everything below)
-├── errors/                  # Database-specific error hierarchy
-│   ├── __init__.py          #   Re-exports all exceptions
-│   └── exceptions.py        #   DatabaseError base + subclasses
-├── settings.py              # Centralized env var reading and validation
-├── connection.py            # Connection pool management + transactional context manager
-├── contracts.py             # Abstract interfaces (Store contracts)
-├── queries/                 # Raw SQL constants only — no Python logic
-├── repositories/            # Concrete implementations of contracts
-├── security/                # Credentials and token encryption utilities
-└── migrations/              # Schema evolution (Alembic or equivalent)
+  database/
+  ├── __init__.py              # Public facade (re-exports everything below)
+  ├── errors/                  # Database-specific error hierarchy
+  │   ├── __init__.py          #   Re-exports all exceptions
+  │   └── exceptions.py        #   DatabaseError base + subclasses
+  ├── settings.py              # Centralized env var reading and validation
+  ├── connection.py            # Connection pool management + transactional context manager
+  ├── lifecycle.py             # Pool warmup and schema migration orchestration
+  ├── contracts.py             # Abstract interfaces (Store contracts)
+  ├── queries/                 # Raw SQL constants only — no Python logic
+  ├── repositories/            # Concrete implementations of contracts
+  ├── security/                # (optional) Credentials and token encryption utilities
+  └── migrations/              # Schema evolution (Alembic or equivalent)
+
+  
 ```
 
 ## 3. Public Facade
@@ -73,18 +76,14 @@ settings.py
 The database layer uses its own `DatabaseError` hierarchy, independent of the API error hierarchy.
 
 ```
-DatabaseError                   # Base for all database errors
-├── ConnectionPoolError         # Pool creation, warmup, connection exhaustion
-├── QueryError                  # Any SQL execution failure (CRUD)
-├── MigrationError              # Schema migration failures
-├── SettingsError               # Missing/invalid env vars, malformed keys
-├── TokenDecryptError           # Encryption/decryption failures
-├── TokenValidationError        # Token validation/context mismatches
-├── CredentialReadError         # Credential file unreadable/corrupted
-└── UnknownProviderError        # Unknown provider identifier
+ DatabaseError                   # Base for all database errors
+  ├── ConnectionPoolError         # Pool creation, warmup, connection exhaustion
+  ├── QueryError                  # Any SQL execution failure (CRUD)
+  ├── MigrationError              # Schema migration failures
+  ├── SettingsError               # Missing/invalid env vars, malformed keys
+  └── ...                         # Project-specific subclasses (see guide)
 ```
 
-All inherit flat from `DatabaseError` (no intermediate base classes).
 
 Each class has a `code`, `default_message`, `message`, and `detail` dict — same base-class pattern as other layers.
 
@@ -100,11 +99,11 @@ except specific_db_lib.SpecificError:       # 1. Specific DB library error first
 except DatabaseError:                        # 2. Never double-wrap
     raise
 except db_lib.Error as exc:                 # 3. Domain-specific catch
-    raise QueryError("Failed to ...") from exc
+      raise <ModuleError>("Failed to ...") from exc
 except Exception as exc:                    # 4. Generic fallback last
-    raise QueryError(
-        f"Unexpected error ({type(exc).__name__}): {exc}"
-    ) from exc
+      raise <ModuleError>(
+          f"Unexpected error ({type(exc).__name__}): {exc}"
+      ) from exc
 ```
 
 ### Rules
@@ -117,11 +116,11 @@ except Exception as exc:                    # 4. Generic fallback last
 
 ### Where each exception is raised
 
-- **`connection.py`** → `ConnectionPoolError` (pool creation, pool exhaustion)
-- **`lifecycle.py`** → `ConnectionPoolError` (warmup), `MigrationError` (migrations)
-- **`repositories/*.py`** → `QueryError` (SQL failures), `TokenValidationError` (token validation)
-- **`settings.py`** → `SettingsError` (missing/invalid env vars)
-- **`security/`** → `TokenDecryptError`, `SettingsError`, `CredentialReadError`, `UnknownProviderError`
+  - **`connection.py`** → `ConnectionPoolError` (pool creation, pool exhaustion)
+  - **`lifecycle.py`** → `ConnectionPoolError` (warmup), `MigrationError` (migrations)
+  - **`repositories/*.py`** → `QueryError` (SQL failures)
+  - **`settings.py`** → `SettingsError` (missing/invalid env vars)
+  - Project-specific modules (e.g. `security/`) raise their own `DatabaseError` subclasses as defined in the project guide.
 
 ## 8. Contract Pattern
 
@@ -147,6 +146,8 @@ Abstract store interfaces in `contracts.py` define the public API for each data 
 
 ## 11. Security Rules
 
+The security/ sub-package is optional. Projects that do not store encrypted tokens or credential files at the database layer may omit it entirely along with its associated error subclasses. When present,
+the following rules apply:
 - Sensitive data (tokens, credentials) is encrypted at rest.
 - Encryption keys are loaded from env vars via `settings.py`.
 - Credential files are loaded from paths specified in env vars.
@@ -173,4 +174,4 @@ except Exception as exc:
 
 This file covers the general, transferable rules for the database persistence layer. For project-specific details — concrete rules, architectural decisions, and implementation details that apply these general principles to the current application — consult [`database_guide.md`](database_guide.md).
 
-The guide complements these rules but never contradicts them. In case of conflict, this `CLAUDE.md` has absolute precedence. Code in this layer must respect both levels: first these general rules, then the project-specific guide.
+The guide complements these rules but never contradicts them. In case of conflict, this `CLAUDE.md` has absolute precedence. Code in this layer must respect both levels: first these general rules, then the project-specific guide database_guide.md.

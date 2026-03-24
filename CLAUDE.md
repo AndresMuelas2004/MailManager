@@ -17,6 +17,7 @@ Layers with their own `CLAUDE.md`:
 - `backend/auth/`
 - `backend/database/`
 - `backend/core/`
+- `backend/Scripts/`
 - `backend/tests/unit/`
 - `backend/tests/integration/`
 - `backend/tests/e2e/`
@@ -31,15 +32,15 @@ Layers with their own `CLAUDE.md`:
 
 ### 1.3 Excluded Directories
 
-- `backend/Scripts/` — personal developer scripts (manual tests, one-off utilities). Claude must **not** read, edit, or reference files in this directory unless the user explicitly requests it. These scripts are unrelated to the application's business logic.
+- `backend/Scripts/` — personal developer scripts (manual tests, one-off utilities). Claude must **not** read, edit, or reference files in this directory unless the user explicitly requests it. These scripts are unrelated to the application's business logic, is only to try manual executions.
 
 ### 1.4 Backend Layers and Relationships
 
 ```
-API (routers → services)
-  → Auth       (identity verification, session management)
-  → Database   (persistence)
-  → Core       (domain logic, provider clients)
+→ API (routers → services → rest of the layers)
+→ Auth       (identity verification, session management)
+→ Database   (persistence)
+→ Core       (domain logic, provider clients)
 ```
 
 Communication rules:
@@ -47,7 +48,6 @@ Communication rules:
 - Only **Services** (inside API) talk to Auth, Database, and Core.
 - Auth, Database, and Core are **independent** — none imports from another.
 - No lower layer imports from API.
-- Database does not communicate with Core.
 
 Each layer defines its own error hierarchy. Services translate lower-layer errors into API-layer errors. For specifics, consult the layer's `CLAUDE.md` (auto-loaded when reading files in that directory).
 
@@ -67,6 +67,15 @@ The layer `CLAUDE.md` references its guide. This root `CLAUDE.md` lists the laye
 - Code language: English everywhere — identifiers, comments, docstrings, and all `.md` documentation files tracked by git.
 - Comments only where they clarify non-obvious logic; avoid noise or redundancy.
 
+### 1.7 Immutable Files
+
+  All layer-level `CLAUDE.md` files (listed in § 1.1) are protected by a pre-edit
+  hook that prevents any modification. Claude must never propose direct edits to
+  these files. Instead, describe the suggested change — what, where, and why — so
+  the developer can apply it manually.
+
+  Project-specific changes always go in the corresponding `*_guide.md` file, which
+  is not protected.
 ---
 
 ## Section 2: Project-Specific (maintained by Claude)
@@ -130,6 +139,7 @@ Stack: React + Vite + TypeScript + Tailwind. Structure:
 - **New email provider**: follow the Core layer's `*_guide.md` (referenced from `backend/core/CLAUDE.md`).
 - **New identity provider**: follow the Auth layer's `*_guide.md` (referenced from `backend/auth/CLAUDE.md`).
 - **New API endpoint**: follow the API layer's `*_guide.md` (referenced from `backend/api/CLAUDE.md`).
+Adding a new email provider or identity provider impacts multiple layers (Core, Database, API, Auth, Tests). Before starting, review the Extension / Checklist section in each affected layer's `*_guide.md` to understand the full scope of changes required.
 
 ### 2.8 Document Maintenance
 
@@ -137,4 +147,5 @@ Update this section when: architecture layers change, new providers are introduc
 
 ### 2.9 Provider-First Rule
 
-For any operation that modifies email state both at the provider and in our database, always call the provider API first. Only update the DB for messages where the provider call succeeded. Never persist a state change locally if the provider rejected or failed the operation. This ensures our DB always reflects the real state of the user's mailbox at the provider.
+For any operation that modifies email state both at the provider and in our database, always call the provider API first. Only update the DB for messages where the provider call succeeded. Never persist a state change locally if the provider rejected or failed the operation. This ensures our DB always reflects the real state of the user's mailbox at the provider. 
+**Current exceptions:** The delete-email endpoint skips the real provider call for Gmail because the required `mail.google.com` scope is difficult to obtain. Deletion is performed only in the local database. This exception may be removed once the scope is available.

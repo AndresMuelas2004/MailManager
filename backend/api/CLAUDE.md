@@ -7,6 +7,7 @@ This is the `CLAUDE.md` for the **HTTP API** layer. It serves as the general arc
 
 **Precedence.** In case of conflict between this file and a project-specific guide, these rules take precedence.
 **Immutable.** This file must never be edited. All project-specific changes go in the `*_guide.md` file referenced at the end of this document.
+
 ## 1. Package Structure
 
 The API layer is organized into four sub-packages:
@@ -19,17 +20,21 @@ api/
 ├── schemas/            # Pydantic request/response models
 └── services/           # Orchestration, validation, error mapping
 ```
+## 2. Framework
 
-## 2. Layer Boundaries
+  This layer is built on **FastAPI** (Python). All conventions — dependency injection
+  (`Depends`), lifespan management, CORS middleware, and exception handlers — described
+  in this document assume FastAPI as the underlying framework.
+## 3. Layer Boundaries
 
 - **Routers** — thin HTTP surface. Zero business logic. Each endpoint declares Pydantic schemas and contains a single service call.
-- **Services** — orchestration, validation, and error mapping. The only layer that raises `ApiError` subclasses. Services call into lower layers — never the reverse.
+- **Services** — orchestration, validation, and error mapping. The only layer that raises `ApiError` subclasses. Services call into lower layers — never the reverse, the only layer of the API that communicates with external layers such as the database, core, and auth is the services layer; furthermore, these layers are not aware of one another—they are always orchestrated by the services layer.
 - **Errors** — defines the `ApiError` hierarchy and the framework exception handlers that translate them to HTTP responses.
 - **Schemas** — Pydantic `BaseModel` subclasses defining the API contract.
 
 Hard rule: routers never contain business logic, services never expose HTTP details (except receiving `Response` for cookie management).
 
-## 3. Router Rules
+## 4. Router Rules
 
 Every router follows the same pattern:
 
@@ -38,15 +43,14 @@ Every router follows the same pattern:
 3. **No business logic.** No conditionals, no error handling, no data transformation.
 4. **Pydantic schemas** declare the request/response contract.
 
-## 4. Service Rules
+## 5. Service Rules
 
 - The **only layer** that raises `ApiError` subclasses.
 - **Ownership check** — for any action scoped to a resource, verify the authenticated user owns it before proceeding.
-- **Builder helpers** — build provider/manager objects exclusively via dedicated builder functions. Never instantiate provider clients directly.
 - **Database calls** — wrap all database calls in explicit `try`/`except` blocks using a translation helper that catches `DatabaseError` and unexpected exceptions, consistent with the pattern used for core and auth errors.
 - **Cookie management** — services that manage session cookies receive the framework `Response` object from the router. Cookie setting/clearing happens in the service layer, not in routers.
 
-## 5. Error Hierarchy
+## 6. Error Hierarchy
 
 All API errors derive from a single base class with a stable `code` string. A status map translates error types to HTTP status codes.
 
@@ -75,7 +79,7 @@ All error responses use a standard envelope:
 }
 ```
 
-## 6. Error Message Uniqueness
+## 7. Error Message Uniqueness
 
 Every `ApiError` raised directly in the service layer (i.e. not escalated from a lower layer, which already carries its own descriptive message) **must** have a `message` that:
 
@@ -83,9 +87,10 @@ Every `ApiError` raised directly in the service layer (i.e. not escalated from a
 2. **Is globally unique across all raise sites** — no two raise statements in the entire service layer may share the same message string. This guarantees that a single error message is sufficient to pinpoint exactly where the error originated.
 
 Bad: `raise ResourceNotFoundError("Not found")` — generic, duplicated across multiple sites.
+
 Good: `raise ResourceNotFoundError("Order not found while processing refund for the given transaction")` — specific to the operation and site.
 
-## 7. ApiError Subclass Granularity
+## 8. ApiError Subclass Granularity
 
 Every `ApiError` subclass must represent the **semantic meaning** of the error from the context where it is raised. Reading the error type alone should give a strong hint about what went wrong and in which area of the service layer.
 
@@ -96,7 +101,7 @@ Every `ApiError` subclass must represent the **semantic meaning** of the error f
 3. **Self-documenting names** — the class name should read as a short description of the failure domain (e.g. `ResourceOwnershipError`, `SessionExpiredError`, `DataSyncError`).
 4. **Register every new class** — add it to `_STATUS_MAP` with the appropriate HTTP status code and document it in the project-specific API guide.
 
-## 8. Error Handling — Capture Technique
+## 9. Error Handling — Capture Technique
 
 This is the central pattern for error handling in the service layer. Every `try` block in services follows the same ordered structure.
 
@@ -124,30 +129,14 @@ except Exception as exc:                    # 2. Unexpected error → log + gene
 
 Translation functions convert lower-layer errors to `ApiError` subclasses. Each uses an `isinstance`-based mapping list evaluated most specific first. The final entry is always `(LayerErrorBase, ApiError)` as a catch-all.
 
-### Database error pattern
-
-Database calls use the same explicit `try`/`except` pattern as core and auth:
-
-```python
-try:
-    record = store.get(resource_id)
-except DatabaseError as exc:
-    raise translate_database_error(exc) from exc
-except Exception as exc:
-    logger.warning("Unexpected <operation> error (%s): %s", type(exc).__name__, exc)
-    raise ApiError("Failed to <operation>.") from exc
-```
-
-`translate_database_error` maps `DatabaseError` subclasses to `ApiError` subclasses via the mapping. The `except Exception` fallback catches truly unexpected non-DB errors.
-
-## 9. Global Exception Handlers
+## 10. Global Exception Handlers
 
 Two framework exception handlers form the final safety net:
 
 1. **Typed handler** — catches any `ApiError`, looks up the HTTP status from `_STATUS_MAP` (default 500), and returns the error envelope.
 2. **Generic handler** — catches any `Exception` not already handled, logs the full traceback, and returns a generic 500 error envelope. This should never fire if all service functions follow the capture technique.
 
-## 10. Application Factory
+## 11. Application Factory
 
 The `create_app()` factory:
 
@@ -162,33 +151,34 @@ The `create_app()` factory:
 - **Startup**: runs optional auto-migrations, then warms the connection pool.
 - **Shutdown**: closes the connection pool.
 
-## 11. Schema Rules
+## 12. Schema Rules
 
 - All schemas are Pydantic `BaseModel` subclasses.
 - Request schemas define validation constraints (min length, allowed values, etc.).
 - Response schemas define the API contract for clients.
 - Error schemas define the standard error envelope.
 
-## 12. Router Helper Rules
+## 13. Router Helper Rules
 
 - Shared `Depends` callables live in a dedicated helper module.
 - The session/auth dependency validates the session and returns the authenticated identity.
 - All protected routes use the auth dependency.
 - Override the auth dependency in integration tests to return a fixed test identity.
 
-## 13. Adding a New Endpoint Checklist
+## 14. Adding a New Endpoint Checklist
 
 - [ ] **Schema** — add request/response models in the schemas package.
 - [ ] **Service** — add the service function. Follow service conventions: ownership check, database error wrapping, translation of layer errors, `except Exception` fallback.
 - [ ] **Router** — add the route. Single service call, auth dependency unless unauthenticated.
-- [ ] **Register** — include the router in the factory if it's a new router module.
+- [ ] **Register** — include the router in the factory (app.py) if it's a new router module.
 - [ ] **Error mapping** — if new `ApiError` subclasses are needed, add them and register their HTTP status.
-- [ ] **Unit tests** — test the service function in isolation.
-- [ ] **Integration tests** — test the endpoint via the framework test client.
+- [ ] **Unit tests** — Add all the unit test that you consider to need, first read the CLAUDE.md inside the tests/unit directory
+- [ ] **Integration tests** — Add all the integration test that you consider to need, first read the CLAUDE.md inside the tests/integration directory
+- [ ] **E2E tests** — Add all the e2e test that you consider to need, first read the CLAUDE.md inside the tests/e2e directory
 - [ ] **Docs** — update the project-specific API guide if patterns change.
 
-## 14. Project-Specific Guide
+## 15. Project-Specific Guide
 
 This file covers the general, transferable rules for the HTTP API layer. For project-specific details — concrete rules, architectural decisions, and implementation details that apply these general principles to the current application — consult [`api_guide.md`](api_guide.md).
 
-The guide complements these rules but never contradicts them. In case of conflict, this `CLAUDE.md` has absolute precedence. Code in this layer must respect both levels: first these general rules, then the project-specific guide.
+The guide complements these rules but never contradicts them. In case of conflict, this `CLAUDE.md` has absolute precedence. Code in this layer must respect both levels: first these general rules, then the project-specific guide api_guide.md.
