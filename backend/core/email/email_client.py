@@ -47,6 +47,13 @@ class SyncResult:
     is_full_sync: bool = False
 
 
+@dataclass
+class SpamMoveResult:
+    """Result of a spam move/restore for a single message."""
+    old_id: str
+    new_id: str  # Same as old_id for Gmail; different for Outlook
+
+
 class EmailClient(ABC):
     """
     Abstract base class that defines the contract for any email provider
@@ -139,6 +146,14 @@ class EmailClient(ABC):
     @abstractmethod
     def update_read_status(self, message_ids: list[str], is_read: bool) -> list[str]:
         """Mark messages as read/unread at the provider. Returns IDs successfully updated."""
+
+    @abstractmethod
+    def move_to_spam(self, message_ids: list[str]) -> list[SpamMoveResult]:
+        """Move messages to spam at the provider. Returns results for successfully moved messages."""
+
+    @abstractmethod
+    def restore_from_spam(self, message_ids: list[str]) -> list[SpamMoveResult]:
+        """Restore messages from spam at the provider. Returns results for successfully restored messages."""
 
     @abstractmethod
     def get_account_label(self) -> str:

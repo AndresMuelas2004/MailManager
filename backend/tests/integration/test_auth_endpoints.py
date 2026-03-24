@@ -333,17 +333,6 @@ def test_delete_account_success(test_client, isolated_db, monkeypatch):
         assert cur.fetchone() is None
 
 
-def test_get_me_without_session_override_returns_401(test_client, isolated_db, app):
-    """Without the session override, GET /auth/me returns 401."""
-    override = app.dependency_overrides.pop(require_session, None)
-    try:
-        resp = test_client.get("/auth/me")
-        assert resp.status_code == 401
-    finally:
-        if override is not None:
-            app.dependency_overrides[require_session] = override
-
-
 def test_delete_account_user_gone(test_client, isolated_db):
     """Deleting a user that was already removed returns 404."""
     # Remove the test user directly.

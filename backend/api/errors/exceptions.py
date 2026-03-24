@@ -121,3 +121,11 @@ class MoveToTrashError(ApiError):
 
 class ReadStatusUpdateError(ApiError):
     code = "read_status_update_error"
+
+
+class SpamMoveError(ApiError):
+    code = "spam_move_error"
+
+
+class SpamRestoreError(ApiError):
+    code = "spam_restore_error"

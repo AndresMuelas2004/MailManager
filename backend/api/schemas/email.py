@@ -84,3 +84,30 @@ class ReadStatusResponse(BaseModel):
 
     updated_count: int
     accounts: list[AccountReadStatusDetail]
+
+
+class SpamItem(BaseModel):
+    """Single item in a spam move/restore request."""
+
+    account_id: str = Field(..., min_length=1)
+    provider_message_id: str = Field(..., min_length=1)
+
+
+class SpamRequest(BaseModel):
+    """Request to batch move/restore emails to/from spam."""
+
+    items: list[SpamItem] = Field(..., min_length=1)
+
+
+class AccountSpamDetail(BaseModel):
+    """Per-account result of a spam move/restore operation."""
+
+    account_id: str
+    moved: int
+
+
+class SpamResponse(BaseModel):
+    """Response for spam move/restore endpoints."""
+
+    moved_count: int
+    accounts: list[AccountSpamDetail]

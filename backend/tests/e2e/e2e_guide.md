@@ -74,7 +74,7 @@ No global "skip all after first failure". Each test checks its own prerequisites
 | 13 | `DELETE /mailboxes/{mid}` | requires `temp_mid` → produces `temp_mid_deleted` |
 | 14 | `GET /mailboxes/{mid}` → 404 | requires `temp_mid_deleted` |
 
-### Section 4: Provider operations — pre-existing accounts (tests 15–20)
+### Section 4: Provider operations — pre-existing accounts (tests 15–22)
 
 | Test | Endpoint | Dependencies |
 |---|---|---|
@@ -87,22 +87,33 @@ No global "skip all after first failure". Each test checks its own prerequisites
 | 21 | `PATCH .../emails/read-status` (gmail) | independent |
 | 22 | `PATCH .../emails/read-status` (outlook) | independent |
 
-### Section 5: Trash lifecycle — pre-existing accounts (tests 21–25)
+### Section 5: Spam operations — pre-existing accounts (tests 23–26)
 
 | Test | Endpoint | Dependencies |
 |---|---|---|
-| 21 | `POST .../emails/move-to-trash` (gmail + outlook) | requires `gmail_path1_done` AND `outlook_path1_done` → produces `move_to_trash_done` |
-| 22 | `POST .../emails/trash` (gmail, restore) | requires `move_to_trash_done` → produces `gmail_restore_done` |
-| 23 | `POST .../emails/trash` (gmail, delete) | requires `move_to_trash_done` → produces `gmail_delete_done` |
-| 24 | `POST .../emails/trash` (outlook, delete) | requires `move_to_trash_done` → produces `outlook_delete_done` |
-| 25 | `POST .../emails/trash` (outlook, restore) | requires `move_to_trash_done` → produces `outlook_restore_done` |
+| 23 | `POST .../emails/spam` (gmail) | independent (syncs first internally) → produces `gmail_spam_done` |
+| 24 | `POST .../emails/restore-from-spam` (gmail) | requires `gmail_spam_done` → produces `gmail_spam_restore_done` |
+| 25 | `POST .../emails/spam` (outlook) | independent (syncs first internally) → produces `outlook_spam_done` |
+| 26 | `POST .../emails/restore-from-spam` (outlook) | requires `outlook_spam_done` |
 
-### Section 6: Auth lifecycle — MUST BE LAST (tests 26–27)
+Each spam test syncs metadata first, picks 10 `ALL_MAIL` emails, moves them to spam, and verifies the DB `box` column changed. Restore tests reverse the operation on 10 `SPAM` emails. Tests skip if fewer than 10 qualifying emails exist.
+
+### Section 6: Trash lifecycle — pre-existing accounts (tests 27–31)
 
 | Test | Endpoint | Dependencies |
 |---|---|---|
-| 26 | `POST /auth/logout` | independent → produces `logged_out` |
-| 27 | `GET /auth/me` → 401 | requires `logged_out` |
+| 27 | `POST .../emails/move-to-trash` (gmail + outlook) | requires `gmail_path1_done` AND `outlook_path1_done` → produces `move_to_trash_done` |
+| 28 | `POST .../emails/trash` (gmail, restore) | requires `move_to_trash_done` → produces `gmail_trash_restore_done` |
+| 29 | `POST .../emails/trash` (gmail, delete) | requires `move_to_trash_done` → produces `gmail_delete_done` |
+| 30 | `POST .../emails/trash` (outlook, delete) | requires `move_to_trash_done` → produces `outlook_delete_done` |
+| 31 | `POST .../emails/trash` (outlook, restore) | requires `move_to_trash_done` → produces `outlook_restore_done` |
+
+### Section 7: Auth lifecycle — MUST BE LAST (tests 32–33)
+
+| Test | Endpoint | Dependencies |
+|---|---|---|
+| 32 | `POST /auth/logout` | independent → produces `logged_out` |
+| 33 | `GET /auth/me` → 401 | requires `logged_out` |
 
 ## Behavioral Contracts — Traps to Avoid
 
@@ -116,7 +127,7 @@ The pre-existing user, mailboxes, and accounts (defined in `e2e_config.py`) must
 
 ### Auth lifecycle tests must be last
 
-`POST /auth/logout` (test 26) invalidates the session cookie. Any test running after it will get 401. This is why Section 6 is the final section.
+`POST /auth/logout` (test 32) invalidates the session cookie. Any test running after it will get 401. This is why Section 7 is the final section.
 
 ### Section 7. Extension Checklist
 

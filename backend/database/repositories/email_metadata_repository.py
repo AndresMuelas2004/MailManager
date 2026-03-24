@@ -12,7 +12,7 @@ import psycopg2.extras
 from database import connection
 from database.contracts import EmailMetadataStore
 from database.queries import email_metadata as queries
-from database.errors.exceptions import DatabaseError, QueryError
+from database.errors import DatabaseError, QueryError
 
 
 class PgEmailMetadataStore(EmailMetadataStore):
@@ -234,6 +234,28 @@ class PgEmailMetadataStore(EmailMetadataStore):
         return self._execute_batch_values(
             queries.MOVE_TO_TRASH_BATCH, rows, "Failed to move emails to trash.",
         )
+
+    def update_spam_status_batch(self, account_id: str, rows: list[tuple]) -> int:
+        if not rows:
+            return 0
+        try:
+            with connection.get_connection() as conn:
+                with conn.cursor() as cur:
+                    psycopg2.extras.execute_values(
+                        cur,
+                        queries.UPDATE_SPAM_STATUS_BATCH,
+                        rows,
+                        page_size=500,
+                    )
+                    return cur.rowcount
+        except DatabaseError:
+            raise
+        except psycopg2.Error as exc:
+            raise QueryError("Failed to update email spam status batch.") from exc
+        except Exception as exc:
+            raise QueryError(
+                f"Unexpected email spam status update error ({type(exc).__name__}): {exc}"
+            ) from exc
 
 
 email_metadata_store = PgEmailMetadataStore()

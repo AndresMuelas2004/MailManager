@@ -40,6 +40,25 @@ The `finally` block is essential — without it, a test failure would leave the 
 
 Integration tests for database error translation (`test_api_layer_errors.py`) monkeypatch specific store methods (e.g. `mailbox_store.list_by_owner`, `account_store.upsert`) to raise `QueryError` or `ConnectionPoolError` after initial setup succeeds. This verifies the full path from store failure through `translate_database_error` to the HTTP response.
 
+### `configurable_test_client` fixture
+
+Returns a `(client, config)` tuple where `client` is a FastAPI `TestClient` and `config` is a mutable dict that controls `FakeEmailClient` behavior at runtime. Supported keys in `config`:
+
+- `metadata` — list of `EmailMetadata` objects the fake client returns from `fetch_email_metadata`.
+- `deletes` — list of `provider_message_id`s to include as deletes in the `SyncResult`.
+- `label_updates` — list of `LabelUpdate` objects for partial label changes.
+- `is_full_sync` — boolean controlling `SyncResult.is_full_sync`.
+- `existing_message_ids` — set of IDs returned by `verify_message_existence`.
+- `sync_cursor_return` — the cursor string returned by the fake.
+
+Tests mutate `config` between API calls to simulate different provider responses within a single test function. Because the `FakeEmailClient` reads from the same `config` dict reference, changes take effect immediately on the next API call.
+
+### Trap: new service module must be patched in `_apply_test_monkeypatches`
+
+`_apply_test_monkeypatches` patches `build_manager_for_accounts` in three modules: `services_helpers`, `accounts_service`, and `emails_service`. Each module imports this function at its own module level, so all three must be patched independently. If a new service module is added that also imports `build_manager_for_accounts`, it must be added to `_apply_test_monkeypatches` — otherwise, that module's tests will call the real builder and hit real provider APIs.
+
+### Missing claims tests for Google login
+
 `test_auth_endpoints.py` covers 27 tests across: Google login (happy path, missing claims, auth error types), session management (GET /auth/me, expired session, deleted user), logout (happy path, DB errors, no cookie), DELETE /auth/me (cascade delete, user gone), and ownership enforcement (foreign mailbox 403, NULL owner defense).
 
 ### Trash tests use manual DB UPDATE

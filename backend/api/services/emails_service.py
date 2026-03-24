@@ -17,17 +17,22 @@ from api.errors.exceptions import (
     EmailSendError,
     MoveToTrashError,
     ReadStatusUpdateError,
+    SpamMoveError,
+    SpamRestoreError,
     TrashOperationError,
 )
 from core.email import CoreError
 from api.schemas.email import (
     AccountReadStatusDetail,
+    AccountSpamDetail,
     AccountSyncDetail,
     EmailSendRequest,
     MoveToTrashRequest,
     MoveToTrashResult,
     ReadStatusRequest,
     ReadStatusResponse,
+    SpamRequest,
+    SpamResponse,
     SyncResultOut,
     TrashActionRequest,
     TrashActionResult,
@@ -54,6 +59,7 @@ from api.services.services_helpers import (
     unwrap_secret,
     update_email_metadata_labels_batch,
     update_email_read_status_batch,
+    update_email_spam_status_batch,
     update_sync_cursor,
 )
 from database import account_store, DatabaseError
@@ -69,8 +75,11 @@ def _reconcile_ghost_emails(
     Returns (deleted_count, ghost_ids). Skips on any error."""
     try:
         stored_ids = load_stored_message_ids(account_id)
-    except Exception:
-        logger.warning("Reconciliation skipped for %s: failed to load stored IDs.", account_id)
+    except Exception as exc:
+        logger.warning(
+            "Reconciliation skipped for %s: failed to load stored IDs (%s): %s",
+            account_id, type(exc).__name__, exc,
+        )
         return 0, []
 
     bootstrap_ids = {m.provider_message_id for m in sync_result.upserts}
@@ -93,8 +102,11 @@ def _reconcile_ghost_emails(
 
     try:
         deleted = delete_email_metadata_batch(account_id, ghost_ids)
-    except Exception:
-        logger.warning("Reconciliation skipped for %s: failed to delete ghosts.", account_id)
+    except Exception as exc:
+        logger.warning(
+            "Reconciliation skipped for %s: failed to delete ghosts (%s): %s",
+            account_id, type(exc).__name__, exc,
+        )
         return 0, []
     logger.info("Reconciliation for %s: %d suspect, %d ghosts deleted.", account_id, len(suspect_ids), deleted)
     return deleted, ghost_ids
@@ -270,6 +282,7 @@ def send_email(mailbox_id: str, payload: EmailSendRequest, user_id: str) -> dict
                 context={"account_id": payload.account_id, "account_label": account_label},
             ) from exc
 
+        # Best-effort: email already sent, don't fail the response on metadata persist failure
         try:
             persist_email_metadata_batch(payload.account_id, [sent_metadata])
         except Exception as exc:
@@ -522,3 +535,121 @@ def update_read_status(
         raise ReadStatusUpdateError(
             "Failed to update email read status."
         ) from exc
+
+
+def move_to_spam(
+    mailbox_id: str,
+    payload: SpamRequest,
+    user_id: str,
+) -> SpamResponse:
+    """Move emails to spam across accounts in a mailbox."""
+    return _execute_spam_operation(
+        mailbox_id, payload, user_id,
+        manager_method="move_to_spam",
+        target_box="SPAM",
+        fallback_error=SpamMoveError,
+        operation_label="spam move",
+    )
+
+
+def restore_from_spam(
+    mailbox_id: str,
+    payload: SpamRequest,
+    user_id: str,
+) -> SpamResponse:
+    """Restore emails from spam across accounts in a mailbox."""
+    return _execute_spam_operation(
+        mailbox_id, payload, user_id,
+        manager_method="restore_from_spam",
+        target_box="ALL_MAIL",
+        fallback_error=SpamRestoreError,
+        operation_label="spam restore",
+    )
+
+
+def _execute_spam_operation(
+    mailbox_id: str,
+    payload: SpamRequest,
+    user_id: str,
+    *,
+    manager_method: str,
+    target_box: str,
+    fallback_error: type[ApiError],
+    operation_label: str,
+) -> SpamResponse:
+    """Shared implementation for move-to-spam and restore-from-spam."""
+    ensure_mailbox_access(mailbox_id, user_id)
+
+    items_by_account: dict[str, list[str]] = {}
+    for item in payload.items:
+        items_by_account.setdefault(item.account_id, []).append(item.provider_message_id)
+
+    try:
+        accounts = account_store.list_by_mailbox(mailbox_id)
+    except DatabaseError as exc:
+        raise translate_database_error(exc) from exc
+    except Exception as exc:
+        logger.warning(
+            "Unexpected account listing error (%s): %s",
+            type(exc).__name__, exc,
+        )
+        raise ApiError(f"Failed to list accounts for {operation_label}.") from exc
+
+    account_map = {str(a["account_id"]): a for a in accounts}
+    for aid in items_by_account:
+        if aid not in account_map:
+            raise AccountNotFound(
+                f"Account '{aid}' not found in mailbox '{mailbox_id}' "
+                f"during {operation_label}."
+            )
+
+    referenced_accounts = [account_map[aid] for aid in items_by_account]
+
+    try:
+        auth_payloads, label_lookup = _build_auth_context(
+            referenced_accounts, mailbox_id,
+        )
+        manager = build_manager_for_accounts(referenced_accounts)
+
+        updated_tokens = manager.authenticate_all_silent(auth_payloads)
+        if updated_tokens:
+            _persist_refreshed_tokens(updated_tokens, label_lookup)
+        raise_on_silent_auth_errors(
+            manager.get_last_errors(), fallback=fallback_error,
+        )
+
+        account_details: list[AccountSpamDetail] = []
+        total_moved = 0
+
+        for aid, message_ids in items_by_account.items():
+            account_label = f"{mailbox_id}__{aid}"
+
+            try:
+                results = getattr(manager, manager_method)(account_label, message_ids)
+            except CoreError as exc:
+                raise translate_core_error(
+                    exc, fallback=fallback_error,
+                    context={"account_id": aid, "account_label": account_label},
+                ) from exc
+
+            if results:
+                update_email_spam_status_batch(aid, results, target_box)
+
+            account_details.append(AccountSpamDetail(
+                account_id=aid,
+                moved=len(results),
+            ))
+            total_moved += len(results)
+
+        return SpamResponse(
+            moved_count=total_moved,
+            accounts=account_details,
+        )
+    except ApiError:
+        raise
+    except Exception as exc:
+        logger.warning(
+            "Unexpected %s error (%s): %s",
+            operation_label, type(exc).__name__, exc,
+        )
+        raise fallback_error(f"Failed to execute {operation_label}.") from exc

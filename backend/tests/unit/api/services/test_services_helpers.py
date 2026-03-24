@@ -40,10 +40,13 @@ from api.services.services_helpers import (
     translate_connect_error,
     unwrap_secret,
     update_email_metadata_labels_batch,
+    update_email_read_status_batch,
+    update_email_spam_status_batch,
     update_sync_cursor,
 )
-from core.email import LabelUpdate
+from core.email import LabelUpdate, SpamMoveResult
 from core.email.errors import (
+    CoreError,
     EmailAuthError,
     EmailExternalAPIError,
     EmailMissingTokenError,
@@ -645,3 +648,151 @@ class TestUpdateSyncCursor:
             mock_store.update_sync_cursor.side_effect = RuntimeError("boom")
             with pytest.raises(ApiError, match="Failed to update sync cursor"):
                 update_sync_cursor("mb-1", "acc-1", "cursor-new")
+
+
+# ------------------------------------------------------------------
+# update_email_read_status_batch
+# ------------------------------------------------------------------
+
+class TestUpdateEmailReadStatusBatch:
+
+    def test_empty_returns_zero(self):
+        assert update_email_read_status_batch("acc-1", [], True) == 0
+
+    def test_happy_path_returns_updated_count(self):
+        with patch("api.services.services_helpers.email_metadata_store") as mock_store:
+            mock_store.update_read_status_batch.return_value = 3
+            result = update_email_read_status_batch("acc-1", ["m1", "m2", "m3"], True)
+        assert result == 3
+        call_args = mock_store.update_read_status_batch.call_args
+        assert call_args[0][0] == "acc-1"
+        rows = call_args[0][1]
+        assert len(rows) == 3
+        assert rows[0] == ("m1", "acc-1", True)
+
+    def test_database_error_translated(self):
+        with patch("api.services.services_helpers.email_metadata_store") as mock_store:
+            mock_store.update_read_status_batch.side_effect = QueryError("DB fail")
+            with pytest.raises(DatabaseQueryError):
+                update_email_read_status_batch("acc-1", ["m1"], False)
+
+    def test_generic_exception_raises_api_error(self):
+        with patch("api.services.services_helpers.email_metadata_store") as mock_store:
+            mock_store.update_read_status_batch.side_effect = RuntimeError("boom")
+            with pytest.raises(ApiError, match="Failed to update email read status"):
+                update_email_read_status_batch("acc-1", ["m1"], True)
+
+
+# ------------------------------------------------------------------
+# update_email_spam_status_batch
+# ------------------------------------------------------------------
+
+class TestUpdateEmailSpamStatusBatch:
+
+    def test_empty_returns_zero(self):
+        assert update_email_spam_status_batch("acc-1", [], "SPAM") == 0
+
+    def test_happy_path_returns_updated_count(self):
+        results = [
+            SpamMoveResult(old_id="old_m1", new_id="new_m1"),
+            SpamMoveResult(old_id="old_m2", new_id="new_m2"),
+        ]
+        with patch("api.services.services_helpers.email_metadata_store") as mock_store:
+            mock_store.update_spam_status_batch.return_value = 2
+            count = update_email_spam_status_batch("acc-1", results, "SPAM")
+        assert count == 2
+        call_args = mock_store.update_spam_status_batch.call_args
+        assert call_args[0][0] == "acc-1"
+        rows = call_args[0][1]
+        assert len(rows) == 2
+        assert rows[0] == ("old_m1", "acc-1", "new_m1", "SPAM")
+
+    def test_database_error_translated(self):
+        results = [SpamMoveResult(old_id="old_m1", new_id="new_m1")]
+        with patch("api.services.services_helpers.email_metadata_store") as mock_store:
+            mock_store.update_spam_status_batch.side_effect = QueryError("DB fail")
+            with pytest.raises(DatabaseQueryError):
+                update_email_spam_status_batch("acc-1", results, "SPAM")
+
+    def test_generic_exception_raises_api_error(self):
+        results = [SpamMoveResult(old_id="old_m1", new_id="new_m1")]
+        with patch("api.services.services_helpers.email_metadata_store") as mock_store:
+            mock_store.update_spam_status_batch.side_effect = RuntimeError("boom")
+            with pytest.raises(ApiError, match="Failed to update email spam status"):
+                update_email_spam_status_batch("acc-1", results, "SPAM")
+
+
+# ------------------------------------------------------------------
+# load_stored_message_ids
+# ------------------------------------------------------------------
+
+class TestLoadStoredMessageIds:
+
+    def test_happy_path_returns_ids(self):
+        with patch("api.services.services_helpers.email_metadata_store") as mock_store:
+            mock_store.list_provider_message_ids.return_value = ["m1", "m2"]
+            result = load_stored_message_ids("acc-1")
+        assert result == ["m1", "m2"]
+
+    def test_database_error_translated(self):
+        with patch("api.services.services_helpers.email_metadata_store") as mock_store:
+            mock_store.list_provider_message_ids.side_effect = QueryError("DB fail")
+            with pytest.raises(DatabaseQueryError):
+                load_stored_message_ids("acc-1")
+
+    def test_generic_exception_raises_api_error(self):
+        with patch("api.services.services_helpers.email_metadata_store") as mock_store:
+            mock_store.list_provider_message_ids.side_effect = RuntimeError("boom")
+            with pytest.raises(ApiError, match="Failed to load stored message IDs"):
+                load_stored_message_ids("acc-1")
+
+
+# ------------------------------------------------------------------
+# is_auth_error
+# ------------------------------------------------------------------
+
+class TestIsAuthError:
+
+    def test_true_for_email_auth_error(self):
+        exc = EmailAuthError("token expired")
+        assert is_auth_error(exc) is True
+
+    def test_false_for_other_core_error(self):
+        exc = EmailExternalAPIError("API fail")
+        assert is_auth_error(exc) is False
+
+    def test_false_for_non_core_error(self):
+        exc = RuntimeError("something")
+        assert is_auth_error(exc) is False
+
+
+# ------------------------------------------------------------------
+# unwrap_secret
+# ------------------------------------------------------------------
+
+class TestUnwrapSecret:
+
+    def test_none_returns_none(self):
+        assert unwrap_secret(None) is None
+
+    def test_secret_str_returns_unwrapped(self):
+        secret = SecretStr("my-secret")
+        assert unwrap_secret(secret) == "my-secret"
+
+    def test_plain_value_returns_plain(self):
+        assert unwrap_secret("plain-value") == "plain-value"
+
+
+# ------------------------------------------------------------------
+# _wrap_secret
+# ------------------------------------------------------------------
+
+class TestWrapSecret:
+
+    def test_none_returns_none(self):
+        assert _wrap_secret(None) is None
+
+    def test_value_returns_secret_str(self):
+        result = _wrap_secret("my-value")
+        assert isinstance(result, SecretStr)
+        assert result.get_secret_value() == "my-value"

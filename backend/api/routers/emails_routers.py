@@ -13,6 +13,8 @@ from api.schemas.email import (
     MoveToTrashResult,
     ReadStatusRequest,
     ReadStatusResponse,
+    SpamRequest,
+    SpamResponse,
     SyncResultOut,
     TrashActionRequest,
     TrashActionResult,
@@ -80,3 +82,27 @@ def update_read_status(
     Mark emails as read or unread across accounts in a mailbox.
     """
     return emails_service.update_read_status(mailbox_id, payload, user_id)
+
+
+@router.post("/spam", response_model=SpamResponse)
+def move_to_spam(
+    mailbox_id: str,
+    payload: SpamRequest,
+    user_id: str = Depends(require_session),
+) -> SpamResponse:
+    """
+    Move emails to spam across accounts in a mailbox.
+    """
+    return emails_service.move_to_spam(mailbox_id, payload, user_id)
+
+
+@router.post("/restore-from-spam", response_model=SpamResponse)
+def restore_from_spam(
+    mailbox_id: str,
+    payload: SpamRequest,
+    user_id: str = Depends(require_session),
+) -> SpamResponse:
+    """
+    Restore emails from spam across accounts in a mailbox.
+    """
+    return emails_service.restore_from_spam(mailbox_id, payload, user_id)

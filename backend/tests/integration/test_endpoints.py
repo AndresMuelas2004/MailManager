@@ -123,20 +123,21 @@ def test_connect_account(test_client, setup_mailbox_and_account):
 # Emails — sync-metadata
 # ------------------------------------------------------------------
 
-def test_sync_email_metadata(test_client, setup_mailbox_and_account):
+def test_sync_email_metadata(test_client, setup_mailbox_and_account, sample_metadata):
     mid, _ = setup_mailbox_and_account(test_client)
     resp = test_client.post(f"{_MAILBOX_URL}/{mid}/emails/sync-metadata")
     assert resp.status_code == 200
     data = resp.json()
+    expected_count = len(sample_metadata)
     assert isinstance(data["total_synced"], int)
-    assert data["total_synced"] == 3
+    assert data["total_synced"] == expected_count
     assert isinstance(data["accounts"], list)
     assert len(data["accounts"]) == 1
     detail = data["accounts"][0]
     assert "account_id" in detail
     assert "provider" in detail
     assert isinstance(detail["emails_synced"], int)
-    assert detail["emails_synced"] == 3
+    assert detail["emails_synced"] == expected_count
     assert data["total_synced"] == detail["emails_synced"]
 
 
@@ -1137,5 +1138,128 @@ def test_update_read_status_nonexistent_mailbox_404(test_client):
             "is_read": True,
             "items": [{"account_id": fake_account_id, "provider_message_id": "m1"}],
         },
+    )
+    assert resp.status_code == 404
+
+
+# ===== Emails -- spam =====
+
+
+def test_move_to_spam(test_client, setup_mailbox_and_account):
+    mid, aid = setup_mailbox_and_account(test_client)
+    test_client.post(f"{_MAILBOX_URL}/{mid}/emails/sync-metadata")
+
+    resp = test_client.post(
+        f"{_MAILBOX_URL}/{mid}/emails/spam",
+        json={"items": [{"account_id": aid, "provider_message_id": "m1"}]},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["moved_count"] >= 1
+    assert len(data["accounts"]) == 1
+    assert data["accounts"][0]["account_id"] == aid
+
+
+def test_move_to_spam_persists_box_to_db(test_client, setup_mailbox_and_account, isolated_db):
+    mid, aid = setup_mailbox_and_account(test_client)
+    test_client.post(f"{_MAILBOX_URL}/{mid}/emails/sync-metadata")
+
+    test_client.post(
+        f"{_MAILBOX_URL}/{mid}/emails/spam",
+        json={"items": [{"account_id": aid, "provider_message_id": "m1"}]},
+    )
+
+    with isolated_db.cursor() as cur:
+        cur.execute(
+            "SELECT box FROM email_metadata "
+            "WHERE provider_message_id = 'm1' AND account_id = %s::uuid",
+            (aid,),
+        )
+        row = cur.fetchone()
+    assert row is not None
+    assert row[0] == "SPAM"
+
+
+def test_restore_from_spam(test_client, setup_mailbox_and_account):
+    mid, aid = setup_mailbox_and_account(test_client)
+    test_client.post(f"{_MAILBOX_URL}/{mid}/emails/sync-metadata")
+
+    # First move to spam
+    test_client.post(
+        f"{_MAILBOX_URL}/{mid}/emails/spam",
+        json={"items": [{"account_id": aid, "provider_message_id": "m1"}]},
+    )
+    # Then restore
+    resp = test_client.post(
+        f"{_MAILBOX_URL}/{mid}/emails/restore-from-spam",
+        json={"items": [{"account_id": aid, "provider_message_id": "m1"}]},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["moved_count"] >= 1
+
+
+def test_restore_from_spam_persists_box_to_db(test_client, setup_mailbox_and_account, isolated_db):
+    mid, aid = setup_mailbox_and_account(test_client)
+    test_client.post(f"{_MAILBOX_URL}/{mid}/emails/sync-metadata")
+
+    # Move to spam first
+    test_client.post(
+        f"{_MAILBOX_URL}/{mid}/emails/spam",
+        json={"items": [{"account_id": aid, "provider_message_id": "m1"}]},
+    )
+    # Restore
+    test_client.post(
+        f"{_MAILBOX_URL}/{mid}/emails/restore-from-spam",
+        json={"items": [{"account_id": aid, "provider_message_id": "m1"}]},
+    )
+
+    with isolated_db.cursor() as cur:
+        cur.execute(
+            "SELECT box FROM email_metadata "
+            "WHERE provider_message_id = 'm1' AND account_id = %s::uuid",
+            (aid,),
+        )
+        row = cur.fetchone()
+    assert row is not None
+    assert row[0] == "ALL_MAIL"
+
+
+def test_spam_nonexistent_account_404(test_client, setup_mailbox_and_account):
+    mid, _ = setup_mailbox_and_account(test_client)
+    fake_account_id = "00000000-0000-4000-a000-000000000099"
+    resp = test_client.post(
+        f"{_MAILBOX_URL}/{mid}/emails/spam",
+        json={"items": [{"account_id": fake_account_id, "provider_message_id": "m1"}]},
+    )
+    assert resp.status_code == 404
+
+
+def test_spam_nonexistent_mailbox_404(test_client):
+    fake_mailbox_id = "00000000-0000-4000-a000-000000000099"
+    fake_account_id = "00000000-0000-4000-a000-000000000098"
+    resp = test_client.post(
+        f"{_MAILBOX_URL}/{fake_mailbox_id}/emails/spam",
+        json={"items": [{"account_id": fake_account_id, "provider_message_id": "m1"}]},
+    )
+    assert resp.status_code == 404
+
+
+def test_restore_from_spam_nonexistent_account_404(test_client, setup_mailbox_and_account):
+    mid, _ = setup_mailbox_and_account(test_client)
+    fake_account_id = "00000000-0000-4000-a000-000000000099"
+    resp = test_client.post(
+        f"{_MAILBOX_URL}/{mid}/emails/restore-from-spam",
+        json={"items": [{"account_id": fake_account_id, "provider_message_id": "m1"}]},
+    )
+    assert resp.status_code == 404
+
+
+def test_restore_from_spam_nonexistent_mailbox_404(test_client):
+    fake_mailbox_id = "00000000-0000-4000-a000-000000000099"
+    fake_account_id = "00000000-0000-4000-a000-000000000098"
+    resp = test_client.post(
+        f"{_MAILBOX_URL}/{fake_mailbox_id}/emails/restore-from-spam",
+        json={"items": [{"account_id": fake_account_id, "provider_message_id": "m1"}]},
     )
     assert resp.status_code == 404

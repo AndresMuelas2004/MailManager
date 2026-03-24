@@ -73,7 +73,7 @@ _DDL_STATEMENTS = [
         version_num VARCHAR(64) PRIMARY KEY
     );
     """,
-    # Migration 0006: sync_cursor + email_metadata
+    # Migrations 0006–0007: sync_cursor + email_metadata + SENT box value
     "ALTER TABLE accounts ADD COLUMN IF NOT EXISTS sync_cursor TEXT;",
     """
     CREATE TABLE IF NOT EXISTS email_metadata (

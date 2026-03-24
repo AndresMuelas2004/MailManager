@@ -9,7 +9,7 @@ import urllib.request
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from .email_client import EmailClient, EmailMetadata, LabelUpdate, SyncResult
+from .email_client import EmailClient, EmailMetadata, LabelUpdate, SpamMoveResult, SyncResult
 from .errors import (
     CoreError,
     EmailExternalAPIError,
@@ -744,6 +744,43 @@ class OutlookClient(EmailClient):
             except EmailExternalAPIError:
                 pass  # 404 or other → skip silently (message may not exist)
         return updated
+
+    # ------------------------------------------------------------------
+    # Spam operations
+    # ------------------------------------------------------------------
+
+    def move_to_spam(self, message_ids: list[str]) -> list[SpamMoveResult]:
+        """Move messages to spam via Microsoft Graph API. Returns results for successfully moved messages."""
+        return self._move_messages(message_ids, "junkemail", "move_to_spam")
+
+    def restore_from_spam(self, message_ids: list[str]) -> list[SpamMoveResult]:
+        """Restore messages from spam via Microsoft Graph API. Returns results for successfully restored messages."""
+        return self._move_messages(message_ids, "inbox", "restore_from_spam")
+
+    def _move_messages(
+        self,
+        message_ids: list[str],
+        destination_id: str,
+        operation: str,
+    ) -> list[SpamMoveResult]:
+        """Move messages to a folder via the Graph /move endpoint. Returns results for successfully moved messages."""
+        if self._access_token is None:
+            raise EmailNotAuthenticatedError(f"Outlook {operation} requires authentication.")
+        if not message_ids:
+            return []
+        results: list[SpamMoveResult] = []
+        for msg_id in message_ids:
+            try:
+                response = self._graph_request(
+                    "POST",
+                    f"{GRAPH_BASE_URL}/me/messages/{msg_id}/move",
+                    body={"destinationId": destination_id},
+                )
+                new_id = response.get("id", msg_id)
+                results.append(SpamMoveResult(old_id=msg_id, new_id=new_id))
+            except EmailExternalAPIError:
+                pass  # 404 or other → skip silently
+        return results
 
     def verify_message_existence(self, message_ids: list[str]) -> list[str]:
         if self._access_token is None:

@@ -20,7 +20,7 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
-from .email_client import EmailClient, EmailMetadata, LabelUpdate, SyncResult
+from .email_client import EmailClient, EmailMetadata, LabelUpdate, SpamMoveResult, SyncResult
 from .errors import (
     EmailExternalAPIError,
     EmailMissingAppCredentialsError,
@@ -979,6 +979,34 @@ class GmailClient(EmailClient):
             return self._batch_modify_labels(message_ids, remove_labels=["UNREAD"])
         else:
             return self._batch_modify_labels(message_ids, add_labels=["UNREAD"])
+
+    # ------------------------------------------------------------------
+    # Spam operations
+    # ------------------------------------------------------------------
+
+    def move_to_spam(self, message_ids: list[str]) -> list[SpamMoveResult]:
+        """Move messages to spam via Gmail label modification. Returns results for successfully moved messages."""
+        if self.service is None:
+            raise EmailNotAuthenticatedError("Gmail move_to_spam requires authentication.")
+        if not message_ids:
+            return []
+        updated_ids = self._batch_modify_labels(message_ids, add_labels=["SPAM"])
+        return [SpamMoveResult(old_id=mid, new_id=mid) for mid in updated_ids]
+
+    def restore_from_spam(self, message_ids: list[str]) -> list[SpamMoveResult]:
+        """Restore messages from spam via Gmail label modification. Returns results for successfully restored messages."""
+        if self.service is None:
+            raise EmailNotAuthenticatedError("Gmail restore_from_spam requires authentication.")
+        if not message_ids:
+            return []
+        updated_ids = self._batch_modify_labels(
+            message_ids, remove_labels=["SPAM"], add_labels=["INBOX"],
+        )
+        return [SpamMoveResult(old_id=mid, new_id=mid) for mid in updated_ids]
+
+    # ------------------------------------------------------------------
+    # Label batch helper
+    # ------------------------------------------------------------------
 
     def _batch_modify_labels(
         self,

@@ -121,6 +121,10 @@ class EmailMetadataStore(ABC):
     def move_to_trash_batch(self, account_id: str, rows: list[tuple]) -> int:
         raise NotImplementedError
 
+    @abstractmethod
+    def update_spam_status_batch(self, account_id: str, rows: list[tuple]) -> int:
+        raise NotImplementedError
+
 
 class UserStore(ABC):
     """

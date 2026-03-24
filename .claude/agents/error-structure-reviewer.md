@@ -20,9 +20,13 @@ Use `Glob` to find `*.md` files in the **top level** of the provided directory (
 - If **no `.md` files** are found, output: "No documentation found in the top level of `<directory>`. Cannot perform error handling review without a reference document." — then stop.
 - If multiple `.md` files are found, read all of them and identify which sections describe error handling, error hierarchies, exception classes, or error mapping.
 
+**Priority rule — `CLAUDE.md` is the supreme authority.** The `CLAUDE.md` file in the provided directory contains the definitive error handling rules for that layer. Every rule it states about error handling — hierarchy, allowed exceptions, mapping, constraints — **must be followed absolutely and without exception**. If any other `.md` file in the same directory contradicts the `CLAUDE.md`, the `CLAUDE.md` wins. All compliance checks in later steps must be measured against the `CLAUDE.md` rules first and foremost.
+
 ### Step 2 — Read and Understand
 
-Read every `.md` file found in Step 1. Extract and internalize:
+Start by reading the `CLAUDE.md` file found in Step 1. This is the primary source of truth. Then read any additional `.md` files to gather supplementary context, but never let them override anything stated in `CLAUDE.md`.
+
+Extract and internalize:
 - The error class hierarchy (base classes, subclasses, inheritance tree).
 - Rules about which layers/modules may raise which errors.
 - Error mapping rules (e.g. core errors mapped to API errors, exceptions mapped to HTTP status codes).
