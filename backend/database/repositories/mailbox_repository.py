@@ -12,7 +12,7 @@ import psycopg2.extras
 from database import connection
 from database.contracts import MailboxStore
 from database.queries import mailboxes
-from database.errors.exceptions import DatabaseError, QueryError
+from database.errors import DatabaseError, QueryError
 
 
 def _row_to_dict(row: dict[str, Any]) -> dict[str, Any]:
@@ -55,6 +55,8 @@ class PgMailboxStore(MailboxStore):
                         {"owner_user_id": owner_user_id},
                     )
                     rows = cur.fetchall()
+        except psycopg2.errors.InvalidTextRepresentation:
+            return []
         except DatabaseError:
             raise
         except psycopg2.Error as exc:

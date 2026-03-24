@@ -7,11 +7,11 @@ This is the `CLAUDE.md` for the **end-to-end test** layer. It serves as the gene
 **Reusable.** Copy this file into a new project to establish the E2E test layer architecture from day one. The project-specific guide extends these rules with domain details but must never contradict them.
 
 **Precedence.** In case of conflict between this file and a project-specific guide, these rules take precedence.
-
+**Immutable.** This file must never be edited. All project-specific changes go in the `*_guide.md` file referenced at the end of this document.
 ## 1. Scope
 
 E2E tests validate the full backend flow against real external APIs and real authentication. **Nothing is mocked or faked** — every component runs exactly as it would in production.
-Interactive endpoints (OAuth login, provider connect) are excluded from the automated suite. In E2E must not be tests that needs interactive flows for the user like choosing and email or something similar.
+Interactive endpoints (OAuth login, provider connect) are excluded from the automated suite. In E2E there must not be tests that need interactive flows for the user like choosing an email or something similar.
 
 ## 2. Test Boundary Model
 
@@ -20,9 +20,8 @@ Interactive endpoints (OAuth login, provider connect) are excluded from the auto
 | Framework app | Real app created via application factory |
 | Authentication | Session injected via direct DB insert (no interactive login) |
 | Session validation | Real dependency — cookie verified against DB |
-| External providers | Real API calls |
+| External APIs | Real API calls |
 | Database | Real persistence |
-| DB cleanup | Module/session transaction rollback at teardown |
 
 ## 3. Prerequisites
 
@@ -45,4 +44,4 @@ Required:
 
 This file covers the general, transferable rules for the end-to-end test layer. For project-specific details — concrete rules, architectural decisions, and implementation details that apply these general principles to the current application — consult [`e2e_guide.md`](e2e_guide.md).
 
-The guide complements these rules but never contradicts them. In case of conflict, this `CLAUDE.md` has absolute precedence. Code in this layer must respect both levels: first these general rules, then the project-specific guide.
+The guide complements these rules but never contradicts them. In case of conflict, this `CLAUDE.md` has absolute precedence. Code in this layer must respect both levels: first these general rules, then the project-specific guide e2e_guide.md.

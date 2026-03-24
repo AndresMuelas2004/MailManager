@@ -11,7 +11,7 @@ from database.errors.exceptions import (
     MigrationError,
     QueryError,
     SettingsError,
-    TokenDecryptError,
+    TokenCryptoError,
     TokenValidationError,
     UnknownProviderError,
 )
@@ -23,7 +23,7 @@ __all__ = [
     "MigrationError",
     "QueryError",
     "SettingsError",
-    "TokenDecryptError",
+    "TokenCryptoError",
     "TokenValidationError",
     "UnknownProviderError",
 ]

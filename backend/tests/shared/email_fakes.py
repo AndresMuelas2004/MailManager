@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from core.email import EmailClient, EmailMetadata, LabelUpdate, SyncResult
+from core.email import EmailClient, EmailMetadata, LabelUpdate, SpamMoveResult, SyncResult
 
 
 DEFAULT_RECEIVED_AT = datetime(2024, 1, 1, 12, 0, 0)
@@ -51,6 +51,8 @@ class FakeEmailClient(EmailClient):
         send_exc: Exception | None = None,
         verify_exc: Exception | None = None,
         update_read_status_exc: Exception | None = None,
+        move_to_spam_exc: Exception | None = None,
+        restore_from_spam_exc: Exception | None = None,
         metadata: list[EmailMetadata] | None = None,
         sync_cursor_return: str = DEFAULT_SYNC_CURSOR,
         auth_return: dict | None = None,
@@ -67,6 +69,8 @@ class FakeEmailClient(EmailClient):
         self._send_exc = send_exc
         self._verify_exc = verify_exc
         self._update_read_status_exc = update_read_status_exc
+        self._move_to_spam_exc = move_to_spam_exc
+        self._restore_from_spam_exc = restore_from_spam_exc
         self._metadata = list(metadata or [])
         self._sync_cursor_return = sync_cursor_return
         self._auth_return = auth_return
@@ -80,6 +84,8 @@ class FakeEmailClient(EmailClient):
         self.fetch_calls = 0
         self.verify_calls = 0
         self.update_read_status_calls: list[tuple[list[str], bool]] = []
+        self.move_to_spam_calls: list[list[str]] = []
+        self.restore_from_spam_calls: list[list[str]] = []
         self.sent_emails: list[tuple[str, str, list[str]]] = []
         self.last_app_credentials = None
         self.last_user_tokens = None
@@ -128,6 +134,18 @@ class FakeEmailClient(EmailClient):
         if self._update_read_status_exc:
             raise self._update_read_status_exc
         return list(message_ids)
+
+    def move_to_spam(self, message_ids: list[str]) -> list[SpamMoveResult]:
+        self.move_to_spam_calls.append(list(message_ids))
+        if self._move_to_spam_exc:
+            raise self._move_to_spam_exc
+        return [SpamMoveResult(old_id=mid, new_id=mid) for mid in message_ids]
+
+    def restore_from_spam(self, message_ids: list[str]) -> list[SpamMoveResult]:
+        self.restore_from_spam_calls.append(list(message_ids))
+        if self._restore_from_spam_exc:
+            raise self._restore_from_spam_exc
+        return [SpamMoveResult(old_id=mid, new_id=mid) for mid in message_ids]
 
     def send_email(self, subject: str, body: str, recipients: list[str]) -> EmailMetadata:
         if self._send_exc:

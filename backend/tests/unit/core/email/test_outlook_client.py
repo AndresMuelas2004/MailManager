@@ -13,7 +13,7 @@ from unittest.mock import MagicMock, call, patch
 import pytest
 from pydantic import SecretStr
 
-from core.email.email_client import EmailMetadata, LabelUpdate, SyncResult
+from core.email.email_client import EmailMetadata, LabelUpdate, SpamMoveResult, SyncResult
 from core.email.errors import (
     EmailExternalAPIError,
     EmailMissingAppCredentialsError,
@@ -866,48 +866,6 @@ class TestIncrementalEmailMetadata:
         assert result.label_updates[0].is_read is False
 
 
-# ── _graph_raw_request ──────────────────────────────────────────────
-
-
-class TestGraphRawRequest:
-    def test_returns_raw_bytes(self):
-        client = _make_authenticated_client()
-        mock_response = MagicMock()
-        mock_response.read.return_value = b"raw-data"
-        mock_response.__enter__ = MagicMock(return_value=mock_response)
-        mock_response.__exit__ = MagicMock(return_value=False)
-
-        with patch("urllib.request.urlopen", return_value=mock_response):
-            result = client._graph_raw_request("https://example.com/resource")
-        assert result == b"raw-data"
-
-    def test_http_error_raises_external_api_error(self):
-        client = _make_authenticated_client()
-        exc = urllib.error.HTTPError(
-            url="https://example.com", code=403, msg="Forbidden",
-            hdrs=None, fp=MagicMock(read=MagicMock(return_value=b"forbidden")),
-        )
-
-        with patch("urllib.request.urlopen", side_effect=exc):
-            with pytest.raises(EmailExternalAPIError, match="Outlook failed Graph API call"):
-                client._graph_raw_request("https://example.com/resource")
-
-    def test_url_error_raises_external_api_error(self):
-        client = _make_authenticated_client()
-        exc = urllib.error.URLError("DNS resolution failed")
-
-        with patch("urllib.request.urlopen", side_effect=exc):
-            with pytest.raises(EmailExternalAPIError, match="Outlook failed to reach Graph API"):
-                client._graph_raw_request("https://example.com/resource")
-
-    def test_generic_exception_raises_external_api_error(self):
-        client = _make_authenticated_client()
-
-        with patch("urllib.request.urlopen", side_effect=OSError("connection reset")):
-            with pytest.raises(EmailExternalAPIError, match="Outlook failed Graph API request"):
-                client._graph_raw_request("https://example.com/resource")
-
-
 # ── send_email ───────────────────────────────────────────────────
 
 
@@ -1617,3 +1575,67 @@ class TestUpdateReadStatus:
             result = client.update_read_status(["m1", "m2", "m3"], True)
 
         assert result == ["m1", "m3"]
+
+
+# ── move_to_spam ─────────────────────────────────────────────────
+
+
+class TestMoveToSpam:
+    def test_not_authenticated_raises(self):
+        client = OutlookClient(account_label="mb__outlook")
+        with pytest.raises(EmailNotAuthenticatedError):
+            client.move_to_spam(["m1"])
+
+    def test_empty_returns_empty(self):
+        client = _make_authenticated_client()
+        assert client.move_to_spam([]) == []
+
+    def test_happy_path_posts_move_to_junkemail(self):
+        client = _make_authenticated_client()
+        graph_calls: list[tuple[str, str, dict | None]] = []
+
+        def mock_graph(method, url, body=None):
+            graph_calls.append((method, url, body))
+            return {"id": "new_m1"}
+
+        with patch.object(client, "_graph_request", side_effect=mock_graph):
+            result = client.move_to_spam(["m1"])
+
+        assert len(graph_calls) == 1
+        method, url, body = graph_calls[0]
+        assert method == "POST"
+        assert f"{GRAPH_BASE_URL}/me/messages/m1/move" == url
+        assert body == {"destinationId": "junkemail"}
+        assert result == [SpamMoveResult(old_id="m1", new_id="new_m1")]
+
+
+# ── restore_from_spam ────────────────────────────────────────────
+
+
+class TestRestoreFromSpam:
+    def test_not_authenticated_raises(self):
+        client = OutlookClient(account_label="mb__outlook")
+        with pytest.raises(EmailNotAuthenticatedError):
+            client.restore_from_spam(["m1"])
+
+    def test_empty_returns_empty(self):
+        client = _make_authenticated_client()
+        assert client.restore_from_spam([]) == []
+
+    def test_happy_path_posts_move_to_inbox(self):
+        client = _make_authenticated_client()
+        graph_calls: list[tuple[str, str, dict | None]] = []
+
+        def mock_graph(method, url, body=None):
+            graph_calls.append((method, url, body))
+            return {"id": "new_m1"}
+
+        with patch.object(client, "_graph_request", side_effect=mock_graph):
+            result = client.restore_from_spam(["m1"])
+
+        assert len(graph_calls) == 1
+        method, url, body = graph_calls[0]
+        assert method == "POST"
+        assert f"{GRAPH_BASE_URL}/me/messages/m1/move" == url
+        assert body == {"destinationId": "inbox"}
+        assert result == [SpamMoveResult(old_id="m1", new_id="new_m1")]

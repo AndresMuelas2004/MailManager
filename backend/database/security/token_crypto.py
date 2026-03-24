@@ -17,7 +17,7 @@ from database.settings import (
     get_token_encryption_key_id,
     is_token_plaintext_fallback_enabled as _is_plaintext_fallback,
 )
-from database.errors.exceptions import SettingsError, TokenDecryptError
+from database.errors.exceptions import SettingsError, TokenCryptoError
 
 
 def _build_fernet(key: str) -> Fernet:
@@ -63,7 +63,7 @@ def encrypt_token(value: str | None) -> str | None:
     try:
         encrypted = fernet.encrypt(value.encode("utf-8"))
     except Exception as exc:
-        raise TokenDecryptError(
+        raise TokenCryptoError(
             f"Failed to encrypt account token ({type(exc).__name__}): {exc}"
         ) from exc
     return encrypted.decode("utf-8")
@@ -79,5 +79,9 @@ def decrypt_token(value: str | None) -> str | None:
     try:
         decrypted = fernet.decrypt(value.encode("utf-8"))
     except InvalidToken as exc:
-        raise TokenDecryptError("Failed to decrypt account token.") from exc
+        raise TokenCryptoError("Failed to decrypt account token.") from exc
+    except Exception as exc:
+        raise TokenCryptoError(
+            f"Unexpected token decryption error ({type(exc).__name__}): {exc}"
+        ) from exc
     return decrypted.decode("utf-8")

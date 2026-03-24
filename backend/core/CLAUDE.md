@@ -7,7 +7,7 @@ This is the `CLAUDE.md` for the **core business logic** layer. It serves as the 
 **Reusable.** Copy this file into a new project to establish the core layer architecture from day one. The project-specific guide extends these rules with domain details but must never contradict them.
 
 **Precedence.** In case of conflict between this file and a project-specific guide, these rules take precedence.
-
+**Immutable.** This file must never be edited. All project-specific changes go in the `*_guide.md` file referenced at the end of this document.
 ## 1. Layer Isolation
 
 The `core/` package is a framework-agnostic layer — it has **no imports from `api/`**, `database/`, or `auth/`. Services in the API layer translate `CoreError` subclasses into `ApiError` subclasses via a translation function.
@@ -62,7 +62,7 @@ Every core module follows these rules when catching exceptions.
 
 ## 5. Design Principles
 
-- Keep external-integration behavior encapsulated inside dedicated modules (e.g. provider clients, adapters).
+- Keep external-integration behavior encapsulated inside dedicated modules.
 - Keep API-layer concerns out of core code — no imports from `api/`.
 - Keep secrets wrapped at boundaries and unwrapped only when required.
 - Keep error messages explicit and operation-specific.
@@ -72,4 +72,4 @@ Every core module follows these rules when catching exceptions.
 
 This file covers the general, transferable rules for the core business logic layer. For project-specific details — concrete rules, architectural decisions, and implementation details that apply these general principles to the current application — consult [`core_guide.md`](core_guide.md).
 
-The guide complements these rules but never contradicts them. In case of conflict, this `CLAUDE.md` has absolute precedence. Code in this layer must respect both levels: first these general rules, then the project-specific guide.
+The guide complements these rules but never contradicts them. In case of conflict, this `CLAUDE.md` has absolute precedence. Code in this layer must respect both levels: first these general rules, then the project-specific guide core_guide.md

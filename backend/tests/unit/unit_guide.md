@@ -19,11 +19,21 @@ Unit tests cover: `core/email` (clients, manager, helpers, errors), `database` (
 
 ### Service test pattern: Fake stores with monkeypatch
 
-Tests for service modules (`test_accounts_service.py`, `test_mailboxes_service.py`, `test_auth_service.py`) use inline Fake store classes (e.g. `FakeAccountStore`, `FakeMailboxStore`) combined with `monkeypatch.setattr` to replace the real store module attributes. This avoids database access entirely and allows precise control over success/failure paths. The pattern:
+Tests for service modules (`test_accounts_service.py`, `test_mailboxes_service.py`) use inline Fake store classes (e.g. `FakeAccountStore`, `FakeMailboxStore`) combined with `monkeypatch.setattr` to replace the real store module attributes. This avoids database access entirely and allows precise control over success/failure paths. The pattern:
 
 1. Define a `FakeStore` class with the same method signatures as the real store.
 2. Define a `FakeStoreRaising` variant that raises a configurable exception on every method (optionally allowing some methods to succeed).
 3. Use `monkeypatch.setattr(service_module, "store_name", FakeStore(...))` in each test.
+
+### `test_emails_service.py` mocking pattern
+
+This file uses a different approach from the Fake store pattern above. Instead of inline Fake stores, it relies on helper functions that monkeypatch module-level functions and build an `EmailManager` with `FakeEmailClient` instances from `tests/shared/email_fakes.py`:
+
+- `_patch_common()` — patches the shared dependencies needed by all email service tests (e.g. `ensure_mailbox_access`, `build_manager_for_accounts`, store methods). Returns a pre-configured `EmailManager` with fake clients.
+- `_patch_read_status()` — extends `_patch_common()` with patches specific to the read-status flow (e.g. `update_email_read_status_batch`).
+- `_patch_spam()` — extends `_patch_common()` with patches specific to spam operations (e.g. `update_email_spam_status_batch`).
+
+These helpers centralize the monkeypatching so individual test functions stay concise — they call one helper, then exercise the service function under test.
 
 ### Database fakes
 

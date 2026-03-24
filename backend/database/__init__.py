@@ -12,7 +12,7 @@ from database.errors import (
     MigrationError,
     QueryError,
     SettingsError,
-    TokenDecryptError,
+    TokenCryptoError,
     TokenValidationError,
     UnknownProviderError,
 )
@@ -34,7 +34,7 @@ __all__ = [
     "run_startup_migrations_if_enabled",
     "session_store",
     "SettingsError",
-    "TokenDecryptError",
+    "TokenCryptoError",
     "TokenValidationError",
     "UnknownProviderError",
     "user_store",

@@ -91,6 +91,13 @@ def test_list_by_owner_raises_query_error_on_generic(monkeypatch):
         mailbox_module.mailbox_store.list_by_owner("user1")
 
 
+def test_list_by_owner_returns_empty_on_invalid_text_representation(monkeypatch):
+    cursor = FakeCursor(execute_side_effect=psycopg2.errors.InvalidTextRepresentation())
+    patch_connection(monkeypatch, mailbox_module, [cursor])
+
+    assert mailbox_module.mailbox_store.list_by_owner("not-a-uuid") == []
+
+
 # ===== get =====
 
 

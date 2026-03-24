@@ -12,7 +12,7 @@ import psycopg2.extras
 from database import connection
 from database.contracts import SessionStore
 from database.queries import auth
-from database.errors.exceptions import DatabaseError, QueryError
+from database.errors import DatabaseError, QueryError
 
 
 def _row_to_dict(row: dict[str, Any]) -> dict[str, Any]:

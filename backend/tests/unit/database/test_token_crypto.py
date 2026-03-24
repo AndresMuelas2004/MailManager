@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 from database.security import token_crypto
-from database.errors.exceptions import SettingsError, TokenDecryptError
+from database.errors.exceptions import SettingsError, TokenCryptoError
 
 Fernet = pytest.importorskip("cryptography.fernet").Fernet
 
@@ -31,11 +31,24 @@ def test_invalid_key_raises_settings_error(monkeypatch):
         token_crypto.get_fernet(required=True)
 
 
-def test_decrypt_raises_token_decrypt_error_on_invalid_data(monkeypatch):
+def test_decrypt_raises_token_crypto_error_on_invalid_data(monkeypatch):
     monkeypatch.setenv("TOKEN_ENCRYPTION_KEY", Fernet.generate_key().decode("utf-8"))
 
-    with pytest.raises(TokenDecryptError, match="Failed to decrypt account token"):
+    with pytest.raises(TokenCryptoError, match="Failed to decrypt account token"):
         token_crypto.decrypt_token("not-valid-encrypted-data")
+
+
+def test_decrypt_raises_token_crypto_error_on_unexpected_error(monkeypatch):
+    monkeypatch.setenv("TOKEN_ENCRYPTION_KEY", Fernet.generate_key().decode("utf-8"))
+
+    class _BrokenFernet:
+        def decrypt(self, _data):
+            raise RuntimeError("unexpected internal failure")
+
+    monkeypatch.setattr(token_crypto, "get_fernet", lambda required=True: _BrokenFernet())
+
+    with pytest.raises(TokenCryptoError, match="Unexpected token decryption error"):
+        token_crypto.decrypt_token("some-encrypted-value")
 
 
 # ===== get_active_key_id =====

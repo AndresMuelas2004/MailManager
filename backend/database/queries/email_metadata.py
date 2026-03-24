@@ -49,6 +49,15 @@ UPDATE_READ_STATUS_BATCH = """
        AND em.account_id          = v.account_id::UUID
 """
 
+UPDATE_SPAM_STATUS_BATCH = """
+    UPDATE email_metadata AS em
+       SET provider_message_id = v.new_message_id,
+           box                 = v.new_box
+      FROM (VALUES %s) AS v(old_message_id, account_id, new_message_id, new_box)
+     WHERE em.provider_message_id = v.old_message_id::VARCHAR
+       AND em.account_id          = v.account_id::UUID
+"""
+
 LIST_PROVIDER_MESSAGE_IDS_BY_ACCOUNT = """
     SELECT provider_message_id
     FROM email_metadata

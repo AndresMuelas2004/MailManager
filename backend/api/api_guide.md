@@ -45,13 +45,15 @@ Load credentials with `load_wrapped_app_credentials(provider)` / `load_wrapped_a
 
 ### Metadata sync helpers
 
-Five helpers in `services_helpers.py` support the email metadata sync flow:
+Seven helpers in `services_helpers.py` support the email metadata sync flow:
 
 - `persist_email_metadata_batch(account_id, metadata_list)` — batch upsert to database.
 - `load_sync_cursors(label_lookup)` — loads sync cursors per account, keyed by account label.
 - `update_sync_cursor(mailbox_id, account_id, cursor)` — persists a new sync cursor.
 - `delete_email_metadata_batch(account_id, message_ids)` — deletes email metadata rows by provider message IDs.
 - `update_email_metadata_labels_batch(account_id, label_updates)` — updates is_read and box labels for existing rows.
+- `update_email_read_status_batch(account_id, message_ids, is_read)` — batch-updates only the `is_read` column for existing rows (used by the read-status endpoint).
+- `load_stored_message_ids(account_id)` — loads the set of `provider_message_id`s currently stored in the database for a given account (used by ghost email reconciliation).
 
 ### Read-status endpoint
 
@@ -60,7 +62,23 @@ Five helpers in `services_helpers.py` support the email metadata sync flow:
 - **Request**: `ReadStatusRequest` with `is_read: bool` and `items: list[ReadStatusItem]` (each item carries `account_id` + `provider_message_id`).
 - **Response**: `ReadStatusResponse` with `updated_count` and per-account details.
 - **Error**: `ReadStatusUpdateError` (code `"read_status_update_error"`, HTTP 502) — raised when provider-level updates fail.
-- **Flow**: validate ownership via `ensure_mailbox_access` → group items by account → authenticate silently → call `update_read_status` at the provider → persist to DB via `update_read_status_batch`.
+- **Flow**: validate ownership via `ensure_mailbox_access` → group items by account → authenticate silently → call `update_read_status` at the provider → persist to DB via `update_email_read_status_batch`.
+
+### Spam endpoints
+
+`POST /mailboxes/{mailbox_id}/emails/spam` — batch move emails to spam across one or more accounts.
+`POST /mailboxes/{mailbox_id}/emails/restore-from-spam` — batch restore emails from spam.
+
+- **Request**: `SpamRequest` with `items: list[SpamItem]` (each item carries `account_id` + `provider_message_id`).
+- **Response**: `SpamResponse` with `moved_count` and per-account details.
+- **Errors**: `SpamMoveError` (code `"spam_move_error"`, HTTP 502) / `SpamRestoreError` (code `"spam_restore_error"`, HTTP 502).
+- **Flow**: validate ownership → group items by account → authenticate silently → call `move_to_spam` / `restore_from_spam` at provider → persist to DB via `update_email_spam_status_batch`.
+- **Outlook caveat**: the `/move` Graph API endpoint returns a new message ID, which is captured via `SpamMoveResult` and persisted. The DB update writes both the new `provider_message_id` and the new `box` value.
+- **`restore_from_spam` box value**: uses `"ALL_MAIL"` as the target box (not `"INBOX"`) because the provider semantics map restored emails to the general mailbox. This is consistent with the box mapping convention where non-special-folder messages default to `"ALL_MAIL"`.
+
+### Spam status persistence helper
+
+`update_email_spam_status_batch(account_id, results, new_box)` — batch update `provider_message_id` and `box` in the database. Uses `UPDATE_SPAM_STATUS_BATCH` which matches on the old `provider_message_id` and writes the new ID and box value.
 
 ## Behavioral Contracts — Traps to Avoid
 
@@ -74,7 +92,18 @@ Inspects the per-account error dict from `manager.authenticate_all_silent()`. No
 
 ### Post-fetch error inspection
 
-After `fetch_all_email_metadata()`, the service checks `manager.get_last_errors()` for per-client failures and raises either `AccountNotConnected` (auth errors) or `EmailFetchError` (other errors).
+After `fetch_all_email_metadata()`, the service calls the same `raise_on_silent_auth_errors` function used after `authenticate_all_silent()`. This single function inspects the per-account error dict from `manager.get_last_errors()`, translating non-auth `CoreError`s immediately and accumulating auth errors into a single `AccountNotConnected` (409). There is no separate mechanism — both call sites reuse `raise_on_silent_auth_errors`.
+
+### Ghost email reconciliation
+
+`_reconcile_ghost_emails` is a best-effort cleanup flow that runs only after a full sync (bootstrap, i.e. `is_full_sync=True`). It detects "ghost" emails — rows stored in the database that no longer exist at the provider:
+
+1. Load stored `provider_message_id`s for the account via `load_stored_message_ids`.
+2. Call `verify_message_existence` on the provider to check which IDs still exist.
+3. Compute the difference (stored minus existing) to find ghost IDs.
+4. Delete ghost rows via `delete_email_metadata_batch`.
+
+The entire flow is wrapped in a broad `except Exception` — if any step fails, the error is logged and silently skipped. Ghost reconciliation never causes the sync endpoint to fail.
 
 ## Extension
 

@@ -73,6 +73,28 @@ For each claim, classify it as:
 - **Incorrect** — contradicts what the code actually does.
 - **Unverifiable** — cannot be confirmed from source code alone (e.g. runtime behavior descriptions).
 
+#### Discrepancy Direction Analysis
+
+For every claim classified as **Outdated** or **Incorrect**, you must determine the **direction of the fix** — i.e., which side needs to change. This is critical because the project follows a documentation-as-source-of-truth model (see root `CLAUDE.md` § 1.8): `.md` files define intended behavior, and code that contradicts them is considered wrong. However, this principle only holds if the documentation was properly updated after each code change. When it was not, the `.md` is the stale side.
+
+Assess each discrepancy and assign one of these directions:
+
+- **`md-needs-update`** — The code appears to be a correct, intentional implementation that the `.md` simply failed to capture. Indicators:
+  - The code introduces a complete, coherent new feature (endpoint, error class, schema field) that follows existing patterns but is absent from the `.md`.
+  - The code change is consistent with the rest of the codebase and does not violate any architectural rule documented in higher-priority `.md` files (layer `CLAUDE.md` or root `CLAUDE.md` Section 1).
+  - The discrepancy looks like an omission or partial update rather than a deviation.
+
+- **`code-needs-fix`** — The `.md` describes an architectural rule, constraint, or intended behavior that the code violates. Indicators:
+  - The `.md` states a structural rule ("errors must inherit from X", "this layer never imports from Y", "this field is required") and the code breaks it.
+  - The documented behavior is consistent with higher-priority documentation and the overall architecture.
+  - The code deviation looks like a mistake or oversight, not an intentional new feature.
+
+- **`ambiguous`** — You cannot confidently determine which side is correct. Use this when:
+  - The discrepancy could plausibly be either a forgotten documentation update or a code mistake.
+  - The change is significant enough that a wrong call could cause harm.
+
+Always include a brief justification for your direction assessment. The user will use this to decide whether to update the `.md` or fix the code.
+
 ### Phase 4 — Structure and Expression Evaluation
 
 For each `.md` file, evaluate its quality as technical documentation:
@@ -106,10 +128,10 @@ Structure your report exactly as follows:
 ### `<file_path>`
 
 **Outdated claims:**
-- Numbered list. For each: the documented claim, what the code actually shows, and where in the source to look.
+- Numbered list. For each: the documented claim, what the code actually shows, where in the source to look, and the **Direction** (`md-needs-update` | `code-needs-fix` | `ambiguous`) with a brief justification.
 
 **Incorrect claims:**
-- Numbered list. Same format as above.
+- Numbered list. Same format as above (including Direction).
 
 **Undocumented items:**
 - Code constructs (env vars, error classes, endpoints, public functions) that exist in the codebase but are missing from the documentation.
@@ -138,6 +160,7 @@ For each issue:
 - Severity: `BLOCKER` | `MAJOR` | `MINOR` | `NIT`
 - File
 - Category: `ACCURACY` | `STRUCTURE` | `CLARITY` | `COMPLETENESS` | `CONSISTENCY` | `FORMATTING`
+- Direction (only for `ACCURACY` issues): `md-needs-update` | `code-needs-fix` | `ambiguous`
 - Brief description
 
 Severity criteria for documentation:

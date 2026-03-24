@@ -274,14 +274,14 @@ def test_sync_generic_exception_fallback(failing_test_client, setup_mailbox_and_
     indirect=True,
 )
 def test_send_generic_exception_fallback(failing_test_client, setup_mailbox_and_account):
-    """RuntimeError during send → EmailSendError (502)."""
+    """RuntimeError during send → ExternalAPIError (502) via manager wrapping."""
     mid, aid = setup_mailbox_and_account(failing_test_client)
     resp = failing_test_client.post(
         f"{_MAILBOX_URL}/{mid}/emails/send",
         json={"account_id": aid, "subject": "S", "body": "B", "recipients": ["a@b.com"]},
     )
     assert resp.status_code == 502
-    assert resp.json()["error"]["code"] == "email_send_error"
+    assert resp.json()["error"]["code"] == "external_api_error"
 
 
 # ==================================================================
@@ -313,3 +313,173 @@ def test_send_additional_core_error_translations(
     )
     assert resp.status_code == expected_status
     assert resp.json()["error"]["code"] == expected_code
+
+
+# ==================================================================
+# Core error translation for read-status, spam, restore-from-spam
+# ==================================================================
+
+@pytest.mark.parametrize(
+    "failing_test_client",
+    [{"update_read_status_exc": EmailExternalAPIError("API timeout.")}],
+    indirect=True,
+)
+def test_read_status_core_error_returns_502(failing_test_client, setup_mailbox_and_account):
+    """EmailExternalAPIError during update_read_status -> 502."""
+    mid, aid = setup_mailbox_and_account(failing_test_client)
+    failing_test_client.post(f"{_MAILBOX_URL}/{mid}/emails/sync-metadata")
+    resp = failing_test_client.patch(
+        f"{_MAILBOX_URL}/{mid}/emails/read-status",
+        json={
+            "is_read": True,
+            "items": [{"account_id": aid, "provider_message_id": "m1"}],
+        },
+    )
+    assert resp.status_code == 502
+
+
+@pytest.mark.parametrize(
+    "failing_test_client",
+    [{"move_to_spam_exc": EmailExternalAPIError("API timeout.")}],
+    indirect=True,
+)
+def test_spam_move_core_error_returns_502(failing_test_client, setup_mailbox_and_account):
+    """EmailExternalAPIError during move_to_spam -> 502."""
+    mid, aid = setup_mailbox_and_account(failing_test_client)
+    failing_test_client.post(f"{_MAILBOX_URL}/{mid}/emails/sync-metadata")
+    resp = failing_test_client.post(
+        f"{_MAILBOX_URL}/{mid}/emails/spam",
+        json={"items": [{"account_id": aid, "provider_message_id": "m1"}]},
+    )
+    assert resp.status_code == 502
+
+
+@pytest.mark.parametrize(
+    "failing_test_client",
+    [{"restore_from_spam_exc": EmailExternalAPIError("API timeout.")}],
+    indirect=True,
+)
+def test_spam_restore_core_error_returns_502(failing_test_client, setup_mailbox_and_account):
+    """EmailExternalAPIError during restore_from_spam -> 502."""
+    mid, aid = setup_mailbox_and_account(failing_test_client)
+    failing_test_client.post(f"{_MAILBOX_URL}/{mid}/emails/sync-metadata")
+    resp = failing_test_client.post(
+        f"{_MAILBOX_URL}/{mid}/emails/restore-from-spam",
+        json={"items": [{"account_id": aid, "provider_message_id": "m1"}]},
+    )
+    assert resp.status_code == 502
+
+
+# ==================================================================
+# Silent auth failure for read-status, spam, restore-from-spam
+# ==================================================================
+
+@pytest.mark.parametrize(
+    "failing_test_client",
+    [{"auth_silent_exc": EmailAuthError("Token expired.")}],
+    indirect=True,
+)
+def test_read_status_auth_silent_failure_returns_409(failing_test_client, setup_mailbox_and_account):
+    """Silent auth failure before read-status -> AccountNotConnected (409)."""
+    mid, aid = setup_mailbox_and_account(failing_test_client)
+    resp = failing_test_client.patch(
+        f"{_MAILBOX_URL}/{mid}/emails/read-status",
+        json={
+            "is_read": True,
+            "items": [{"account_id": aid, "provider_message_id": "m1"}],
+        },
+    )
+    assert resp.status_code == 409
+    assert resp.json()["error"]["code"] == "account_not_connected"
+
+
+@pytest.mark.parametrize(
+    "failing_test_client",
+    [{"auth_silent_exc": EmailAuthError("Token expired.")}],
+    indirect=True,
+)
+def test_spam_move_auth_silent_failure_returns_409(failing_test_client, setup_mailbox_and_account):
+    """Silent auth failure before spam move -> AccountNotConnected (409)."""
+    mid, aid = setup_mailbox_and_account(failing_test_client)
+    resp = failing_test_client.post(
+        f"{_MAILBOX_URL}/{mid}/emails/spam",
+        json={"items": [{"account_id": aid, "provider_message_id": "m1"}]},
+    )
+    assert resp.status_code == 409
+    assert resp.json()["error"]["code"] == "account_not_connected"
+
+
+@pytest.mark.parametrize(
+    "failing_test_client",
+    [{"auth_silent_exc": EmailAuthError("Token expired.")}],
+    indirect=True,
+)
+def test_spam_restore_auth_silent_failure_returns_409(failing_test_client, setup_mailbox_and_account):
+    """Silent auth failure before spam restore -> AccountNotConnected (409)."""
+    mid, aid = setup_mailbox_and_account(failing_test_client)
+    resp = failing_test_client.post(
+        f"{_MAILBOX_URL}/{mid}/emails/restore-from-spam",
+        json={"items": [{"account_id": aid, "provider_message_id": "m1"}]},
+    )
+    assert resp.status_code == 409
+    assert resp.json()["error"]["code"] == "account_not_connected"
+
+
+# ==================================================================
+# RuntimeError fallback for read-status, spam, restore-from-spam
+# RuntimeError is wrapped by EmailManager -> EmailExternalAPIError
+# -> translate_core_error -> ExternalAPIError (502)
+# ==================================================================
+
+@pytest.mark.parametrize(
+    "failing_test_client",
+    [{"update_read_status_exc": RuntimeError("crash")}],
+    indirect=True,
+)
+def test_read_status_runtime_error_returns_502(failing_test_client, setup_mailbox_and_account):
+    """RuntimeError during update_read_status -> manager wraps -> 502 external_api_error."""
+    mid, aid = setup_mailbox_and_account(failing_test_client)
+    failing_test_client.post(f"{_MAILBOX_URL}/{mid}/emails/sync-metadata")
+    resp = failing_test_client.patch(
+        f"{_MAILBOX_URL}/{mid}/emails/read-status",
+        json={
+            "is_read": True,
+            "items": [{"account_id": aid, "provider_message_id": "m1"}],
+        },
+    )
+    assert resp.status_code == 502
+    assert resp.json()["error"]["code"] == "external_api_error"
+
+
+@pytest.mark.parametrize(
+    "failing_test_client",
+    [{"move_to_spam_exc": RuntimeError("crash")}],
+    indirect=True,
+)
+def test_spam_move_runtime_error_returns_502(failing_test_client, setup_mailbox_and_account):
+    """RuntimeError during move_to_spam -> manager wraps -> 502 external_api_error."""
+    mid, aid = setup_mailbox_and_account(failing_test_client)
+    failing_test_client.post(f"{_MAILBOX_URL}/{mid}/emails/sync-metadata")
+    resp = failing_test_client.post(
+        f"{_MAILBOX_URL}/{mid}/emails/spam",
+        json={"items": [{"account_id": aid, "provider_message_id": "m1"}]},
+    )
+    assert resp.status_code == 502
+    assert resp.json()["error"]["code"] == "external_api_error"
+
+
+@pytest.mark.parametrize(
+    "failing_test_client",
+    [{"restore_from_spam_exc": RuntimeError("crash")}],
+    indirect=True,
+)
+def test_spam_restore_runtime_error_returns_502(failing_test_client, setup_mailbox_and_account):
+    """RuntimeError during restore_from_spam -> manager wraps -> 502 external_api_error."""
+    mid, aid = setup_mailbox_and_account(failing_test_client)
+    failing_test_client.post(f"{_MAILBOX_URL}/{mid}/emails/sync-metadata")
+    resp = failing_test_client.post(
+        f"{_MAILBOX_URL}/{mid}/emails/restore-from-spam",
+        json={"items": [{"account_id": aid, "provider_message_id": "m1"}]},
+    )
+    assert resp.status_code == 502
+    assert resp.json()["error"]["code"] == "external_api_error"

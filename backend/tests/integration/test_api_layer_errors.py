@@ -19,7 +19,7 @@ from database import (
     MigrationError,
     QueryError,
     SettingsError,
-    TokenDecryptError,
+    TokenCryptoError,
     TokenValidationError,
     UnknownProviderError,
 )
@@ -287,8 +287,8 @@ def test_list_mailboxes_settings_error(test_client, monkeypatch):
     assert resp.json()["error"]["code"] == "env_var_error"
 
 
-def test_list_mailboxes_token_decrypt_error(test_client, monkeypatch):
-    monkeypatch.setattr(mailbox_store, "list_by_owner", lambda uid: (_ for _ in ()).throw(TokenDecryptError("fail")))
+def test_list_mailboxes_token_crypto_error(test_client, monkeypatch):
+    monkeypatch.setattr(mailbox_store, "list_by_owner", lambda uid: (_ for _ in ()).throw(TokenCryptoError("fail")))
     resp = test_client.get(_MAILBOX_URL)
     assert resp.status_code == 500
     assert resp.json()["error"]["code"] == "token_decryption_error"
@@ -330,4 +330,31 @@ def test_update_account_empty_display_label(test_client, setup_mailbox_and_accou
 
 def test_google_login_empty_id_token(test_client_base):
     resp = test_client_base.post("/auth/google", json={"id_token": ""})
+    assert resp.status_code == 422
+
+
+def test_read_status_empty_items_422(test_client, setup_mailbox_and_account):
+    mid, _ = setup_mailbox_and_account(test_client)
+    resp = test_client.patch(
+        f"{_MAILBOX_URL}/{mid}/emails/read-status",
+        json={"is_read": True, "items": []},
+    )
+    assert resp.status_code == 422
+
+
+def test_spam_empty_items_422(test_client, setup_mailbox_and_account):
+    mid, _ = setup_mailbox_and_account(test_client)
+    resp = test_client.post(
+        f"{_MAILBOX_URL}/{mid}/emails/spam",
+        json={"items": []},
+    )
+    assert resp.status_code == 422
+
+
+def test_read_status_missing_fields_422(test_client, setup_mailbox_and_account):
+    mid, _ = setup_mailbox_and_account(test_client)
+    resp = test_client.patch(
+        f"{_MAILBOX_URL}/{mid}/emails/read-status",
+        json={"items": [{"account_id": "x"}]},
+    )
     assert resp.status_code == 422

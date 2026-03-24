@@ -11,7 +11,7 @@ from unittest.mock import MagicMock, call, patch
 
 import pytest
 
-from core.email.email_client import SyncResult
+from core.email.email_client import SpamMoveResult, SyncResult
 from core.email.errors import (
     EmailExternalAPIError,
     EmailMissingAppCredentialsError,
@@ -1367,3 +1367,45 @@ class TestUpdateReadStatus:
             result = client.update_read_status(["m1"], False)
         mock_modify.assert_called_once_with(["m1"], add_labels=["UNREAD"])
         assert result == ["m1"]
+
+
+# ── move_to_spam ─────────────────────────────────────────────────
+
+
+class TestMoveToSpam:
+    def test_not_authenticated_raises(self, client: GmailClient):
+        with pytest.raises(EmailNotAuthenticatedError):
+            client.move_to_spam(["m1"])
+
+    def test_empty_returns_empty(self, client: GmailClient):
+        client.service = MagicMock()
+        assert client.move_to_spam([]) == []
+
+    def test_adds_spam_label(self, client: GmailClient):
+        client.service = MagicMock()
+        with patch.object(client, "_batch_modify_labels", return_value=["m1"]) as mock_modify:
+            result = client.move_to_spam(["m1"])
+        mock_modify.assert_called_once_with(["m1"], add_labels=["SPAM"])
+        assert result == [SpamMoveResult(old_id="m1", new_id="m1")]
+
+
+# ── restore_from_spam ────────────────────────────────────────────
+
+
+class TestRestoreFromSpam:
+    def test_not_authenticated_raises(self, client: GmailClient):
+        with pytest.raises(EmailNotAuthenticatedError):
+            client.restore_from_spam(["m1"])
+
+    def test_empty_returns_empty(self, client: GmailClient):
+        client.service = MagicMock()
+        assert client.restore_from_spam([]) == []
+
+    def test_removes_spam_adds_inbox(self, client: GmailClient):
+        client.service = MagicMock()
+        with patch.object(client, "_batch_modify_labels", return_value=["m1"]) as mock_modify:
+            result = client.restore_from_spam(["m1"])
+        mock_modify.assert_called_once_with(
+            ["m1"], remove_labels=["SPAM"], add_labels=["INBOX"],
+        )
+        assert result == [SpamMoveResult(old_id="m1", new_id="m1")]

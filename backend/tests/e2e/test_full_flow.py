@@ -36,10 +36,47 @@ def _require(flow_state: dict, *keys: str) -> None:
         pytest.skip(f"Prerequisites not met: {', '.join(missing)}")
 
 
+def _db_conn():
+    """Create a psycopg2 connection from DATABASE_URL."""
+    dsn = os.getenv("DATABASE_URL", "").strip()
+    return psycopg2.connect(dsn=dsn)
+
+
+def _fetch_email_ids(
+    account_id: str, limit: int, box_filter: str = "ALL_MAIL",
+) -> list[str]:
+    """Fetch provider_message_ids from DB for the given account and box."""
+    conn = _db_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT provider_message_id FROM email_metadata "
+                "WHERE account_id = %s AND box = %s LIMIT %s",
+                (account_id, box_filter, limit),
+            )
+            return [row[0] for row in cur.fetchall()]
+    finally:
+        conn.close()
+
+
+def _count_by_box(account_id: str, box: str) -> int:
+    """Count emails in a given box for an account."""
+    conn = _db_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT COUNT(*) FROM email_metadata "
+                "WHERE account_id = %s AND box = %s",
+                (account_id, box),
+            )
+            return cur.fetchone()[0]
+    finally:
+        conn.close()
+
+
 def _clear_sync_cursor(account_id: str) -> None:
     """Set sync_cursor to NULL so the next sync exercises Path 1 (bootstrap)."""
-    dsn = os.getenv("DATABASE_URL", "").strip()
-    conn = psycopg2.connect(dsn=dsn)
+    conn = _db_conn()
     try:
         with conn.cursor() as cur:
             cur.execute(
@@ -51,12 +88,30 @@ def _clear_sync_cursor(account_id: str) -> None:
         conn.close()
 
 
+def _fetch_one_message_id(account_id: str) -> str | None:
+    """Fetch a single provider_message_id for the account, or None."""
+    conn = _db_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT provider_message_id FROM email_metadata "
+                "WHERE account_id = %s LIMIT 1",
+                (account_id,),
+            )
+            row = cur.fetchone()
+            return row[0] if row else None
+    finally:
+        conn.close()
+
+
 # ===================================================================
 # Section 1: Health
 # ===================================================================
 
 def test_01_health_check(e2e_client):
-    _assert_ok(e2e_client.get("/health"))
+    response = e2e_client.get("/health")
+    _assert_ok(response)
+    assert response.json() == {"status": "ok"}
 
 
 # ===================================================================
@@ -76,7 +131,9 @@ def test_02_get_auth_me(e2e_client):
 def test_03_create_mailbox(e2e_client, flow_state, created_resources):
     response = e2e_client.post("/mailboxes", json={"display_name": "E2E Temp Mailbox"})
     _assert_ok(response)
-    mid = response.json()["mailbox_id"]
+    data = response.json()
+    assert data["display_name"] == "E2E Temp Mailbox"
+    mid = data["mailbox_id"]
     flow_state["temp_mid"] = mid
     created_resources["mailbox_ids"].append(mid)
 
@@ -120,6 +177,7 @@ def test_08_list_accounts(e2e_client, flow_state):
     _require(flow_state, "temp_mid")
     response = e2e_client.get(f"/mailboxes/{flow_state['temp_mid']}/accounts")
     _assert_ok(response)
+    assert len(response.json()) >= 2
 
 
 def test_09_get_gmail_account_detail(e2e_client, flow_state):
@@ -147,6 +205,7 @@ def test_11_patch_account_label(e2e_client, flow_state):
         json={"display_label": "e2e-gmail-renamed"},
     )
     _assert_ok(response)
+    assert response.json()["display_label"] == "e2e-gmail-renamed"
 
 
 def test_12_delete_account(e2e_client, flow_state):
@@ -155,12 +214,14 @@ def test_12_delete_account(e2e_client, flow_state):
         f"/mailboxes/{flow_state['temp_mid']}/accounts/{flow_state['temp_outlook_id']}"
     )
     _assert_ok(response)
+    assert response.json() == {"status": "deleted"}
 
 
 def test_13_delete_mailbox(e2e_client, flow_state):
     _require(flow_state, "temp_mid")
     response = e2e_client.delete(f"/mailboxes/{flow_state['temp_mid']}")
     _assert_ok(response)
+    assert response.json() == {"status": "deleted"}
     flow_state["temp_mid_deleted"] = flow_state["temp_mid"]
 
 
@@ -243,6 +304,7 @@ def test_19_send_email_gmail(e2e_client):
         },
     )
     _assert_ok(response)
+    assert response.json()["status"] == "sent"
 
 
 def test_20_send_email_outlook(e2e_client):
@@ -256,30 +318,18 @@ def test_20_send_email_outlook(e2e_client):
         },
     )
     _assert_ok(response)
+    assert response.json()["status"] == "sent"
 
 
-def test_19_update_read_status_gmail(e2e_client, flow_state):
+def test_21_update_read_status_gmail(e2e_client, flow_state):
     """Sync metadata, pick a message, mark as read."""
+    # Sync first to ensure email_metadata rows exist in DB for the test account
     sync_resp = e2e_client.post(f"/mailboxes/{GMAIL_MAILBOX_ID}/emails/sync-metadata")
     _assert_ok(sync_resp)
 
-    dsn = os.getenv("DATABASE_URL", "").strip()
-    conn = psycopg2.connect(dsn=dsn)
-    try:
-        with conn.cursor() as cur:
-            cur.execute(
-                "SELECT provider_message_id FROM email_metadata "
-                "WHERE account_id = %s LIMIT 1",
-                (GMAIL_ACCOUNT_ID,),
-            )
-            row = cur.fetchone()
-    finally:
-        conn.close()
-
-    if row is None:
+    msg_id = _fetch_one_message_id(GMAIL_ACCOUNT_ID)
+    if msg_id is None:
         pytest.skip("No synced emails found for Gmail test account")
-
-    msg_id = row[0]
     response = e2e_client.patch(
         f"/mailboxes/{GMAIL_MAILBOX_ID}/emails/read-status",
         json={
@@ -295,28 +345,15 @@ def test_19_update_read_status_gmail(e2e_client, flow_state):
     flow_state["gmail_read_status_done"] = "true"
 
 
-def test_20_update_read_status_outlook(e2e_client, flow_state):
+def test_22_update_read_status_outlook(e2e_client, flow_state):
     """Sync metadata, pick a message, mark as unread."""
+    # Sync first to ensure email_metadata rows exist in DB for the test account
     sync_resp = e2e_client.post(f"/mailboxes/{OUTLOOK_MAILBOX_ID}/emails/sync-metadata")
     _assert_ok(sync_resp)
 
-    dsn = os.getenv("DATABASE_URL", "").strip()
-    conn = psycopg2.connect(dsn=dsn)
-    try:
-        with conn.cursor() as cur:
-            cur.execute(
-                "SELECT provider_message_id FROM email_metadata "
-                "WHERE account_id = %s LIMIT 1",
-                (OUTLOOK_ACCOUNT_ID,),
-            )
-            row = cur.fetchone()
-    finally:
-        conn.close()
-
-    if row is None:
+    msg_id = _fetch_one_message_id(OUTLOOK_ACCOUNT_ID)
+    if msg_id is None:
         pytest.skip("No synced emails found for Outlook test account")
-
-    msg_id = row[0]
     response = e2e_client.patch(
         f"/mailboxes/{OUTLOOK_MAILBOX_ID}/emails/read-status",
         json={
@@ -332,17 +369,149 @@ def test_20_update_read_status_outlook(e2e_client, flow_state):
 
 
 # ===================================================================
+# Section 4b: Spam operations (pre-existing connected accounts)
+# ===================================================================
+
+def test_23_move_to_spam_gmail(e2e_client, flow_state):
+    """Sync, pick 10 emails, move to spam, verify DB."""
+    sync_resp = e2e_client.post(f"/mailboxes/{GMAIL_MAILBOX_ID}/emails/sync-metadata")
+    _assert_ok(sync_resp)
+
+    msg_ids = _fetch_email_ids(GMAIL_ACCOUNT_ID, 10, "ALL_MAIL")
+    if len(msg_ids) < 10:
+        pytest.skip("Not enough ALL_MAIL emails for Gmail spam test")
+
+    spam_before = _count_by_box(GMAIL_ACCOUNT_ID, "SPAM")
+
+    response = e2e_client.post(
+        f"/mailboxes/{GMAIL_MAILBOX_ID}/emails/spam",
+        json={
+            "items": [
+                {"account_id": GMAIL_ACCOUNT_ID, "provider_message_id": mid}
+                for mid in msg_ids
+            ],
+        },
+    )
+    _assert_ok(response)
+    data = response.json()
+    assert data["moved_count"] == 10
+    assert len(data["accounts"]) == 1
+    assert data["accounts"][0]["account_id"] == GMAIL_ACCOUNT_ID
+    assert data["accounts"][0]["moved"] == 10
+
+    spam_after = _count_by_box(GMAIL_ACCOUNT_ID, "SPAM")
+    assert spam_after == spam_before + 10
+
+    flow_state["gmail_spam_done"] = "true"
+
+
+def test_24_restore_from_spam_gmail(e2e_client, flow_state):
+    """Pick 10 spam emails, restore, verify DB."""
+    _require(flow_state, "gmail_spam_done")
+
+    msg_ids = _fetch_email_ids(GMAIL_ACCOUNT_ID, 10, "SPAM")
+    if len(msg_ids) < 10:
+        pytest.skip("Not enough SPAM emails for Gmail restore test")
+
+    spam_before = _count_by_box(GMAIL_ACCOUNT_ID, "SPAM")
+
+    response = e2e_client.post(
+        f"/mailboxes/{GMAIL_MAILBOX_ID}/emails/restore-from-spam",
+        json={
+            "items": [
+                {"account_id": GMAIL_ACCOUNT_ID, "provider_message_id": mid}
+                for mid in msg_ids
+            ],
+        },
+    )
+    _assert_ok(response)
+    data = response.json()
+    assert data["moved_count"] == 10
+    assert len(data["accounts"]) == 1
+    assert data["accounts"][0]["account_id"] == GMAIL_ACCOUNT_ID
+    assert data["accounts"][0]["moved"] == 10
+
+    spam_after = _count_by_box(GMAIL_ACCOUNT_ID, "SPAM")
+    assert spam_after == spam_before - 10
+
+    flow_state["gmail_restore_done"] = "true"
+
+
+def test_25_move_to_spam_outlook(e2e_client, flow_state):
+    """Sync, pick 10 emails, move to spam, verify DB."""
+    sync_resp = e2e_client.post(f"/mailboxes/{OUTLOOK_MAILBOX_ID}/emails/sync-metadata")
+    _assert_ok(sync_resp)
+
+    msg_ids = _fetch_email_ids(OUTLOOK_ACCOUNT_ID, 10, "ALL_MAIL")
+    if len(msg_ids) < 10:
+        pytest.skip("Not enough ALL_MAIL emails for Outlook spam test")
+
+    spam_before = _count_by_box(OUTLOOK_ACCOUNT_ID, "SPAM")
+
+    response = e2e_client.post(
+        f"/mailboxes/{OUTLOOK_MAILBOX_ID}/emails/spam",
+        json={
+            "items": [
+                {"account_id": OUTLOOK_ACCOUNT_ID, "provider_message_id": mid}
+                for mid in msg_ids
+            ],
+        },
+    )
+    _assert_ok(response)
+    data = response.json()
+    assert data["moved_count"] == 10
+    assert len(data["accounts"]) == 1
+    assert data["accounts"][0]["account_id"] == OUTLOOK_ACCOUNT_ID
+    assert data["accounts"][0]["moved"] == 10
+
+    spam_after = _count_by_box(OUTLOOK_ACCOUNT_ID, "SPAM")
+    assert spam_after == spam_before + 10
+
+    flow_state["outlook_spam_done"] = "true"
+
+
+def test_26_restore_from_spam_outlook(e2e_client, flow_state):
+    """Pick 10 spam emails, restore, verify DB."""
+    _require(flow_state, "outlook_spam_done")
+
+    msg_ids = _fetch_email_ids(OUTLOOK_ACCOUNT_ID, 10, "SPAM")
+    if len(msg_ids) < 10:
+        pytest.skip("Not enough SPAM emails for Outlook restore test")
+
+    spam_before = _count_by_box(OUTLOOK_ACCOUNT_ID, "SPAM")
+
+    response = e2e_client.post(
+        f"/mailboxes/{OUTLOOK_MAILBOX_ID}/emails/restore-from-spam",
+        json={
+            "items": [
+                {"account_id": OUTLOOK_ACCOUNT_ID, "provider_message_id": mid}
+                for mid in msg_ids
+            ],
+        },
+    )
+    _assert_ok(response)
+    data = response.json()
+    assert data["moved_count"] == 10
+    assert len(data["accounts"]) == 1
+    assert data["accounts"][0]["account_id"] == OUTLOOK_ACCOUNT_ID
+    assert data["accounts"][0]["moved"] == 10
+
+    spam_after = _count_by_box(OUTLOOK_ACCOUNT_ID, "SPAM")
+    assert spam_after == spam_before - 10
+
+
+# ===================================================================
 # Section 5: Auth lifecycle (MUST BE LAST — invalidates session)
 # ===================================================================
 
-def test_21_post_auth_logout(e2e_client, flow_state):
+def test_27_post_auth_logout(e2e_client, flow_state):
     response = e2e_client.post("/auth/logout")
     _assert_ok(response)
     assert response.json() == {"status": "logged_out"}
     flow_state["logged_out"] = "true"
 
 
-def test_22_get_auth_me_after_logout_401(e2e_client, flow_state):
+def test_28_get_auth_me_after_logout_401(e2e_client, flow_state):
     _require(flow_state, "logged_out")
     response = e2e_client.get("/auth/me")
     _assert_ok(response, expected=401)

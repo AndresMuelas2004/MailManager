@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 from typing import Any
-from .email_client import EmailClient, EmailMetadata, SyncResult
+from .email_client import EmailClient, EmailMetadata, SpamMoveResult, SyncResult
 from .errors import (
+    CoreError,
     EmailAccountNotFoundError,
     EmailAccountRecordError,
     EmailDuplicateAccountLabelError,
+    EmailExternalAPIError,
     EmailProviderConfigError,
 )
 from .gmail_client import GmailClient
@@ -111,6 +113,8 @@ class EmailManager:
         client = self._get_client_or_raise(account_label)
         try:
             return client.authenticate(app_credentials)
+        except CoreError:
+            raise
         except Exception as exc:
             self._last_errors[account_label] = exc
             raise
@@ -140,7 +144,14 @@ class EmailManager:
         message_ids: list[str],
     ) -> list[str]:
         client = self._get_client_or_raise(account_label)
-        return client.verify_message_existence(message_ids)
+        try:
+            return client.verify_message_existence(message_ids)
+        except CoreError:
+            raise
+        except Exception as exc:
+            raise EmailExternalAPIError(
+                f"Unexpected verify_message_existence error ({type(exc).__name__}): {exc}"
+            ) from exc
 
     def send_email_from_account(
         self,
@@ -154,7 +165,14 @@ class EmailManager:
         Returns metadata of the sent email.
         """
         client = self._get_client_or_raise(account_label)
-        return client.send_email(subject, body, recipients)
+        try:
+            return client.send_email(subject, body, recipients)
+        except CoreError:
+            raise
+        except Exception as exc:
+            raise EmailExternalAPIError(
+                f"Unexpected send_email error ({type(exc).__name__}): {exc}"
+            ) from exc
 
     def update_read_status(
         self,
@@ -164,7 +182,46 @@ class EmailManager:
     ) -> list[str]:
         """Mark messages as read/unread for the given account. Returns successfully updated IDs."""
         client = self._get_client_or_raise(account_label)
-        return client.update_read_status(message_ids, is_read)
+        try:
+            return client.update_read_status(message_ids, is_read)
+        except CoreError:
+            raise
+        except Exception as exc:
+            raise EmailExternalAPIError(
+                f"Unexpected update_read_status error ({type(exc).__name__}): {exc}"
+            ) from exc
+
+    def move_to_spam(
+        self,
+        account_label: str,
+        message_ids: list[str],
+    ) -> list[SpamMoveResult]:
+        """Move messages to spam for the given account. Returns results for successfully moved messages."""
+        client = self._get_client_or_raise(account_label)
+        try:
+            return client.move_to_spam(message_ids)
+        except CoreError:
+            raise
+        except Exception as exc:
+            raise EmailExternalAPIError(
+                f"Unexpected move_to_spam error ({type(exc).__name__}): {exc}"
+            ) from exc
+
+    def restore_from_spam(
+        self,
+        account_label: str,
+        message_ids: list[str],
+    ) -> list[SpamMoveResult]:
+        """Restore messages from spam for the given account. Returns results for successfully restored messages."""
+        client = self._get_client_or_raise(account_label)
+        try:
+            return client.restore_from_spam(message_ids)
+        except CoreError:
+            raise
+        except Exception as exc:
+            raise EmailExternalAPIError(
+                f"Unexpected restore_from_spam error ({type(exc).__name__}): {exc}"
+            ) from exc
 
     def get_last_errors(self) -> dict[str, Exception]:
         """

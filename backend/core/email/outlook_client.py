@@ -9,7 +9,7 @@ import urllib.request
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from .email_client import EmailClient, EmailMetadata, LabelUpdate, SyncResult
+from .email_client import EmailClient, EmailMetadata, LabelUpdate, SpamMoveResult, SyncResult
 from .errors import (
     EmailExternalAPIError,
     EmailMissingAppCredentialsError,
@@ -665,6 +665,43 @@ class OutlookClient(EmailClient):
                 pass  # 404 or other → skip silently (message may not exist)
         return updated
 
+    # ------------------------------------------------------------------
+    # Spam operations
+    # ------------------------------------------------------------------
+
+    def move_to_spam(self, message_ids: list[str]) -> list[SpamMoveResult]:
+        """Move messages to spam via Microsoft Graph API. Returns results for successfully moved messages."""
+        return self._move_messages(message_ids, "junkemail", "move_to_spam")
+
+    def restore_from_spam(self, message_ids: list[str]) -> list[SpamMoveResult]:
+        """Restore messages from spam via Microsoft Graph API. Returns results for successfully restored messages."""
+        return self._move_messages(message_ids, "inbox", "restore_from_spam")
+
+    def _move_messages(
+        self,
+        message_ids: list[str],
+        destination_id: str,
+        operation: str,
+    ) -> list[SpamMoveResult]:
+        """Move messages to a folder via the Graph /move endpoint. Returns results for successfully moved messages."""
+        if self._access_token is None:
+            raise EmailNotAuthenticatedError(f"Outlook {operation} requires authentication.")
+        if not message_ids:
+            return []
+        results: list[SpamMoveResult] = []
+        for msg_id in message_ids:
+            try:
+                response = self._graph_request(
+                    "POST",
+                    f"{GRAPH_BASE_URL}/me/messages/{msg_id}/move",
+                    body={"destinationId": destination_id},
+                )
+                new_id = response.get("id", msg_id)
+                results.append(SpamMoveResult(old_id=msg_id, new_id=new_id))
+            except EmailExternalAPIError:
+                pass  # 404 or other → skip silently
+        return results
+
     def verify_message_existence(self, message_ids: list[str]) -> list[str]:
         if self._access_token is None:
             raise EmailNotAuthenticatedError("Outlook verify_message_existence requires authentication.")
@@ -882,28 +919,3 @@ class OutlookClient(EmailClient):
                 f"Outlook failed Graph API request ({type(exc).__name__}): {exc}"
             ) from exc
 
-    def _graph_raw_request(self, url: str) -> bytes:
-        """Make an authenticated GET request and return the raw response bytes."""
-        headers = {"Authorization": f"Bearer {self._access_token}"}
-        req = urllib.request.Request(url, headers=headers, method="GET")
-        try:
-            with urllib.request.urlopen(req, timeout=30) as response:
-                return response.read()
-        except urllib.error.HTTPError as exc:
-            error_body = exc.read().decode("utf-8", errors="replace")
-            detail = error_body
-            try:
-                error_json = json.loads(error_body) if error_body else {}
-                if isinstance(error_json, dict):
-                    err_code = error_json.get("error", {})
-                    if isinstance(err_code, dict):
-                        detail = f"{err_code.get('code', 'error')}: {err_code.get('message', '')}"
-            except (json.JSONDecodeError, TypeError, ValueError):
-                pass
-            raise EmailExternalAPIError(f"Outlook failed Graph API call: {detail}") from exc
-        except urllib.error.URLError as exc:
-            raise EmailExternalAPIError(f"Outlook failed to reach Graph API: {exc.reason}") from exc
-        except Exception as exc:
-            raise EmailExternalAPIError(
-                f"Outlook failed Graph API request ({type(exc).__name__}): {exc}"
-            ) from exc

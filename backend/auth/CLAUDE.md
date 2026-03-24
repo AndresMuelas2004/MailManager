@@ -7,7 +7,7 @@ This is the `CLAUDE.md` for the **authentication** layer. It serves as the gener
 **Reusable.** Copy this file into a new project to establish the auth layer architecture from day one. The project-specific guide extends these rules with domain details but must never contradict them.
 
 **Precedence.** In case of conflict between this file and a project-specific guide, these rules take precedence.
-
+**Immutable.** This file must never be edited. All project-specific changes go in the `*_guide.md` file referenced at the end of this document.
 ## 1. Layer Isolation
 
 The `auth/` package is a framework-agnostic layer — it has **no imports from `api/`**. Services in the API layer translate `AuthError` subclasses into `ApiError` subclasses via a translation function (same pattern used for core and database errors).
@@ -172,4 +172,4 @@ No context manager exists for auth translation — there are typically only a fe
 
 This file covers the general, transferable rules for the authentication layer. For project-specific details — concrete rules, architectural decisions, and implementation details that apply these general principles to the current application — consult [`auth_guide.md`](auth_guide.md).
 
-The guide complements these rules but never contradicts them. In case of conflict, this `CLAUDE.md` has absolute precedence. Code in this layer must respect both levels: first these general rules, then the project-specific guide.
+The guide complements these rules but never contradicts them. In case of conflict, this `CLAUDE.md` has absolute precedence. Code in this layer must respect both levels: first these general rules, then the project-specific guide auth_guide.md.

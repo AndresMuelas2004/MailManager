@@ -40,6 +40,7 @@ from core.email import (
     EmailRecipientsMissingError,
     EmailRefreshFailedError,
     LabelUpdate,
+    SpamMoveResult,
 )
 
 from api.errors.exceptions import (
@@ -74,7 +75,7 @@ from database import (
     MigrationError,
     QueryError,
     SettingsError,
-    TokenDecryptError,
+    TokenCryptoError,
     TokenValidationError,
     UnknownProviderError,
 )
@@ -114,7 +115,7 @@ _DB_TO_API_MAP: list[tuple[type[DatabaseError], type[ApiError]]] = [
     (QueryError, DatabaseQueryError),
     (MigrationError, DatabaseMigrationError),
     (SettingsError, EnvVarError),
-    (TokenDecryptError, TokenDecryptionError),
+    (TokenCryptoError, TokenDecryptionError),
     (TokenValidationError, TokenIntegrityError),
     (CredentialReadError, CredentialFileError),
     (UnknownProviderError, AccountMisconfigured),
@@ -464,6 +465,30 @@ def update_email_read_status_batch(
             type(exc).__name__, exc,
         )
         raise ApiError("Failed to update email read status in database.") from exc
+
+
+def update_email_spam_status_batch(
+    account_id: str,
+    results: list[SpamMoveResult],
+    new_box: str,
+) -> int:
+    """Update provider_message_id and box for messages moved to/from spam. Returns rows updated."""
+    if not results:
+        return 0
+    rows = [
+        (r.old_id, account_id, r.new_id, new_box)
+        for r in results
+    ]
+    try:
+        return email_metadata_store.update_spam_status_batch(account_id, rows)
+    except DatabaseError as exc:
+        raise translate_database_error(exc) from exc
+    except Exception as exc:
+        logger.warning(
+            "Unexpected spam status DB update error (%s): %s",
+            type(exc).__name__, exc,
+        )
+        raise ApiError("Failed to update email spam status in database.") from exc
 
 
 def load_stored_message_ids(account_id: str) -> list[str]:

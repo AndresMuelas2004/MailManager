@@ -74,7 +74,7 @@ No global "skip all after first failure". Each test checks its own prerequisites
 | 13 | `DELETE /mailboxes/{mid}` | requires `temp_mid` → produces `temp_mid_deleted` |
 | 14 | `GET /mailboxes/{mid}` → 404 | requires `temp_mid_deleted` |
 
-### Section 4: Provider operations — pre-existing accounts (tests 15–20)
+### Section 4: Provider operations — pre-existing accounts (tests 15–22)
 
 | Test | Endpoint | Dependencies |
 |---|---|---|
@@ -87,12 +87,23 @@ No global "skip all after first failure". Each test checks its own prerequisites
 | 21 | `PATCH .../emails/read-status` (gmail) | independent |
 | 22 | `PATCH .../emails/read-status` (outlook) | independent |
 
-### Section 5: Auth lifecycle — MUST BE LAST (tests 21–22)
+### Section 4b: Spam operations — pre-existing accounts (tests 23–26)
 
 | Test | Endpoint | Dependencies |
 |---|---|---|
-| 21 | `POST /auth/logout` | independent → produces `logged_out` |
-| 22 | `GET /auth/me` → 401 | requires `logged_out` |
+| 23 | `POST .../emails/spam` (gmail) | independent (syncs first internally) → produces `gmail_spam_done` |
+| 24 | `POST .../emails/restore-from-spam` (gmail) | requires `gmail_spam_done` → produces `gmail_restore_done` |
+| 25 | `POST .../emails/spam` (outlook) | independent (syncs first internally) → produces `outlook_spam_done` |
+| 26 | `POST .../emails/restore-from-spam` (outlook) | requires `outlook_spam_done` |
+
+Each spam test syncs metadata first, picks 10 `ALL_MAIL` emails, moves them to spam, and verifies the DB `box` column changed. Restore tests reverse the operation on 10 `SPAM` emails. Tests skip if fewer than 10 qualifying emails exist.
+
+### Section 5: Auth lifecycle — MUST BE LAST (tests 27–28)
+
+| Test | Endpoint | Dependencies |
+|---|---|---|
+| 27 | `POST /auth/logout` | independent → produces `logged_out` |
+| 28 | `GET /auth/me` → 401 | requires `logged_out` |
 
 ## Behavioral Contracts — Traps to Avoid
 
@@ -106,7 +117,7 @@ The pre-existing user, mailboxes, and accounts (defined in `e2e_config.py`) must
 
 ### Auth lifecycle tests must be last
 
-`POST /auth/logout` (test 21) invalidates the session cookie. Any test running after it will get 401. This is why Section 5 is the final section.
+`POST /auth/logout` (test 27) invalidates the session cookie. Any test running after it will get 401. This is why Section 5 is the final section.
 
 ### Section 6. Extension Checklist
 

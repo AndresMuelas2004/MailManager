@@ -68,7 +68,7 @@ from database.errors.exceptions import (
     MigrationError,
     QueryError,
     SettingsError,
-    TokenDecryptError,
+    TokenCryptoError,
     TokenValidationError,
     UnknownProviderError,
 )
@@ -135,7 +135,7 @@ _DB_CASES = [
     (QueryError, DatabaseQueryError),
     (MigrationError, DatabaseMigrationError),
     (SettingsError, EnvVarError),
-    (TokenDecryptError, TokenDecryptionError),
+    (TokenCryptoError, TokenDecryptionError),
     (TokenValidationError, TokenIntegrityError),
     (CredentialReadError, CredentialFileError),
     (UnknownProviderError, AccountMisconfigured),

@@ -49,9 +49,9 @@ class SettingsError(DatabaseError):
     default_message = "Database settings error."
 
 
-class TokenDecryptError(DatabaseError):
-    code = "token_decrypt_error"
-    default_message = "Failed to decrypt account token."
+class TokenCryptoError(DatabaseError):
+    code = "token_crypto_error"
+    default_message = "Token encryption or decryption failed."
 
 
 class TokenValidationError(DatabaseError):

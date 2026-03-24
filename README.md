@@ -9,6 +9,8 @@ It lets you group Gmail and Outlook accounts under mailbox entities, connect the
 - Multi-provider support: Gmail and Outlook are implemented.
 - Unified inbox per mailbox across all connected accounts.
 - Send email from a specific account in a mailbox.
+- Batch read/unread status management across accounts.
+- Spam operations: move to spam and restore from spam with cross-provider support.
 - OAuth 2.0 interactive connect flow plus silent re-authentication.
 - PostgreSQL persistence for mailboxes, accounts, and tokens.
 - Strict layered architecture with centralized API error mapping.
@@ -153,10 +155,8 @@ Frontend URL: `http://localhost:5173`
 Instead of manual setup, run everything with Docker Compose:
 
 ```bash
-# (Optional) Place OAuth credentials in credentials/
-mkdir credentials
-# cp /path/to/gmail_oauth.json credentials/gmail_credentials.json
-# cp /path/to/outlook_oauth.json credentials/outlook_credentials.json
+# (Optional) Place OAuth credentials — host source path is environment-dependent.
+# Credentials are volume-mounted into /app/credentials inside the container.
 
 docker compose up --build
 ```
@@ -218,6 +218,9 @@ Emails:
 
 - `POST /mailboxes/{mailbox_id}/emails/sync-metadata`
 - `POST /mailboxes/{mailbox_id}/emails/send`
+- `PATCH /mailboxes/{mailbox_id}/emails/read-status` — Batch-update read/unread status
+- `POST /mailboxes/{mailbox_id}/emails/spam` — Move emails to spam
+- `POST /mailboxes/{mailbox_id}/emails/restore-from-spam` — Restore emails from spam
 
 Auth:
 
@@ -266,6 +269,9 @@ Primary API error codes include:
 - `email_fetch_error`
 - `email_send_error`
 - `external_api_error`
+- `read_status_update_error` — 502
+- `spam_move_error` — 502
+- `spam_restore_error` — 502
 
 ## Testing
 

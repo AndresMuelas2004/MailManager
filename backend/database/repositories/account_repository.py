@@ -15,7 +15,7 @@ from database import connection
 from database.contracts import AccountStore
 from database.queries import accounts
 from database.security import token_crypto
-from database.errors.exceptions import (
+from database.errors import (
     DatabaseError,
     QueryError,
     SettingsError,

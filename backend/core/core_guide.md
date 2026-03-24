@@ -11,6 +11,16 @@
 
 **Authority rule**: the code of this layer must respect what is documented here. If there is a discrepancy between this guide and existing code, this guide is the reference — fix the code, not the guide. When new functionality is added, update this guide at the end of the task to reflect the new reality.
 
+## Helper Reuse Policy
+
+When modifying `gmail_client.py`, `outlook_client.py`, or `email_manager.py`, always maximise code reuse before writing new logic:
+
+1. **Shared helpers first** — check `helpers.py` for functions that already solve the problem (`parse_expiry`, `unwrap_app_credentials`, `unwrap_user_tokens`, `wrap_account_tokens`, `http_error_detail`). If the new logic is useful to more than one client, extract it to `helpers.py`.
+2. **Internal helpers second** — scan the file being modified for existing private methods (`_*`). Reuse or extend them instead of duplicating logic.
+3. **Extract when duplicated** — if both clients end up with similar logic, move the common part to `helpers.py` so both import it.
+
+This policy applies to every modification — not only when adding a new provider.
+
 ## Design Decisions
 
 ### `_last_errors` pattern
@@ -108,7 +118,7 @@ otherwise                 → box = "ALL_MAIL"
 2. Batch-fetch metadata in chunks of 100 (`format="metadata"`). When credentials are available, chunks run in parallel via `ThreadPoolExecutor`; otherwise falls back to sequential execution.
 3. Get current `historyId` from `getProfile` as `new_sync_cursor`.
 
-**Parallel execution**: controlled by `GMAIL_BATCH_MAX_WORKERS` environment variable (default `5`). Each parallel chunk builds its own thread-local HTTP transport because `httplib2` is not thread-safe. Retry logic (up to `_BATCH_MAX_RETRIES` = 4 attempts, `_BATCH_RETRY_DELAY` = 1s between retries) applies per chunk. Messages that permanently fail are logged and skipped.
+**Parallel execution**: controlled by `GMAIL_BATCH_MAX_WORKERS` environment variable (default `5`). Each parallel chunk builds its own thread-local HTTP transport because `httplib2` is not thread-safe. Retry logic (up to `_BATCH_MAX_RETRIES` = 4 retries (5 total attempts), `_BATCH_RETRY_DELAY` = 1s between retries) applies per chunk. Messages that permanently fail are logged and skipped.
 
 ### Gmail — incremental sync (History API)
 
@@ -138,10 +148,25 @@ Delta queries are **per folder** — Microsoft Graph v1.0 does not support delta
 
 Beyond `authenticate`, `authenticate_silent`, and `fetch_email_metadata`, the `EmailClient` contract requires:
 
-- **`send_email(subject, body, recipients)`** — send a plain text email.
+- **`send_email(subject, body, recipients) -> EmailMetadata`** — send a plain text email. Returns the metadata of the sent message.
 - **`verify_message_existence(message_ids) → list[str]`** — return the subset of IDs that still exist at the provider. Used to confirm deletions or detect stale references.
 - **`update_read_status(message_ids, is_read) → list[str]`** — mark messages as read or unread at the provider. Returns the list of `provider_message_id`s that were successfully updated. Messages not found at the provider are silently skipped (no error raised). Gmail adds/removes the `UNREAD` label via batch `messages.modify`. Outlook patches each message with `PATCH /me/messages/{id}` setting `{"isRead": bool}`. Raises `EmailNotAuthenticatedError` if the client is not authenticated (guard), and `EmailExternalAPIError` on provider-level failures.
+- **`move_to_spam(message_ids) → list[SpamMoveResult]`** — move messages to spam at the provider. Gmail adds the `SPAM` label via batch `messages.modify`. Outlook uses `POST /me/messages/{id}/move` with `destinationId: "junkemail"`. Returns `SpamMoveResult` pairs with `old_id` and `new_id`. **Outlook caveat**: the `/move` endpoint returns a new message ID; `SpamMoveResult.new_id` captures this (for Gmail, `new_id == old_id`). Raises `EmailNotAuthenticatedError` if not authenticated; silently skips failures for individual messages.
+- **`restore_from_spam(message_ids) → list[SpamMoveResult]`** — restore messages from spam. Gmail removes the `SPAM` label and adds `INBOX` (replicating the "Not Spam" button behavior). Outlook uses `POST /me/messages/{id}/move` with `destinationId: "inbox"`. Same ID-change caveat as `move_to_spam`.
 - **`get_account_label() → str`** — return the label identifying this account within the app.
+
+### Data Structures — Spam Operations
+
+### `SpamMoveResult`
+
+Result of a spam move/restore operation for a single message:
+
+- `old_id: str` — the original `provider_message_id`.
+- `new_id: str` — the ID after the operation. Same as `old_id` for Gmail; different for Outlook (folder move changes the ID).
+
+## Provider-Specific Behavior — Outlook Folder Moves
+
+When Outlook moves a message between folders (via `POST /me/messages/{id}/move`), the message receives a **new ID**. The response body contains the moved message object with the updated `id` field. Any code that moves messages between folders must capture this new ID and propagate it to upper layers for database persistence. This applies to spam operations and any future folder-move operations.
 
 ## Extension
 
@@ -150,7 +175,7 @@ Beyond `authenticate`, `authenticate_silent`, and `fetch_email_metadata`, the `E
 Core layer:
 
 - [ ] Implement `EmailClient` in `backend/core/email/<provider>_client.py`.
-- [ ] Implement all abstract methods: `authenticate`, `authenticate_silent`, `fetch_email_metadata`, `send_email`, `verify_message_existence`, `get_account_label`.
+- [ ] Implement all abstract methods: `authenticate`, `authenticate_silent`, `fetch_email_metadata`, `send_email`, `verify_message_existence`, `update_read_status`, `move_to_spam`, `restore_from_spam`, `get_account_label`.
 - [ ] Reuse helper functions from `helpers.py`.
 - [ ] Add provider branch in `EmailManager._build_client`.
 - [ ] Raise typed `CoreError` subclasses for all failure paths.

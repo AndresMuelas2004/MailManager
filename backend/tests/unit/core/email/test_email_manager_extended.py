@@ -90,3 +90,167 @@ def test_fetch_empty_manager_returns_empty_dict(manager: EmailManager):
     result = manager.fetch_all_email_metadata()
     assert result == {}
     assert manager.get_last_errors() == {}
+
+
+# ------------------------------------------------------------------
+# update_read_status
+# ------------------------------------------------------------------
+
+
+def test_update_read_status_delegates_to_correct_client(
+    manager: EmailManager, fake_client_factory
+):
+    """update_read_status forwards message_ids and is_read to the right client."""
+    client = fake_client_factory("acct1")
+    manager.add_client(client)
+
+    result = manager.update_read_status("acct1", ["m1", "m2"], True)
+
+    assert result == ["m1", "m2"]
+    assert len(client.update_read_status_calls) == 1
+    assert client.update_read_status_calls[0] == (["m1", "m2"], True)
+
+
+def test_update_read_status_account_not_found_raises(
+    manager: EmailManager,
+):
+    """Calling update_read_status with a non-existent label raises EmailAccountNotFoundError."""
+    from core.email.errors import EmailAccountNotFoundError
+
+    with pytest.raises(EmailAccountNotFoundError):
+        manager.update_read_status("nonexistent", ["m1"], True)
+
+
+def test_update_read_status_core_error_propagates(
+    manager: EmailManager, fake_client_factory
+):
+    """A CoreError subclass raised by the client propagates unchanged."""
+    exc = EmailExternalAPIError("provider down")
+    client = fake_client_factory("acct1", update_read_status_exc=exc)
+    manager.add_client(client)
+
+    with pytest.raises(EmailExternalAPIError, match="provider down"):
+        manager.update_read_status("acct1", ["m1"], True)
+
+
+def test_update_read_status_unexpected_exception_wraps(
+    manager: EmailManager, fake_client_factory
+):
+    """A RuntimeError from the client is wrapped in EmailExternalAPIError."""
+    client = fake_client_factory("acct1", update_read_status_exc=RuntimeError("boom"))
+    manager.add_client(client)
+
+    with pytest.raises(EmailExternalAPIError, match="boom"):
+        manager.update_read_status("acct1", ["m1"], False)
+
+
+# ------------------------------------------------------------------
+# move_to_spam
+# ------------------------------------------------------------------
+
+
+def test_move_to_spam_delegates_to_correct_client(
+    manager: EmailManager, fake_client_factory
+):
+    """move_to_spam forwards message_ids to the right client and returns results."""
+    from core.email.email_client import SpamMoveResult
+
+    client = fake_client_factory("acct1")
+    manager.add_client(client)
+
+    result = manager.move_to_spam("acct1", ["m1", "m2"])
+
+    assert len(result) == 2
+    assert all(isinstance(r, SpamMoveResult) for r in result)
+    assert result[0].old_id == "m1"
+    assert len(client.move_to_spam_calls) == 1
+    assert client.move_to_spam_calls[0] == ["m1", "m2"]
+
+
+def test_move_to_spam_account_not_found_raises(
+    manager: EmailManager,
+):
+    """Calling move_to_spam with a non-existent label raises EmailAccountNotFoundError."""
+    from core.email.errors import EmailAccountNotFoundError
+
+    with pytest.raises(EmailAccountNotFoundError):
+        manager.move_to_spam("nonexistent", ["m1"])
+
+
+def test_move_to_spam_core_error_propagates(
+    manager: EmailManager, fake_client_factory
+):
+    """A CoreError subclass raised by the client propagates unchanged."""
+    exc = EmailExternalAPIError("spam API error")
+    client = fake_client_factory("acct1", move_to_spam_exc=exc)
+    manager.add_client(client)
+
+    with pytest.raises(EmailExternalAPIError, match="spam API error"):
+        manager.move_to_spam("acct1", ["m1"])
+
+
+def test_move_to_spam_unexpected_exception_wraps(
+    manager: EmailManager, fake_client_factory
+):
+    """A RuntimeError from the client is wrapped in EmailExternalAPIError."""
+    client = fake_client_factory("acct1", move_to_spam_exc=RuntimeError("unexpected"))
+    manager.add_client(client)
+
+    with pytest.raises(EmailExternalAPIError, match="unexpected"):
+        manager.move_to_spam("acct1", ["m1"])
+
+
+# ------------------------------------------------------------------
+# restore_from_spam
+# ------------------------------------------------------------------
+
+
+def test_restore_from_spam_delegates_to_correct_client(
+    manager: EmailManager, fake_client_factory
+):
+    """restore_from_spam forwards message_ids to the right client and returns results."""
+    from core.email.email_client import SpamMoveResult
+
+    client = fake_client_factory("acct1")
+    manager.add_client(client)
+
+    result = manager.restore_from_spam("acct1", ["m1", "m2"])
+
+    assert len(result) == 2
+    assert all(isinstance(r, SpamMoveResult) for r in result)
+    assert result[0].old_id == "m1"
+    assert len(client.restore_from_spam_calls) == 1
+    assert client.restore_from_spam_calls[0] == ["m1", "m2"]
+
+
+def test_restore_from_spam_account_not_found_raises(
+    manager: EmailManager,
+):
+    """Calling restore_from_spam with a non-existent label raises EmailAccountNotFoundError."""
+    from core.email.errors import EmailAccountNotFoundError
+
+    with pytest.raises(EmailAccountNotFoundError):
+        manager.restore_from_spam("nonexistent", ["m1"])
+
+
+def test_restore_from_spam_core_error_propagates(
+    manager: EmailManager, fake_client_factory
+):
+    """A CoreError subclass raised by the client propagates unchanged."""
+    exc = EmailExternalAPIError("restore API error")
+    client = fake_client_factory("acct1", restore_from_spam_exc=exc)
+    manager.add_client(client)
+
+    with pytest.raises(EmailExternalAPIError, match="restore API error"):
+        manager.restore_from_spam("acct1", ["m1"])
+
+
+def test_restore_from_spam_unexpected_exception_wraps(
+    manager: EmailManager, fake_client_factory
+):
+    """A RuntimeError from the client is wrapped in EmailExternalAPIError."""
+    client = fake_client_factory("acct1", restore_from_spam_exc=RuntimeError("kaboom"))
+    manager.add_client(client)
+
+    with pytest.raises(EmailExternalAPIError, match="kaboom"):
+        manager.restore_from_spam("acct1", ["m1"])
