@@ -543,81 +543,13 @@ def move_to_spam(
     user_id: str,
 ) -> SpamResponse:
     """Move emails to spam across accounts in a mailbox."""
-    ensure_mailbox_access(mailbox_id, user_id)
-
-    items_by_account: dict[str, list[str]] = {}
-    for item in payload.items:
-        items_by_account.setdefault(item.account_id, []).append(item.provider_message_id)
-
-    try:
-        accounts = account_store.list_by_mailbox(mailbox_id)
-    except DatabaseError as exc:
-        raise translate_database_error(exc) from exc
-    except Exception as exc:
-        logger.warning(
-            "Unexpected account listing error (%s): %s",
-            type(exc).__name__, exc,
-        )
-        raise ApiError("Failed to list accounts for spam move.") from exc
-
-    account_map = {str(a["account_id"]): a for a in accounts}
-    for aid in items_by_account:
-        if aid not in account_map:
-            raise AccountNotFound(
-                f"Account '{aid}' not found in mailbox '{mailbox_id}' "
-                "during spam move."
-            )
-
-    referenced_accounts = [account_map[aid] for aid in items_by_account]
-
-    try:
-        auth_payloads, label_lookup = _build_auth_context(
-            referenced_accounts, mailbox_id,
-        )
-        manager = build_manager_for_accounts(referenced_accounts)
-
-        updated_tokens = manager.authenticate_all_silent(auth_payloads)
-        if updated_tokens:
-            _persist_refreshed_tokens(updated_tokens, label_lookup)
-        raise_on_silent_auth_errors(
-            manager.get_last_errors(), fallback=SpamMoveError,
-        )
-
-        account_details: list[AccountSpamDetail] = []
-        total_moved = 0
-
-        for aid, message_ids in items_by_account.items():
-            account_label = f"{mailbox_id}__{aid}"
-
-            try:
-                results = manager.move_to_spam(account_label, message_ids)
-            except CoreError as exc:
-                raise translate_core_error(
-                    exc, fallback=SpamMoveError,
-                    context={"account_id": aid, "account_label": account_label},
-                ) from exc
-
-            if results:
-                update_email_spam_status_batch(aid, results, "SPAM")
-
-            account_details.append(AccountSpamDetail(
-                account_id=aid,
-                moved=len(results),
-            ))
-            total_moved += len(results)
-
-        return SpamResponse(
-            moved_count=total_moved,
-            accounts=account_details,
-        )
-    except ApiError:
-        raise
-    except Exception as exc:
-        logger.warning(
-            "Unexpected spam move error (%s): %s",
-            type(exc).__name__, exc,
-        )
-        raise SpamMoveError("Failed to move emails to spam.") from exc
+    return _execute_spam_operation(
+        mailbox_id, payload, user_id,
+        manager_method="move_to_spam",
+        target_box="SPAM",
+        fallback_error=SpamMoveError,
+        operation_label="spam move",
+    )
 
 
 def restore_from_spam(
@@ -626,6 +558,26 @@ def restore_from_spam(
     user_id: str,
 ) -> SpamResponse:
     """Restore emails from spam across accounts in a mailbox."""
+    return _execute_spam_operation(
+        mailbox_id, payload, user_id,
+        manager_method="restore_from_spam",
+        target_box="ALL_MAIL",
+        fallback_error=SpamRestoreError,
+        operation_label="spam restore",
+    )
+
+
+def _execute_spam_operation(
+    mailbox_id: str,
+    payload: SpamRequest,
+    user_id: str,
+    *,
+    manager_method: str,
+    target_box: str,
+    fallback_error: type[ApiError],
+    operation_label: str,
+) -> SpamResponse:
+    """Shared implementation for move-to-spam and restore-from-spam."""
     ensure_mailbox_access(mailbox_id, user_id)
 
     items_by_account: dict[str, list[str]] = {}
@@ -641,14 +593,14 @@ def restore_from_spam(
             "Unexpected account listing error (%s): %s",
             type(exc).__name__, exc,
         )
-        raise ApiError("Failed to list accounts for spam restore.") from exc
+        raise ApiError(f"Failed to list accounts for {operation_label}.") from exc
 
     account_map = {str(a["account_id"]): a for a in accounts}
     for aid in items_by_account:
         if aid not in account_map:
             raise AccountNotFound(
                 f"Account '{aid}' not found in mailbox '{mailbox_id}' "
-                "during spam restore."
+                f"during {operation_label}."
             )
 
     referenced_accounts = [account_map[aid] for aid in items_by_account]
@@ -663,7 +615,7 @@ def restore_from_spam(
         if updated_tokens:
             _persist_refreshed_tokens(updated_tokens, label_lookup)
         raise_on_silent_auth_errors(
-            manager.get_last_errors(), fallback=SpamRestoreError,
+            manager.get_last_errors(), fallback=fallback_error,
         )
 
         account_details: list[AccountSpamDetail] = []
@@ -673,15 +625,15 @@ def restore_from_spam(
             account_label = f"{mailbox_id}__{aid}"
 
             try:
-                results = manager.restore_from_spam(account_label, message_ids)
+                results = getattr(manager, manager_method)(account_label, message_ids)
             except CoreError as exc:
                 raise translate_core_error(
-                    exc, fallback=SpamRestoreError,
+                    exc, fallback=fallback_error,
                     context={"account_id": aid, "account_label": account_label},
                 ) from exc
 
             if results:
-                update_email_spam_status_batch(aid, results, "ALL_MAIL")
+                update_email_spam_status_batch(aid, results, target_box)
 
             account_details.append(AccountSpamDetail(
                 account_id=aid,
@@ -697,7 +649,7 @@ def restore_from_spam(
         raise
     except Exception as exc:
         logger.warning(
-            "Unexpected spam restore error (%s): %s",
-            type(exc).__name__, exc,
+            "Unexpected %s error (%s): %s",
+            operation_label, type(exc).__name__, exc,
         )
-        raise SpamRestoreError("Failed to restore emails from spam.") from exc
+        raise fallback_error(f"Failed to execute {operation_label}.") from exc
