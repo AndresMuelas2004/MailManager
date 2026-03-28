@@ -393,31 +393,6 @@ class TestUpdateEmailMetadataLabelsBatch:
 
 
 # ------------------------------------------------------------------
-# load_stored_message_ids
-# ------------------------------------------------------------------
-
-class TestLoadStoredMessageIds:
-
-    def test_happy_path_returns_id_list(self):
-        with patch("api.services.services_helpers.email_metadata_store") as mock_store:
-            mock_store.list_provider_message_ids.return_value = ["m1", "m2"]
-            result = load_stored_message_ids("acc-1")
-        assert result == ["m1", "m2"]
-
-    def test_database_error_translated(self):
-        with patch("api.services.services_helpers.email_metadata_store") as mock_store:
-            mock_store.list_provider_message_ids.side_effect = QueryError("DB fail")
-            with pytest.raises(DatabaseQueryError):
-                load_stored_message_ids("acc-1")
-
-    def test_generic_exception_raises_api_error(self):
-        with patch("api.services.services_helpers.email_metadata_store") as mock_store:
-            mock_store.list_provider_message_ids.side_effect = RuntimeError("boom")
-            with pytest.raises(ApiError, match="Failed to load stored message IDs"):
-                load_stored_message_ids("acc-1")
-
-
-# ------------------------------------------------------------------
 # get_trash_emails_by_ids
 # ------------------------------------------------------------------
 
@@ -560,42 +535,6 @@ class TestMoveToTrashBatch:
             mock_store.move_to_trash_batch.side_effect = RuntimeError("boom")
             with pytest.raises(ApiError, match="Failed to move emails to trash"):
                 move_to_trash_batch("acc-1", [("m1", "m1", "acc-1")])
-
-
-# ------------------------------------------------------------------
-# unwrap_secret
-# ------------------------------------------------------------------
-
-class TestUnwrapSecret:
-
-    def test_none_returns_none(self):
-        assert unwrap_secret(None) is None
-
-    def test_secret_str_returns_value(self):
-        assert unwrap_secret(SecretStr("tok")) == "tok"
-
-    def test_plain_string_returns_as_is(self):
-        assert unwrap_secret("plain") == "plain"
-
-
-# ------------------------------------------------------------------
-# _wrap_secret
-# ------------------------------------------------------------------
-
-class TestWrapSecret:
-
-    def test_none_returns_none(self):
-        assert _wrap_secret(None) is None
-
-    def test_string_wraps_to_secret_str(self):
-        result = _wrap_secret("tok")
-        assert isinstance(result, SecretStr)
-        assert result.get_secret_value() == "tok"
-
-    def test_int_wraps_to_secret_str(self):
-        result = _wrap_secret(42)
-        assert isinstance(result, SecretStr)
-        assert result.get_secret_value() == "42"
 
 
 # ------------------------------------------------------------------

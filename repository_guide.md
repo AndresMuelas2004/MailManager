@@ -25,14 +25,17 @@ Routers (FastAPI)
         → GmailClient, OutlookClient
 ```
 
+Note: the `GET /mailboxes/{mailbox_id}/emails` listing endpoint is a pure database read — it goes directly from Services → Database without involving Core or Auth (no provider API calls).
+
 ## Key Identifiers
 
 - `mailbox_id` — groups accounts under a mailbox.
 - `account_id` — unique per account record.
 - `account_label` — `"{mailbox_id}__{account_id}"`, used by `EmailManager` for client identification.
-- `display_label` — optional human-readable label; defaults to `"{provider}:{account_id}"`.
+- `display_label` — required on account creation (`min_length=1`, `NOT NULL`); the service layer falls back to `"{provider}:{account_id}"` when rendering responses for legacy records.
 - `user_id` — UUID identifying an authenticated user (from `users` table).
 - `owner_user_id` — FK on `mailboxes` linking to the owning user (NOT NULL, CASCADE on user delete).
+- `email_address` — the email address of the connected account, fetched best-effort from the provider during `connect_account`. Stored as plain text (not encrypted) in the `accounts` table. May be `NULL` if the fetch failed.
 
 ## Testing
 
@@ -45,8 +48,12 @@ Routers (FastAPI)
 
 Stack: React + Vite + TypeScript + Tailwind. Structure:
 
-- `src/api/` — HTTP client, typed endpoints, DTOs.
-- `src/features/`, `src/pages/`, `src/components/` — feature-based organization.
+- `src/api/` — HTTP client (`client/`), typed endpoints (`endpoints/`), DTOs (`types/`).
+- `src/app/` — Layout, providers, routing.
+- `src/pages/` — Page components.
+- `src/lib/` — Shared constants and utilities.
+- `src/styles/` — Global CSS.
+- `src/features/`, `src/components/` — scaffolded (empty).
 
 ## Docker
 
@@ -62,7 +69,7 @@ Adding a new email provider or identity provider impacts multiple layers (Core, 
 ## Provider-First Rule
 
 For any operation that modifies email state both at the provider and in our database, always call the provider API first. Only update the DB for messages where the provider call succeeded. Never persist a state change locally if the provider rejected or failed the operation. This ensures our DB always reflects the real state of the user's mailbox at the provider.
-**Current exceptions:** The delete-email endpoint skips the real provider call for Gmail because the required `mail.google.com` scope is difficult to obtain. Deletion is performed only in the local database. This exception may be removed once the scope is available.
+**Current exceptions:** Both providers (Gmail and Outlook) use a uniform no-op approach for `delete_messages` -- the provider API is not called and deletion is performed only in the local database. See `core_guide.md` (Trash Management Operations > `delete_messages`) for the detailed rationale.
 
 ## Document Maintenance
 

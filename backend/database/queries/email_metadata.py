@@ -18,14 +18,6 @@ UPSERT_EMAIL_METADATA_BATCH = """
         END
 """
 
-LIST_BY_ACCOUNT = """
-    SELECT provider_message_id, account_id, thread_id, from_email, from_name,
-           subject, received_at, is_read, box
-    FROM email_metadata
-    WHERE account_id = %(account_id)s AND box != 'DELETED'
-    ORDER BY received_at DESC
-"""
-
 DELETE_BY_ACCOUNT = """
     DELETE FROM email_metadata WHERE account_id = %(account_id)s
 """
@@ -119,4 +111,21 @@ MOVE_TO_TRASH_BATCH = """
     WHERE em.provider_message_id = v.old_message_id::VARCHAR
       AND em.account_id = v.account_id::UUID
       AND em.box NOT IN ('TRASH', 'DELETED')
+"""
+
+LIST_BY_ACCOUNT_AND_BOX = """
+    SELECT provider_message_id, account_id, thread_id, from_email, from_name,
+           subject, received_at, is_read, box
+    FROM email_metadata
+    WHERE account_id = %(account_id)s AND box = %(box)s
+    ORDER BY received_at DESC
+"""
+
+LIST_BY_MAILBOX_AND_BOX = """
+    SELECT em.provider_message_id, em.account_id, em.thread_id, em.from_email,
+           em.from_name, em.subject, em.received_at, em.is_read, em.box
+    FROM email_metadata em
+    JOIN accounts a ON em.account_id = a.account_id
+    WHERE a.mailbox_id = %(mailbox_id)s AND em.box = %(box)s
+    ORDER BY em.received_at DESC
 """

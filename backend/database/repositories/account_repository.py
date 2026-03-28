@@ -281,6 +281,7 @@ class PgAccountStore(AccountStore):
         refresh_token = token_data.get("refresh_token")
         scopes = _serialize_scopes(token_data.get("scopes"))
         expiry = token_data.get("expiry")
+        email_address = token_data.get("email_address")
 
         use_encryption = True
         encrypted_access_token: str | None = None
@@ -311,6 +312,7 @@ class PgAccountStore(AccountStore):
                 "encryption_key_id": token_crypto.get_active_key_id(),
                 "expiry": expiry,
                 "scopes": scopes,
+                "email_address": email_address,
             }
         else:
             query = accounts.UPSERT_TOKENS_PLAINTEXT
@@ -322,6 +324,7 @@ class PgAccountStore(AccountStore):
                 "refresh_token": str(refresh_token) if refresh_token is not None else None,
                 "expiry": expiry,
                 "scopes": scopes,
+                "email_address": email_address,
             }
 
         try:

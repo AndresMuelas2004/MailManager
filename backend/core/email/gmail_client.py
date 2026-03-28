@@ -22,6 +22,7 @@ from googleapiclient.errors import HttpError
 
 from .email_client import EmailClient, EmailMetadata, LabelUpdate, SpamMoveResult, SyncResult
 from .errors import (
+    CoreError,
     EmailExternalAPIError,
     EmailMissingAppCredentialsError,
     EmailMissingRefreshTokenError,
@@ -125,12 +126,14 @@ class GmailClient(EmailClient):
 
         self._credentials = creds
         self.service = build("gmail", "v1", credentials=creds)
+        email_address = self._fetch_sender_email()
 
         token_record = {
             "access_token": creds.token,
             "refresh_token": creds.refresh_token,
             "expiry": creds.expiry.isoformat() if creds.expiry else None,
             "scopes": creds.scopes,
+            "email_address": email_address or None,
         }
         return wrap_account_tokens(token_record)
 
@@ -1054,7 +1057,7 @@ class GmailClient(EmailClient):
                             request_id=msg_id,
                         )
                     batch.execute()
-                except EmailExternalAPIError:
+                except CoreError:
                     raise
                 except HttpError as exc:
                     status, reason = http_error_detail(exc)

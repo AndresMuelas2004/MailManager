@@ -39,6 +39,13 @@ except ModuleNotFoundError:  # pragma: no cover - fallback for offline environme
 
 MAILBOX_URL = "/mailboxes"
 
+# Seeded fake data from migration 0010 — used for GET endpoint assertions.
+SEEDED_USER_ID = "11111111-1111-4000-a000-111111111111"
+SEEDED_GMAIL_MAILBOX_ID = "aaaaaaaa-aaaa-4000-a000-aaaaaaaaa001"
+SEEDED_GMAIL_ACCOUNT_ID = "bbbbbbbb-bbbb-4000-a000-bbbbbbbbb001"
+SEEDED_OUTLOOK_MAILBOX_ID = "aaaaaaaa-aaaa-4000-a000-aaaaaaaaa002"
+SEEDED_OUTLOOK_ACCOUNT_ID = "bbbbbbbb-bbbb-4000-a000-bbbbbbbbb002"
+
 
 def _setup_mailbox_and_account(client, provider: str = "gmail") -> tuple[str, str]:
     """Create a mailbox + account and return ``(mailbox_id, account_id)``."""
@@ -279,3 +286,15 @@ def failing_test_client(test_client_base, sample_metadata, monkeypatch, request)
 
     _apply_test_monkeypatches(monkeypatch, _build_manager)
     return test_client_base
+
+
+@pytest.fixture
+def seeded_test_client(test_client_base, app):
+    """Client authenticated as the seeded fake user (migration 0010).
+
+    No provider fakes needed — these tests only hit GET endpoints
+    that read directly from the database.
+    """
+    app.dependency_overrides[require_session] = lambda: SEEDED_USER_ID
+    yield test_client_base
+    app.dependency_overrides[require_session] = lambda: TEST_USER_ID

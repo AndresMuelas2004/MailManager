@@ -21,6 +21,10 @@
 | `POST /auth/google` | Creates the session — cannot require a prior one |
 | `POST /auth/logout` | Must work even with expired sessions |
 
+### `DELETE /auth/me` — account deletion
+
+Requires `require_session` (authenticated). Deletes the user row; PostgreSQL `CASCADE` handles all associated data (mailboxes, accounts, tokens, sessions). After deletion the service clears the session cookie. Raises `UserNotFound` (404) if the user does not exist.
+
 ### One endpoint per identity provider
 
 `POST /auth/google` is hardcoded to Google OIDC. When adding a new provider, add a separate `POST /auth/<provider>` — not a generic endpoint with a `provider` parameter. This keeps each flow's schema and service logic isolated.
@@ -95,7 +99,26 @@ One helper in `services_helpers.py` supports the move-to-trash flow:
 
 `update_email_spam_status_batch(account_id, results, new_box)` — batch update `provider_message_id` and `box` in the database. Uses `UPDATE_SPAM_STATUS_BATCH` which matches on the old `provider_message_id` and writes the new ID and box value.
 
+### Email listing endpoint
+
+`GET /mailboxes/{mailbox_id}/emails?box=<BOX>&account_id=<optional>` — list email metadata filtered by box.
+
+- **Query params**: `box` (required, one of `ALL_MAIL`, `SENT`, `SPAM`, `TRASH`), `account_id` (optional UUID).
+- **Response**: `list[EmailMetadataOut]` — flat list of email metadata objects sorted by `received_at DESC`.
+- **Error**: `EmailListError` (code `"email_list_error"`, HTTP 500) — raised on database-level failures during listing.
+- **Flow**: validate ownership via `ensure_mailbox_access` → if `account_id` provided, validate it belongs to the mailbox via `account_store.get`, then query `list_by_account_and_box`; if omitted, query `list_by_mailbox_and_box` (JOINs with `accounts` table).
+- **No provider calls**: this endpoint reads only from the local database. Provider sync is handled by `POST .../sync-metadata`.
+- **Testing rule**: this endpoint (and all GET endpoints) must be integration-tested using the seeded fake data from migration 0010 with exact content assertions. See `integration_guide.md` § "GET endpoint testing rules" for the mandatory rules.
+
+### GET endpoints — integration test coverage rule
+
+All GET endpoints in this API are pure database reads — they never call provider APIs. This means integration tests (real FastAPI + real PostgreSQL) provide the same coverage as E2E tests for these endpoints. See `integration_guide.md` § "GET endpoint testing rules" for the mandatory rules that apply when adding or modifying GET endpoints.
+
 ## Behavioral Contracts — Traps to Avoid
+
+### `connect_account` response includes `email_address`
+
+After a successful interactive OAuth flow, the service extracts the `email_address` from the token payload (populated by the Core layer's best-effort fetch) and includes it in `AccountConnectResponse`. The field is `str | None` — `None` when the provider email fetch failed. The `AccountOut` schema also includes `email_address` (populated from the `accounts` table) so the frontend can display it when listing accounts.
 
 ### `translate_connect_error`
 
@@ -114,11 +137,13 @@ After `fetch_all_email_metadata()`, the service calls the same `raise_on_silent_
 `_reconcile_ghost_emails` is a best-effort cleanup flow that runs only after a full sync (bootstrap, i.e. `is_full_sync=True`). It detects "ghost" emails — rows stored in the database that no longer exist at the provider:
 
 1. Load stored `provider_message_id`s for the account via `load_stored_message_ids`.
-2. Call `verify_message_existence` on the provider to check which IDs still exist.
-3. Compute the difference (stored minus existing) to find ghost IDs.
-4. Delete ghost rows via `delete_email_metadata_batch`.
+2. Extract `bootstrap_ids` from `sync_result.upserts` (the IDs returned by the fresh bootstrap sync).
+3. Compute `suspect_ids` = stored IDs NOT IN `bootstrap_ids` (emails the bootstrap did not return).
+4. Call `verify_message_existence` on the provider to check which suspect IDs still exist.
+5. Compute ghost IDs = suspect IDs NOT IN the set returned by `verify_message_existence`.
+6. Delete ghost rows via `delete_email_metadata_batch`.
 
-The entire flow is wrapped in a broad `except Exception` — if any step fails, the error is logged and silently skipped. Ghost reconciliation never causes the sync endpoint to fail.
+Each step is wrapped in its own `except Exception` block — if any step fails, the error is logged and reconciliation is silently skipped for that account. Ghost reconciliation never causes the sync endpoint to fail.
 
 ### `manage_trash` — trash operation flow
 
@@ -148,13 +173,19 @@ Error classes: `MoveToTrashError` (502 — provider-side failure, code `move_to_
 
 Request/response schemas: `MoveToTrashRequest`, `MoveToTrashResult`.
 
-### Ghost email reconciliation
-
-After a full (bootstrap) sync, `_reconcile_ghost_emails` detects emails stored in the DB that the provider no longer returns. It loads stored IDs, compares against bootstrap results, verifies suspects at the provider via `verify_message_existence`, and hard-deletes confirmed ghosts. **Best-effort**: any error at any step silently skips reconciliation for that account.
-
 ### `send_email` — fire-and-forget metadata persistence
 
 After a successful send, the service persists the sent email's metadata. If persistence fails, the error is logged but swallowed — the send is still reported as successful. This is deliberate: the user cares that the email was sent, not that we tracked it internally.
+
+## Additional Error Classes
+
+| Class | Code | HTTP | Usage |
+|---|---|---|---|
+| `EmailFetchError` | `email_fetch_error` | 502 | Provider-side failure when fetching/syncing email metadata. |
+| `EmailSendError` | `email_send_error` | 502 | Provider-side failure when sending an email. |
+| `UserNotFound` | `user_not_found` | 404 | Authenticated user does not exist in the database (e.g. during `DELETE /auth/me` or `GET /auth/me`). |
+| `TokenEncryptionError` | `token_encryption_error` | 500 | Failure while encrypting account tokens before storage. Translated from the database layer's `TokenEncryptError`. |
+| `EmailListError` | `email_list_error` | 500 | Database-level failure when listing email metadata. |
 
 ## Extension
 

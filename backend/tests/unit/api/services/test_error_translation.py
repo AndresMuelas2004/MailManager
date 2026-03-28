@@ -26,6 +26,7 @@ from api.errors.exceptions import (
     ExternalAPIError,
     RecipientsMissing,
     TokenDecryptionError,
+    TokenEncryptionError,
     TokenIntegrityError,
     Unauthorized,
 )
@@ -138,7 +139,7 @@ _DB_CASES = [
     (MigrationError, DatabaseMigrationError),
     (SettingsError, EnvVarError),
     (TokenCryptoError, TokenDecryptionError),
-    (TokenEncryptError, TokenDecryptionError),
+    (TokenEncryptError, TokenEncryptionError),
     (TokenDecryptError, TokenDecryptionError),
     (TokenValidationError, TokenIntegrityError),
     (CredentialReadError, CredentialFileError),

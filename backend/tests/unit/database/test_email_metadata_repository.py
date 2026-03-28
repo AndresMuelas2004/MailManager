@@ -76,53 +76,6 @@ def test_upsert_batch_propagates_connection_pool_error(monkeypatch):
         em_module.email_metadata_store.upsert_batch("acc1", [("m1",)])
 
 
-# ===== list_by_account =====
-
-
-def test_list_by_account_happy_path(monkeypatch):
-    rows = [
-        {"provider_message_id": "m1", "account_id": "acc1", "thread_id": "t1",
-         "from_email": "a@b.com", "from_name": "A", "subject": "s",
-         "received_at": datetime.now(timezone.utc), "is_read": False, "box": "ALL_MAIL"},
-    ]
-    cursor = FakeCursor(fetchall_results=[rows])
-    patch_connection(monkeypatch, em_module, [cursor])
-
-    result = em_module.email_metadata_store.list_by_account("acc1")
-    assert len(result) == 1
-    assert result[0]["provider_message_id"] == "m1"
-
-
-def test_list_by_account_invalid_text_returns_empty(monkeypatch):
-    cursor = FakeCursor(execute_side_effect=psycopg2.errors.InvalidTextRepresentation())
-    patch_connection(monkeypatch, em_module, [cursor])
-
-    assert em_module.email_metadata_store.list_by_account("not-a-uuid") == []
-
-
-def test_list_by_account_psycopg2_error_raises_query_error(monkeypatch):
-    cursor = FakeCursor(execute_side_effect=psycopg2.OperationalError("fail"))
-    patch_connection(monkeypatch, em_module, [cursor])
-
-    with pytest.raises(QueryError, match="Failed to list email metadata"):
-        em_module.email_metadata_store.list_by_account("acc1")
-
-
-def test_list_by_account_generic_raises_query_error(monkeypatch):
-    cursor = FakeCursor(execute_side_effect=RuntimeError("boom"))
-    patch_connection(monkeypatch, em_module, [cursor])
-
-    with pytest.raises(QueryError, match="RuntimeError"):
-        em_module.email_metadata_store.list_by_account("acc1")
-
-
-def test_list_by_account_propagates_connection_pool_error(monkeypatch):
-    patch_connection_error(monkeypatch, em_module, ConnectionPoolError("pool down"))
-
-    with pytest.raises(ConnectionPoolError, match="pool down"):
-        em_module.email_metadata_store.list_by_account("acc1")
-
-
 # ===== delete_by_account =====
 
 
@@ -615,3 +568,102 @@ def test_update_spam_status_batch_propagates_connection_pool_error(monkeypatch):
 
     with pytest.raises(ConnectionPoolError, match="pool down"):
         em_module.email_metadata_store.update_spam_status_batch("acc1", [("old_m1",)])
+
+
+# ===== list_by_account_and_box =====
+
+
+def test_list_by_account_and_box_happy_path(monkeypatch):
+    rows = [
+        {"provider_message_id": "m1", "account_id": "acc1", "thread_id": "t1",
+         "from_email": "a@b.com", "from_name": "A", "subject": "s",
+         "received_at": datetime.now(timezone.utc), "is_read": False, "box": "SENT"},
+    ]
+    cursor = FakeCursor(fetchall_results=[rows])
+    patch_connection(monkeypatch, em_module, [cursor])
+
+    result = em_module.email_metadata_store.list_by_account_and_box("acc1", "SENT")
+    assert len(result) == 1
+    assert result[0]["provider_message_id"] == "m1"
+    assert result[0]["box"] == "SENT"
+
+
+def test_list_by_account_and_box_invalid_text_returns_empty(monkeypatch):
+    cursor = FakeCursor(execute_side_effect=psycopg2.errors.InvalidTextRepresentation())
+    patch_connection(monkeypatch, em_module, [cursor])
+
+    assert em_module.email_metadata_store.list_by_account_and_box("not-a-uuid", "ALL_MAIL") == []
+
+
+def test_list_by_account_and_box_psycopg2_error_raises_query_error(monkeypatch):
+    cursor = FakeCursor(execute_side_effect=psycopg2.OperationalError("fail"))
+    patch_connection(monkeypatch, em_module, [cursor])
+
+    with pytest.raises(QueryError, match="Failed to list email metadata by account and box"):
+        em_module.email_metadata_store.list_by_account_and_box("acc1", "ALL_MAIL")
+
+
+def test_list_by_account_and_box_generic_raises_query_error(monkeypatch):
+    cursor = FakeCursor(execute_side_effect=RuntimeError("boom"))
+    patch_connection(monkeypatch, em_module, [cursor])
+
+    with pytest.raises(QueryError, match="RuntimeError"):
+        em_module.email_metadata_store.list_by_account_and_box("acc1", "ALL_MAIL")
+
+
+def test_list_by_account_and_box_propagates_connection_pool_error(monkeypatch):
+    patch_connection_error(monkeypatch, em_module, ConnectionPoolError("pool down"))
+
+    with pytest.raises(ConnectionPoolError, match="pool down"):
+        em_module.email_metadata_store.list_by_account_and_box("acc1", "ALL_MAIL")
+
+
+# ===== list_by_mailbox_and_box =====
+
+
+def test_list_by_mailbox_and_box_happy_path(monkeypatch):
+    rows = [
+        {"provider_message_id": "m1", "account_id": "acc1", "thread_id": "t1",
+         "from_email": "a@b.com", "from_name": "A", "subject": "s",
+         "received_at": datetime.now(timezone.utc), "is_read": True, "box": "SPAM"},
+        {"provider_message_id": "m2", "account_id": "acc2", "thread_id": "t2",
+         "from_email": "c@d.com", "from_name": "C", "subject": "s2",
+         "received_at": datetime.now(timezone.utc), "is_read": False, "box": "SPAM"},
+    ]
+    cursor = FakeCursor(fetchall_results=[rows])
+    patch_connection(monkeypatch, em_module, [cursor])
+
+    result = em_module.email_metadata_store.list_by_mailbox_and_box("mbx1", "SPAM")
+    assert len(result) == 2
+    assert result[0]["account_id"] == "acc1"
+    assert result[1]["account_id"] == "acc2"
+
+
+def test_list_by_mailbox_and_box_invalid_text_returns_empty(monkeypatch):
+    cursor = FakeCursor(execute_side_effect=psycopg2.errors.InvalidTextRepresentation())
+    patch_connection(monkeypatch, em_module, [cursor])
+
+    assert em_module.email_metadata_store.list_by_mailbox_and_box("not-a-uuid", "ALL_MAIL") == []
+
+
+def test_list_by_mailbox_and_box_psycopg2_error_raises_query_error(monkeypatch):
+    cursor = FakeCursor(execute_side_effect=psycopg2.OperationalError("fail"))
+    patch_connection(monkeypatch, em_module, [cursor])
+
+    with pytest.raises(QueryError, match="Failed to list email metadata by mailbox and box"):
+        em_module.email_metadata_store.list_by_mailbox_and_box("mbx1", "ALL_MAIL")
+
+
+def test_list_by_mailbox_and_box_generic_raises_query_error(monkeypatch):
+    cursor = FakeCursor(execute_side_effect=RuntimeError("boom"))
+    patch_connection(monkeypatch, em_module, [cursor])
+
+    with pytest.raises(QueryError, match="RuntimeError"):
+        em_module.email_metadata_store.list_by_mailbox_and_box("mbx1", "ALL_MAIL")
+
+
+def test_list_by_mailbox_and_box_propagates_connection_pool_error(monkeypatch):
+    patch_connection_error(monkeypatch, em_module, ConnectionPoolError("pool down"))
+
+    with pytest.raises(ConnectionPoolError, match="pool down"):
+        em_module.email_metadata_store.list_by_mailbox_and_box("mbx1", "ALL_MAIL")

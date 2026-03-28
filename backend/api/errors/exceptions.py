@@ -99,6 +99,10 @@ class TokenDecryptionError(ApiError):
     code = "token_decryption_error"
 
 
+class TokenEncryptionError(ApiError):
+    code = "token_encryption_error"
+
+
 class TokenIntegrityError(ApiError):
     code = "token_integrity_error"
 
@@ -129,3 +133,7 @@ class SpamMoveError(ApiError):
 
 class SpamRestoreError(ApiError):
     code = "spam_restore_error"
+
+
+class EmailListError(ApiError):
+    code = "email_list_error"

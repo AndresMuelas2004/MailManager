@@ -13,6 +13,7 @@ from api.errors.exceptions import (
     AccountNotFound,
     ApiError,
     EmailFetchError,
+    EmailListError,
     EmailNotInTrash,
     EmailSendError,
     MoveToTrashError,
@@ -26,6 +27,7 @@ from api.schemas.email import (
     AccountReadStatusDetail,
     AccountSpamDetail,
     AccountSyncDetail,
+    EmailMetadataOut,
     EmailSendRequest,
     MoveToTrashRequest,
     MoveToTrashResult,
@@ -62,7 +64,7 @@ from api.services.services_helpers import (
     update_email_spam_status_batch,
     update_sync_cursor,
 )
-from database import account_store, DatabaseError
+from database import account_store, email_metadata_store, DatabaseError
 
 
 def _reconcile_ghost_emails(
@@ -169,7 +171,7 @@ def sync_email_metadata(mailbox_id: str, user_id: str) -> SyncResultOut:
     except DatabaseError as exc:
         raise translate_database_error(exc) from exc
     except Exception as exc:
-        logger.warning("Unexpected account listing error (%s): %s", type(exc).__name__, exc)
+        logger.warning("Unexpected account listing error during sync (%s): %s", type(exc).__name__, exc)
         raise ApiError("Failed to list accounts for sync.") from exc
 
     try:
@@ -308,7 +310,7 @@ def manage_trash(mailbox_id: str, payload: TrashActionRequest, user_id: str) -> 
     except DatabaseError as exc:
         raise translate_database_error(exc) from exc
     except Exception as exc:
-        logger.warning("Unexpected account listing error (%s): %s", type(exc).__name__, exc)
+        logger.warning("Unexpected account listing error during trash operation (%s): %s", type(exc).__name__, exc)
         raise TrashOperationError("Failed to list accounts for trash operation.") from exc
 
     account_ids_in_mailbox = {str(a.get("account_id") or "") for a in accounts}
@@ -407,7 +409,7 @@ def move_to_trash(mailbox_id: str, payload: MoveToTrashRequest, user_id: str) ->
     except DatabaseError as exc:
         raise translate_database_error(exc) from exc
     except Exception as exc:
-        logger.warning("Unexpected account listing error (%s): %s", type(exc).__name__, exc)
+        logger.warning("Unexpected account listing error during move-to-trash (%s): %s", type(exc).__name__, exc)
         raise MoveToTrashError("Failed to list accounts for move-to-trash operation.") from exc
 
     account_ids_in_mailbox = {str(a.get("account_id") or "") for a in accounts}
@@ -653,3 +655,73 @@ def _execute_spam_operation(
             operation_label, type(exc).__name__, exc,
         )
         raise fallback_error(f"Failed to execute {operation_label}.") from exc
+
+
+def list_emails(
+    mailbox_id: str,
+    box: str,
+    user_id: str,
+    account_id: str | None = None,
+) -> list[EmailMetadataOut]:
+    """List email metadata for a mailbox, optionally filtered to a single account."""
+    ensure_mailbox_access(mailbox_id, user_id)
+
+    if account_id is not None:
+        try:
+            account = account_store.get(mailbox_id, account_id)
+        except DatabaseError as exc:
+            raise translate_database_error(exc) from exc
+        except Exception as exc:
+            logger.warning(
+                "Unexpected account lookup error during email listing (%s): %s",
+                type(exc).__name__, exc,
+            )
+            raise EmailListError(
+                "Failed to look up account for email listing."
+            ) from exc
+        if account is None:
+            raise AccountNotFound(
+                f"Account '{account_id}' not found in mailbox '{mailbox_id}' "
+                "during email listing."
+            )
+
+        try:
+            rows = email_metadata_store.list_by_account_and_box(account_id, box)
+        except DatabaseError as exc:
+            raise translate_database_error(exc) from exc
+        except Exception as exc:
+            logger.warning(
+                "Unexpected email metadata listing error for account '%s' (%s): %s",
+                account_id, type(exc).__name__, exc,
+            )
+            raise EmailListError(
+                "Failed to list email metadata for account."
+            ) from exc
+    else:
+        try:
+            rows = email_metadata_store.list_by_mailbox_and_box(mailbox_id, box)
+        except DatabaseError as exc:
+            raise translate_database_error(exc) from exc
+        except Exception as exc:
+            logger.warning(
+                "Unexpected email metadata listing error for mailbox '%s' (%s): %s",
+                mailbox_id, type(exc).__name__, exc,
+            )
+            raise EmailListError(
+                "Failed to list email metadata for mailbox."
+            ) from exc
+
+    return [
+        EmailMetadataOut(
+            provider_message_id=row["provider_message_id"],
+            account_id=str(row["account_id"]),
+            thread_id=row.get("thread_id"),
+            from_email=row["from_email"],
+            from_name=row.get("from_name"),
+            subject=row.get("subject"),
+            received_at=row["received_at"],
+            is_read=row["is_read"],
+            box=row["box"],
+        )
+        for row in rows
+    ]

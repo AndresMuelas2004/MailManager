@@ -29,9 +29,9 @@ Tests for service modules (`test_accounts_service.py`, `test_mailboxes_service.p
 
 This file uses a different approach from the Fake store pattern above. Instead of inline Fake stores, it relies on helper functions that monkeypatch module-level functions and build an `EmailManager` with `FakeEmailClient` instances from `tests/shared/email_fakes.py`:
 
-- `_patch_common()` — patches the shared dependencies needed by all email service tests (e.g. `ensure_mailbox_access`, `build_manager_for_accounts`, store methods). Returns a pre-configured `EmailManager` with fake clients.
-- `_patch_read_status()` — extends `_patch_common()` with patches specific to the read-status flow (e.g. `update_email_read_status_batch`).
-- `_patch_spam()` — extends `_patch_common()` with patches specific to spam operations (e.g. `update_email_spam_status_batch`).
+- `_patch_common()` — void function that applies ~12 monkeypatches covering `ensure_mailbox_access`, `account_store.list_by_mailbox`, `account_store.get`, `load_wrapped_app_credentials`, `load_wrapped_account_tokens`, `account_store.upsert_tokens`, `build_manager_for_accounts`, and persistence helpers (`persist_email_metadata_batch`, `delete_email_metadata_batch`, `update_email_metadata_labels_batch`, `load_sync_cursors`, `update_sync_cursor`). Does not return an `EmailManager`.
+- `_patch_read_status()` — independent function (does not extend `_patch_common()`). Re-applies the shared patches independently and adds `update_email_read_status_batch`. Accepts an optional `accounts` parameter for multi-account scenarios.
+- `_patch_spam()` — independent function (does not extend `_patch_common()`). Re-applies the shared patches independently and adds `update_email_spam_status_batch`.
 
 These helpers centralize the monkeypatching so individual test functions stay concise — they call one helper, then exercise the service function under test.
 
@@ -42,7 +42,7 @@ These helpers centralize the monkeypatching so individual test functions stay co
 ### Trash management coverage
 
 - `manage_trash` service function is covered by `TestManageTrash` in `test_emails_service.py`.
-- The 4 trash helpers (`load_stored_message_ids`, `get_trash_emails_by_ids`, `mark_as_deleted_batch`, `restore_from_trash_batch`) are covered in `test_services_helpers.py`.
+- Trash helpers (`load_stored_message_ids`, `get_trash_emails_by_ids`, `mark_as_deleted_batch`, `restore_from_trash_batch`, `restore_from_trash_discovered_batch`, `move_to_trash_batch`) are covered in `test_services_helpers.py`.
 - `is_auth_error`, `unwrap_secret`, `_wrap_secret` utility functions are also covered in `test_services_helpers.py`.
 
 ### Move-to-trash coverage
@@ -53,3 +53,17 @@ These helpers centralize the monkeypatching so individual test functions stay co
 - `OutlookClient.move_to_trash` is covered by `TestMoveToTrash` in `test_outlook_client.py`.
 - `EmailManager.move_to_trash` delegation is covered by standalone functions (`test_move_to_trash_delegates_to_client`, `test_move_to_trash_unknown_label_raises`) in `test_email_manager.py`.
 - `PgEmailMetadataStore.move_to_trash_batch` is covered in `test_email_metadata_repository.py`.
+
+### Spam operations coverage
+
+- `move_to_spam` and `restore_from_spam` service functions are covered by `TestMoveToSpam` and `TestRestoreFromSpam` in `test_emails_service.py`.
+- `update_email_spam_status_batch` helper is covered in `test_services_helpers.py`.
+- `GmailClient.move_to_spam` and `restore_from_spam` are covered in `test_gmail_client.py`.
+- `OutlookClient.move_to_spam` and `restore_from_spam` are covered in `test_outlook_client.py`.
+- `EmailManager.move_to_spam` and `restore_from_spam` delegation is covered in `test_email_manager_extended.py`.
+- `PgEmailMetadataStore.update_spam_status_batch` is covered in `test_email_metadata_repository.py`.
+
+### Email listing coverage
+
+- `list_emails` service function is covered by `TestListEmails` in `test_emails_service.py` (8 tests: single account happy path, unified view, account not found, DB errors on lookup/query, unexpected error, empty result).
+- `PgEmailMetadataStore.list_by_account_and_box` and `list_by_mailbox_and_box` are covered in `test_email_metadata_repository.py` (5 tests each: happy path, invalid text, psycopg2 error, generic error, connection pool error propagation).

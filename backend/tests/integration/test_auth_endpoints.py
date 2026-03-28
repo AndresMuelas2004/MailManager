@@ -14,7 +14,7 @@ from auth import AuthSettingsError, AuthTokenInvalidError, AuthTokenNetworkError
 from api.routers.routers_helpers import require_session
 from api.services import auth_service
 from database import QueryError, session_store
-from tests.integration.conftest import MAILBOX_URL as _MAILBOX_URL, TEST_USER_ID
+from tests.integration.conftest import MAILBOX_URL as _MAILBOX_URL, TEST_USER_ID, TEST_USER_EMAIL
 
 
 # ------------------------------------------------------------------
@@ -132,11 +132,13 @@ def test_google_login_missing_email_claim(test_client_base, isolated_db, monkeyp
 # ------------------------------------------------------------------
 
 def test_get_me_authenticated(test_client):
-    """Authenticated user can fetch their profile."""
+    """Authenticated user can fetch their profile with exact field values."""
     resp = test_client.get("/auth/me")
     assert resp.status_code == 200
     data = resp.json()
     assert data["user_id"] == TEST_USER_ID
+    assert data["email"] == TEST_USER_EMAIL
+    assert data["name"] == "Test User"
 
 
 def test_get_me_no_session(test_client_base, isolated_db, app):

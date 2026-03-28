@@ -54,11 +54,6 @@ class FakeUserStore:
             return dict(self._user)
         return None
 
-    def get_by_google_sub(self, google_sub):
-        if self._user and self._user["google_sub"] == google_sub:
-            return dict(self._user)
-        return None
-
     def delete(self, user_id):
         self.deleted_ids.append(user_id)
         if self._user and self._user["user_id"] == user_id:

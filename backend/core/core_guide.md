@@ -88,9 +88,13 @@ Used by `POST /connect`. Executes provider-specific OAuth:
 - Gmail: `InstalledAppFlow.run_local_server(...)`
 - Outlook: manual PKCE flow with local callback HTTP server
 
+After successful authentication, both clients fetch the authenticated user's email address (best-effort) and include it as `email_address` in the returned token record. Gmail uses `_fetch_sender_email()` (Gmail `getProfile` endpoint). Outlook uses `_fetch_sender_profile()` (Graph `/me`, JWT claims, or sent items fallback). The value is `None` if all fetch strategies fail.
+
 ### Silent flow (`authenticate_silent`)
 
 Used before fetch/send. Returns `None` if token is still valid (no refresh needed), or wrapped updated tokens when refreshed.
+
+**`email_address` not returned**: Gmail's silent auth does NOT include `email_address` in the token dict (only the interactive `authenticate` flow fetches it). The `COALESCE` pattern in the `upsert_tokens` SQL query prevents silent-refresh upserts from erasing a previously stored email_address.
 
 **Provider-specific refresh behavior** — critical difference:
 - **Gmail**: refresh token is commonly stable across refreshes.
@@ -148,7 +152,7 @@ Delta queries are **per folder** — Microsoft Graph v1.0 does not support delta
 
 ### `delete_messages(message_ids) → list[str]`
 
-Mark messages as deleted locally without calling the provider API. Returns all provided IDs as "succeeded" so the service layer marks them as `DELETED` in the database. **This is the only operation that intentionally breaks the Provider-First Rule** (root `CLAUDE.md` § 2.9): it does not act on the provider before updating the DB.
+Mark messages as deleted locally without calling the provider API. Returns all provided IDs as "succeeded" so the service layer marks them as `DELETED` in the database. **This is the only operation that intentionally breaks the Provider-First Rule** (`repository_guide.md` section Provider-First Rule): it does not act on the provider before updating the DB.
 
 **Why**: Gmail's `gmail.modify` scope cannot call `messages.delete` (requires the restricted `mail.google.com` scope). Since one provider cannot perform permanent deletion, we adopt a uniform no-op approach across all providers — regardless of whether their individual scopes support it — so the behavior is consistent and predictable.
 
@@ -222,7 +226,7 @@ Core layer:
 - [ ] Add provider branch in `EmailManager._build_client`.
 - [ ] Raise typed `CoreError` subclasses for all failure paths.
 - [ ] Export new public symbols in `core/email/__init__.py`.
-- [ ] Add a PostToolUse hook in `.claude/settings.local.json` for the new `*_client.py` (see `.claude/hooks/reuse-reminder.sh`).
+- [ ] The helper reuse policy is enforced via the Helper Reuse Policy section at the top of this guide (not via a hook). The hook scripts (`reuse-reminder.sh`) exist as files but are not currently registered in `.claude/settings.local.json`.
 
 Cross-layer:
 

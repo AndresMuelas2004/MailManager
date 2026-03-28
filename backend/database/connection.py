@@ -5,13 +5,16 @@ Shared PostgreSQL connection-pool utilities.
 from __future__ import annotations
 
 import contextlib
+import logging
 from collections.abc import Iterator
 
 import psycopg2
 from psycopg2 import pool
 
 from database.settings import get_database_settings
-from database.errors.exceptions import ConnectionPoolError
+from database.errors import ConnectionPoolError
+
+logger = logging.getLogger(__name__)
 
 
 _pool: pool.ThreadedConnectionPool | None = None
@@ -60,7 +63,10 @@ def get_connection() -> Iterator:
         yield conn
         conn.commit()
     except Exception:
-        conn.rollback()
+        try:
+            conn.rollback()
+        except Exception:
+            logger.warning("Rollback failed", exc_info=True)
         raise
     finally:
         p.putconn(conn)
@@ -72,5 +78,15 @@ def close_pool() -> None:
     """
     global _pool
     if _pool is not None:
-        _pool.closeall()
-        _pool = None
+        try:
+            _pool.closeall()
+        except psycopg2.Error as exc:
+            raise ConnectionPoolError(
+                "Failed to close database connection pool."
+            ) from exc
+        except Exception as exc:
+            raise ConnectionPoolError(
+                f"Unexpected pool close error ({type(exc).__name__}): {exc}"
+            ) from exc
+        finally:
+            _pool = None

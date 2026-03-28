@@ -14,6 +14,7 @@ from api.errors.exceptions import (
     AccountNotFound,
     ApiError,
     DatabaseQueryError,
+    ExternalAPIError,
 )
 from api.schemas.account import AccountConnectResponse, AccountCreate, AccountOut, AccountUpdate
 from api.services import accounts_service
@@ -335,7 +336,7 @@ class TestConnectAccount:
                     FakeEmailClient(
                         label,
                         auth_exc=auth_exc,
-                        auth_return={"access_token": "tok", "refresh_token": "ref"},
+                        auth_return={"access_token": "tok", "refresh_token": "ref", "email_address": "user@example.com"},
                     )
                 )
             return manager
@@ -347,6 +348,7 @@ class TestConnectAccount:
         result = accounts_service.connect_account(self._MID, self._AID, "user-1")
         assert isinstance(result, AccountConnectResponse)
         assert result.connected is True
+        assert result.email_address == "user@example.com"
 
     def test_not_found_when_none(self, monkeypatch):
         _patch_access(monkeypatch)
@@ -362,7 +364,7 @@ class TestConnectAccount:
 
     def test_generic_exception_during_connect(self, monkeypatch):
         self._patch_connect_deps(monkeypatch, auth_exc=RuntimeError("crash"))
-        with pytest.raises(AccountConnectAuthError, match="Failed to connect account"):
+        with pytest.raises(ExternalAPIError, match="Unexpected connect_account error"):
             accounts_service.connect_account(self._MID, self._AID, "user-1")
 
     def test_database_error_on_upsert_tokens_translated(self, monkeypatch):
@@ -386,3 +388,32 @@ class TestConnectAccount:
         monkeypatch.setattr(store, "upsert_tokens", _fail)
         with pytest.raises(ApiError, match="Failed to persist tokens"):
             accounts_service.connect_account(self._MID, self._AID, "user-1")
+
+    def test_connect_email_address_none_when_missing(self, monkeypatch):
+        _patch_access(monkeypatch)
+        store = FakeAccountStore(get_return=_FAKE_RECORD)
+        monkeypatch.setattr(accounts_service, "account_store", store)
+
+        fake_creds = {"client_id": "fake", "client_secret": SecretStr("fake")}
+        monkeypatch.setattr(
+            accounts_service, "load_wrapped_app_credentials", lambda p: fake_creds,
+        )
+        monkeypatch.setattr(accounts_service, "unwrap_secret", lambda v: v)
+
+        def _build_manager(accounts):
+            manager = EmailManager()
+            for acc in accounts:
+                mid = str(acc.get("mailbox_id") or "")
+                aid = str(acc.get("account_id") or "")
+                label = f"{mid}__{aid}"
+                manager.add_client(
+                    FakeEmailClient(
+                        label,
+                        auth_return={"access_token": "tok", "refresh_token": "ref"},
+                    )
+                )
+            return manager
+
+        monkeypatch.setattr(accounts_service, "build_manager_for_accounts", _build_manager)
+        result = accounts_service.connect_account(self._MID, self._AID, "user-1")
+        assert result.email_address is None

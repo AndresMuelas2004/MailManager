@@ -8,7 +8,7 @@ from dataclasses import dataclass
 import os
 from pathlib import Path
 
-from database.errors.exceptions import SettingsError
+from database.errors import SettingsError
 
 
 _TRUE_VALUES = {"1", "true", "yes", "on"}

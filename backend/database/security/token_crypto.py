@@ -17,7 +17,7 @@ from database.settings import (
     get_token_encryption_key_id,
     is_token_plaintext_fallback_enabled as _is_plaintext_fallback,
 )
-from database.errors.exceptions import SettingsError, TokenDecryptError, TokenEncryptError
+from database.errors import SettingsError, TokenDecryptError, TokenEncryptError
 
 
 def _build_fernet(key: str) -> Fernet:

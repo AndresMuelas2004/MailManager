@@ -142,11 +142,11 @@ def test_send_failure(failing_test_client, setup_mailbox_and_account):
     indirect=True,
 )
 def test_connect_unexpected_exception(failing_test_client, setup_mailbox_and_account):
-    """RuntimeError during connect -> except Exception -> AccountConnectAuthError (401)."""
+    """RuntimeError during connect -> EmailExternalAPIError -> ExternalAPIError (502)."""
     mid, aid = setup_mailbox_and_account(failing_test_client)
     resp = failing_test_client.post(f"{_MAILBOX_URL}/{mid}/accounts/{aid}/connect")
-    assert resp.status_code == 401
-    assert resp.json()["error"]["code"] == "account_connect_auth_error"
+    assert resp.status_code == 502
+    assert resp.json()["error"]["code"] == "external_api_error"
 
 
 def test_connect_account_misconfigured(test_client, setup_mailbox_and_account, monkeypatch):
@@ -494,7 +494,7 @@ def test_spam_restore_runtime_error_returns_502(failing_test_client, setup_mailb
     [
         ({"delete_exc": EmailExternalAPIError("API fail")}, 502, "external_api_error"),
         ({"delete_exc": EmailAuthError("auth expired")}, 409, "account_not_connected"),
-        ({"delete_exc": RuntimeError("unexpected crash")}, 500, "trash_operation_error"),
+        ({"delete_exc": RuntimeError("unexpected crash")}, 502, "external_api_error"),
     ],
     indirect=["failing_test_client"],
 )
@@ -527,7 +527,7 @@ def test_trash_delete_core_error_translations(
     [
         ({"restore_exc": EmailExternalAPIError("API fail")}, 502, "external_api_error"),
         ({"restore_exc": EmailAuthError("auth expired")}, 409, "account_not_connected"),
-        ({"restore_exc": RuntimeError("unexpected crash")}, 500, "trash_operation_error"),
+        ({"restore_exc": RuntimeError("unexpected crash")}, 502, "external_api_error"),
     ],
     indirect=["failing_test_client"],
 )
@@ -586,7 +586,7 @@ def test_move_to_trash_silent_auth_error(failing_test_client, setup_mailbox_and_
     [
         ({"move_to_trash_exc": EmailExternalAPIError("API fail")}, 502, "external_api_error"),
         ({"move_to_trash_exc": EmailAuthError("auth expired")}, 409, "account_not_connected"),
-        ({"move_to_trash_exc": RuntimeError("unexpected crash")}, 502, "move_to_trash_error"),
+        ({"move_to_trash_exc": RuntimeError("unexpected crash")}, 502, "external_api_error"),
     ],
     indirect=["failing_test_client"],
 )

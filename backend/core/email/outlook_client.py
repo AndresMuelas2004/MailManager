@@ -251,12 +251,14 @@ class OutlookClient(EmailClient):
             raise EmailExternalAPIError("Outlook failed to obtain access token: token response missing access_token.")
 
         self._access_token = access_token
+        email_address, _display_name = self._fetch_sender_profile()
 
         token_record = {
             "access_token": access_token,
             "refresh_token": token_response.get("refresh_token"),
             "expiry": self._compute_expiry(token_response.get("expires_in")),
             "scopes": scopes,
+            "email_address": email_address or None,
         }
         return wrap_account_tokens(token_record)
 
@@ -638,7 +640,7 @@ class OutlookClient(EmailClient):
             draft_id = draft_response.get("id", "")
             try:
                 self._graph_request("POST", f"{GRAPH_BASE_URL}/me/messages/{draft_id}/send")
-            except Exception:
+            except EmailExternalAPIError:
                 try:
                     self._graph_request("DELETE", f"{GRAPH_BASE_URL}/me/messages/{draft_id}")
                 except Exception:

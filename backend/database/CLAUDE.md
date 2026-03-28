@@ -45,22 +45,29 @@ External consumers **never import from internal submodules**.
 
 ## 4. Internal Data Flow
 
-```
-repositories/
-  → import queries from queries/
-  → import connection from connection.py
-  → import contracts from contracts.py
-  → may import security/ for encryption
+### Runtime (request handling)
 
-security/
-  → imports settings.py (credential paths, encryption keys)
+  repositories/
+    → queries/          (SQL constants)
+    → connection.py     (pool access)
+    → contracts.py      (abstract interfaces)
+    → security/         (optional — token encryption)
 
-connection.py
-  → imports settings.py (pool config)
+  security/
+    → settings.py       (credential paths, encryption keys)
 
-settings.py
-  → reads os.environ (the only module that does)
-```
+  connection.py
+    → settings.py       (pool config)
+
+  settings.py
+    → os.environ        (the only module that reads env vars)
+
+  ### Startup (bootstrap)
+
+  lifecycle.py
+    → connection.py        (health-check / warmup)
+    → settings.py          (migration config)
+    → migrations/runner.py (schema evolution, when enabled)
 
 ## 5. Layer Boundary Rules
 

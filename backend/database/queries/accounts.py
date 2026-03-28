@@ -5,14 +5,14 @@ Account SQL statements.
 from __future__ import annotations
 
 LIST_ACCOUNTS_BY_MAILBOX = """
-    SELECT account_id, mailbox_id, provider, display_label, config, created_at
+    SELECT account_id, mailbox_id, provider, display_label, config, email_address, created_at
     FROM accounts
     WHERE mailbox_id = %(mailbox_id)s
     ORDER BY created_at
 """
 
 GET_ACCOUNT = """
-    SELECT account_id, mailbox_id, provider, display_label, config, created_at
+    SELECT account_id, mailbox_id, provider, display_label, config, email_address, created_at
     FROM accounts
     WHERE mailbox_id = %(mailbox_id)s AND account_id = %(account_id)s
 """
@@ -60,6 +60,7 @@ UPSERT_TOKENS_ENCRYPTED = """
            encryption_key_id = %(encryption_key_id)s,
            expiry = %(expiry)s,
            scopes = %(scopes)s,
+           email_address = COALESCE(%(email_address)s, email_address),
            tokens_updated_at = now()
      WHERE account_id = %(account_id)s
        AND mailbox_id = %(mailbox_id)s
@@ -75,6 +76,7 @@ UPSERT_TOKENS_PLAINTEXT = """
            encryption_key_id = NULL,
            expiry = %(expiry)s,
            scopes = %(scopes)s,
+           email_address = COALESCE(%(email_address)s, email_address),
            tokens_updated_at = now()
      WHERE account_id = %(account_id)s
        AND mailbox_id = %(mailbox_id)s

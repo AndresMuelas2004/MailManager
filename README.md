@@ -111,7 +111,7 @@ $env:DATABASE_URL = "postgresql://user:pass@localhost:5432/mailmanager"
 $env:MIA_GMAIL_CREDENTIALS_PATH = "C:\\secrets\\gmail_oauth.json"
 $env:MIA_OUTLOOK_CREDENTIALS_PATH = "C:\\secrets\\outlook_oauth.json"
 $env:TOKEN_ENCRYPTION_KEY = "<FERNET_KEY>"
-$env:TOKEN_ENCRYPTION_KEY_ID = "v1"
+$env:GOOGLE_CLIENT_ID = "<YOUR_GOOGLE_CLIENT_ID>"
 ```
 
 Generate a Fernet key (one-time):
@@ -182,12 +182,13 @@ docker compose down -v   # stop and delete database volume
 | `DB_APPLICATION_NAME` | No | PostgreSQL `application_name`. Default: `mailmanager-api`. |
 | `DB_AUTO_MIGRATE` | No | If `true`, API startup runs `alembic upgrade head`. Default: `false`. |
 | `DB_ALEMBIC_INI_PATH` | No | Custom Alembic config path. |
-| `TOKEN_ENCRYPTION_KEY` | Yes (recommended) | Fernet key for encrypted account tokens in DB. |
+| `TOKEN_ENCRYPTION_KEY` | Yes | Fernet key for encrypted account tokens in DB. |
 | `TOKEN_ENCRYPTION_KEY_ID` | No | Identifier for active encryption key. Default: `v1`. |
 | `TOKEN_PLAINTEXT_FALLBACK_ENABLED` | No | Enables temporary legacy plaintext token reads. Default: `true`. |
 | `MIA_GMAIL_CREDENTIALS_PATH` | Yes | Path to Gmail OAuth credentials JSON file. |
 | `MIA_OUTLOOK_CREDENTIALS_PATH` | Yes | Path to Outlook app credentials JSON file. |
 | `GOOGLE_CLIENT_ID` | Yes | Google OAuth client ID for OIDC authentication. |
+| `GMAIL_BATCH_MAX_WORKERS` | No | Max parallel workers for Gmail batch operations. Default: `5`. |
 | `AUTH_SESSION_LIFETIME_DAYS` | No | Session duration in days. Default: `7`. |
 | `AUTH_COOKIE_SECURE` | No | HTTPS-only session cookies. Default: `false`. |
 | `CORS_ALLOWED_ORIGINS` | No | Comma-separated CORS origins. Default: `http://localhost:5173`. |
@@ -270,6 +271,7 @@ Primary API error codes include:
 - `database_query_error`
 - `database_migration_error`
 - `token_decryption_error`
+- `token_encryption_error` — 500
 - `token_integrity_error`
 - `email_fetch_error`
 - `email_send_error`

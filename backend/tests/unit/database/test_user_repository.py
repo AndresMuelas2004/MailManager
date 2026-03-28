@@ -105,40 +105,6 @@ def test_get_by_id_raises_query_error_on_psycopg2(monkeypatch):
         user_module.user_store.get_by_id("u1")
 
 
-# ===== get_by_google_sub =====
-
-
-def test_get_by_google_sub_happy_path(monkeypatch):
-    cursor = FakeCursor(fetchone_results=[_fake_row()])
-    patch_connection(monkeypatch, user_module, [cursor])
-
-    result = user_module.user_store.get_by_google_sub("google-sub-1")
-    assert result["google_sub"] == "google-sub-1"
-
-
-def test_get_by_google_sub_returns_none_when_not_found(monkeypatch):
-    cursor = FakeCursor(fetchone_results=[None])
-    patch_connection(monkeypatch, user_module, [cursor])
-
-    assert user_module.user_store.get_by_google_sub("gs") is None
-
-
-def test_get_by_google_sub_raises_query_error_on_psycopg2(monkeypatch):
-    cursor = FakeCursor(execute_side_effect=psycopg2.OperationalError("fail"))
-    patch_connection(monkeypatch, user_module, [cursor])
-
-    with pytest.raises(QueryError, match="Failed to get user by google_sub"):
-        user_module.user_store.get_by_google_sub("gs")
-
-
-def test_get_by_google_sub_raises_query_error_on_generic(monkeypatch):
-    cursor = FakeCursor(execute_side_effect=RuntimeError("boom"))
-    patch_connection(monkeypatch, user_module, [cursor])
-
-    with pytest.raises(QueryError, match="RuntimeError"):
-        user_module.user_store.get_by_google_sub("gs")
-
-
 # ===== delete =====
 
 

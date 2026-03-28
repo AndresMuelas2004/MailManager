@@ -100,7 +100,7 @@ def update_account(mailbox_id: str, account_id: str, payload: AccountUpdate, use
     except DatabaseError as exc:
         raise translate_database_error(exc) from exc
     except Exception as exc:
-        logger.warning("Unexpected account lookup error (%s): %s", type(exc).__name__, exc)
+        logger.warning("Unexpected account lookup error during update (%s): %s", type(exc).__name__, exc)
         raise ApiError("Failed to look up account for update.") from exc
     if record is None:
         raise AccountNotFound(f"Account '{account_id}' not found for update.")
@@ -127,7 +127,7 @@ def delete_account(mailbox_id: str, account_id: str, user_id: str) -> dict[str, 
     except DatabaseError as exc:
         raise translate_database_error(exc) from exc
     except Exception as exc:
-        logger.warning("Unexpected account lookup error (%s): %s", type(exc).__name__, exc)
+        logger.warning("Unexpected account lookup error during delete (%s): %s", type(exc).__name__, exc)
         raise ApiError("Failed to look up account for delete.") from exc
     if record is None:
         raise AccountNotFound(f"Account '{account_id}' not found for delete.")
@@ -149,7 +149,7 @@ def connect_account(mailbox_id: str, account_id: str, user_id: str) -> AccountCo
     except DatabaseError as exc:
         raise translate_database_error(exc) from exc
     except Exception as exc:
-        logger.warning("Unexpected account lookup error (%s): %s", type(exc).__name__, exc)
+        logger.warning("Unexpected account lookup error during connect (%s): %s", type(exc).__name__, exc)
         raise ApiError("Failed to look up account for connect.") from exc
     if record is None:
         raise AccountNotFound(f"Account '{account_id}' not found for connect.")
@@ -175,6 +175,7 @@ def connect_account(mailbox_id: str, account_id: str, user_id: str) -> AccountCo
     token_payload = dict(wrapped_tokens or {})
     token_payload["access_token"] = unwrap_secret(token_payload.get("access_token"))
     token_payload["refresh_token"] = unwrap_secret(token_payload.get("refresh_token"))
+    email_address = token_payload.get("email_address")
     try:
         account_store.upsert_tokens(mailbox_id, account_id, provider, token_payload)
     except DatabaseError as exc:
@@ -188,5 +189,6 @@ def connect_account(mailbox_id: str, account_id: str, user_id: str) -> AccountCo
         provider=record.get("provider", ""),
         account_id=account_id,
         account_label=account_label,
+        email_address=email_address,
         message="Account connected successfully.",
     )

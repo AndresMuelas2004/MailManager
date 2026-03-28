@@ -367,6 +367,15 @@ def test_spam_empty_items_422(test_client, setup_mailbox_and_account):
     assert resp.status_code == 422
 
 
+def test_restore_from_spam_empty_items_422(test_client, setup_mailbox_and_account):
+    mid, _ = setup_mailbox_and_account(test_client)
+    resp = test_client.post(
+        f"{_MAILBOX_URL}/{mid}/emails/restore-from-spam",
+        json={"items": []},
+    )
+    assert resp.status_code == 422
+
+
 def test_read_status_missing_fields_422(test_client, setup_mailbox_and_account):
     mid, _ = setup_mailbox_and_account(test_client)
     resp = test_client.patch(

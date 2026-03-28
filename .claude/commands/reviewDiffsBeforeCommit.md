@@ -89,6 +89,12 @@ For EACH test directory (from defaults or $ARGUMENTS override), launch:
 8. **md-reviewer for extra MDs** (only if `--md` in $ARGUMENTS) — `subagent_type: "md-reviewer"`
    - One agent per extra MD path provided.
 
+### Query review (only if `backend/database/` is affected):
+
+9. **queries-reviewer per query file** — `subagent_type: "queries-reviewer"`
+   - Use `Glob` to list all `.py` files in `backend/database/queries/` (exclude `__init__.py`).
+   - Launch one agent per file. Each agent's prompt: "Analyze ONLY the file `{file_path}`. Focus exclusively on this file and on the usage flow of the query functions it contains. Do NOT read or analyze any other query file in `backend/database/queries/`. Follow all analysis phases (inventory, usage, efficiency, quality, cross-validation) scoped exclusively to this file."
+
 ### After launching:
 
 Print a brief message listing all agents launched (count and types) and tell the user you will report when they all finish. Then STOP — do NOT add any more tool calls. Do NOT poll, retry, resume, or call any tool. Wait for automatic completion notifications.
@@ -131,6 +137,8 @@ Only when ALL agents have reported back (via automatic completion notifications)
 #### Error Handling
 - [Severity] finding...
 #### Dead Code
+- [Severity] finding...
+#### Query Review
 - [Severity] finding...
 
 ### backend/auth/

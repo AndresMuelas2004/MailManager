@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from database.settings import get_provider_credentials_path
-from database.errors.exceptions import CredentialReadError, UnknownProviderError
+from database.errors import CredentialReadError, UnknownProviderError
 
 
 def load_app_credentials(provider: str) -> dict[str, Any]:

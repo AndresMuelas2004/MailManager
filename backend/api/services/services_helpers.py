@@ -61,6 +61,7 @@ from api.errors.exceptions import (
     MailboxNotFound,
     RecipientsMissing,
     TokenDecryptionError,
+    TokenEncryptionError,
     TokenIntegrityError,
     Unauthorized,
 )
@@ -117,6 +118,8 @@ _DB_TO_API_MAP: list[tuple[type[DatabaseError], type[ApiError]]] = [
     (QueryError, DatabaseQueryError),
     (MigrationError, DatabaseMigrationError),
     (SettingsError, EnvVarError),
+    (TokenDecryptError, TokenDecryptionError),
+    (TokenEncryptError, TokenEncryptionError),
     (TokenCryptoError, TokenDecryptionError),
     (TokenValidationError, TokenIntegrityError),
     (CredentialReadError, CredentialFileError),

@@ -13,7 +13,7 @@ from database.settings import (
     get_alembic_ini_path,
     is_startup_auto_migrate_enabled,
 )
-from database.errors.exceptions import ConnectionPoolError, DatabaseError, MigrationError
+from database.errors import ConnectionPoolError, DatabaseError, MigrationError
 
 
 def run_startup_migrations_if_enabled() -> bool:
@@ -27,6 +27,7 @@ def run_startup_migrations_if_enabled() -> bool:
             from alembic import command
             from alembic.config import Config
         except ModuleNotFoundError:
+            # Alembic not installed — fall back to the DDL-based runner.
             ensure_schema_at_head(get_database_url())
             return True
 

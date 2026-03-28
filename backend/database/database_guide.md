@@ -21,6 +21,10 @@
 - Legacy plaintext fallback is controlled by `TOKEN_PLAINTEXT_FALLBACK_ENABLED`.
 - On legacy plaintext read, account store attempts lazy backfill to encrypted columns.
 
+### Email address column
+
+The `email_address` column (added in migration `0009`) stores the connected account's email address as plain text. It is not encrypted because it is not a secret. It is written during `upsert_tokens` and may be `NULL` if the email fetch was unsuccessful. The UPSERT queries use `COALESCE(%(email_address)s, email_address)` to prevent silent-refresh upserts (which don't carry an email) from erasing a previously stored value.
+
 ### Deprecation note
 
 The plaintext token columns (`access_token`, `refresh_token`) remain temporarily for migration compatibility. A future migration should remove them once legacy data is fully backfilled.
@@ -60,6 +64,8 @@ Added in migration `0008` to the `box` CHECK constraint. Acts as a soft-delete m
 - **`get_trash_emails_by_ids(account_id, message_ids) → list[dict]`** — returns rows where `box = 'TRASH'` matching the given IDs. Each dict includes `provider_message_id`, `account_id`, `box`, and `previous_box`. Used to verify emails are in trash before acting.
 - **`list_provider_message_ids(account_id) → list[str]`** — returns all stored `provider_message_id` values for an account. Used by ghost email reconciliation.
 - **`update_labels_batch(account_id, rows) → int`** — bulk-updates `is_read` and `box` for email metadata. Uses the same `CASE` expression as `UPSERT_EMAIL_METADATA_BATCH` to protect `DELETED` rows from being reverted to `TRASH` by provider sync.
+- **`delete_by_account(account_id) → None`** — hard-deletes ALL metadata rows for an account. Used during account disconnect to remove all email data for the disconnected account.
+- **`upsert_batch(account_id, rows) → int`** — bulk-upserts email metadata. Uses a `CASE` expression to protect rows with `box = 'DELETED'` from being overwritten by provider sync.
 
 ## Behavioral Contracts — Email Metadata
 
@@ -67,9 +73,35 @@ Added in migration `0008` to the `box` CHECK constraint. Acts as a soft-delete m
 
 Batch-updates the `is_read` column for existing email metadata rows. Uses a dedicated SQL query (`UPDATE_READ_STATUS_BATCH`) that only touches `is_read` — it does **not** modify the `box` column. This is intentionally separate from `update_labels_batch`, because read-status updates should never change box classification. `rows` format: `list[tuple]` of `(provider_message_id, account_id, is_read)`. Returns the number of rows updated.
 
+### `EmailMetadataStore.list_by_account_and_box(account_id, box) → list[dict]`
+
+Returns email metadata rows for a single account filtered by the exact `box` value. Ordered by `received_at DESC`. Because the filter uses equality (`box = %(box)s`), `DELETED` rows are excluded implicitly when the caller passes any non-`DELETED` box value.
+
+### `EmailMetadataStore.list_by_mailbox_and_box(mailbox_id, box) → list[dict]`
+
+Returns email metadata rows across all accounts in a mailbox, filtered by the exact `box` value. JOINs `email_metadata` with `accounts` on `account_id` and filters by `accounts.mailbox_id`. Ordered by `received_at DESC`. This is the only `EmailMetadataStore` method whose first parameter is `mailbox_id` rather than `account_id` — this is intentional because the query operates across all accounts in a mailbox.
+
 ### `EmailMetadataStore.update_spam_status_batch(account_id, rows) → int`
 
 Batch-updates the `provider_message_id` and `box` columns for existing email metadata rows. Uses `UPDATE_SPAM_STATUS_BATCH` which matches on the old `provider_message_id` + `account_id` and sets both the new `provider_message_id` and new `box`. This is needed because Outlook's `/move` API returns a new message ID when moving between folders. `rows` format: `list[tuple]` of `(old_message_id, account_id, new_message_id, new_box)`. Returns the number of rows updated.
+
+## Project-Specific Error Hierarchy
+
+Full tree of exceptions defined in `errors/exceptions.py`:
+
+```
+DatabaseError
+├── ConnectionPoolError
+├── QueryError
+├── MigrationError
+├── SettingsError
+├── TokenCryptoError
+│   ├── TokenDecryptError
+│   └── TokenEncryptError
+├── TokenValidationError
+├── CredentialReadError
+└── UnknownProviderError
+```
 
 ## Extension
 
@@ -78,4 +110,5 @@ Batch-updates the `provider_message_id` and `box` columns for existing email met
 1. Register the provider env var in `settings.py` (`_PROVIDER_CREDENTIALS_ENV_VARS`).
 2. Add provider-specific JSON parsing in `security/app_credentials.py` if needed.
 3. Update provider validation constraints via a new Alembic migration.
-4. Add/adjust integration and E2E tests for connect, send, and inbox flows.
+4. Update fallback runner (`migrations/runner.py`) with the new DDL and stamp the latest migration version.
+5. Add/adjust integration and E2E tests for connect, send, and inbox flows.

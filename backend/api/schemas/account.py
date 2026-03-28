@@ -46,6 +46,7 @@ class AccountOut(BaseModel):
     provider: str
     display_label: str
     config: dict[str, Any]
+    email_address: str | None = None
 
 
 class AccountConnectResponse(BaseModel):
@@ -57,4 +58,5 @@ class AccountConnectResponse(BaseModel):
     provider: str
     account_id: str
     account_label: str
+    email_address: str | None = None
     message: str

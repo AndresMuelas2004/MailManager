@@ -16,6 +16,7 @@ from api.errors.exceptions import (
     AccountNotConnected,
     AccountNotFound,
     EmailFetchError,
+    EmailListError,
     EmailNotInTrash,
     EmailSendError,
     ExternalAPIError,
@@ -561,11 +562,11 @@ class TestManageTrash:
                 _MAILBOX_ID, self._make_payload("delete"), _USER_ID,
             )
 
-    def test_generic_exception_raises_trash_operation_error(self, monkeypatch):
+    def test_generic_exception_raises_external_api_error(self, monkeypatch):
         self._patch_trash_common(monkeypatch, fake_client_kwargs={
             "delete_exc": RuntimeError("unexpected"),
         })
-        with pytest.raises(TrashOperationError):
+        with pytest.raises(ExternalAPIError):
             emails_service.manage_trash(
                 _MAILBOX_ID, self._make_payload("delete"), _USER_ID,
             )
@@ -711,11 +712,11 @@ class TestMoveToTrash:
                 _MAILBOX_ID, self._make_payload(), _USER_ID,
             )
 
-    def test_generic_exception_raises_move_to_trash_error(self, monkeypatch):
+    def test_generic_exception_raises_external_api_error(self, monkeypatch):
         self._patch_move_common(monkeypatch, fake_client_kwargs={
             "move_to_trash_exc": RuntimeError("unexpected"),
         })
-        with pytest.raises(MoveToTrashError):
+        with pytest.raises(ExternalAPIError):
             emails_service.move_to_trash(
                 _MAILBOX_ID, self._make_payload(), _USER_ID,
             )
@@ -1135,3 +1136,123 @@ class TestRestoreFromSpam:
         emails_service.restore_from_spam(_MAILBOX_ID, payload, _USER_ID)
         assert len(db_calls) == 1
         assert db_calls[0][2] == "ALL_MAIL"
+
+
+# ==================================================================
+# list_emails
+# ==================================================================
+
+
+_SAMPLE_ROW = {
+    "provider_message_id": "m1",
+    "account_id": _ACCOUNT_ID,
+    "thread_id": "t1",
+    "from_email": "sender@test.com",
+    "from_name": "Sender",
+    "subject": "Hello",
+    "received_at": "2025-01-15T10:00:00+00:00",
+    "is_read": False,
+    "box": "ALL_MAIL",
+}
+
+
+def _patch_list_emails(monkeypatch, *, rows=None, account_get_return="default"):
+    """Apply monkeypatches for list_emails tests."""
+    monkeypatch.setattr(
+        emails_service, "ensure_mailbox_access",
+        lambda _mb, _uid: {"mailbox_id": _MAILBOX_ID, "owner_user_id": _USER_ID},
+    )
+    if account_get_return == "default":
+        monkeypatch.setattr(
+            emails_service.account_store, "get",
+            lambda _mb, _aid: _fake_account() if _aid == _ACCOUNT_ID else None,
+        )
+    else:
+        monkeypatch.setattr(
+            emails_service.account_store, "get",
+            account_get_return,
+        )
+    result_rows = rows if rows is not None else [_SAMPLE_ROW]
+    monkeypatch.setattr(
+        emails_service.email_metadata_store, "list_by_account_and_box",
+        lambda _aid, _box: result_rows,
+    )
+    monkeypatch.setattr(
+        emails_service.email_metadata_store, "list_by_mailbox_and_box",
+        lambda _mbid, _box: result_rows,
+    )
+
+
+class TestListEmails:
+
+    def test_single_account_happy_path(self, monkeypatch):
+        _patch_list_emails(monkeypatch)
+        result = emails_service.list_emails(_MAILBOX_ID, "ALL_MAIL", _USER_ID, _ACCOUNT_ID)
+        assert len(result) == 1
+        assert result[0].provider_message_id == "m1"
+        assert result[0].account_id == _ACCOUNT_ID
+
+    def test_unified_view_happy_path(self, monkeypatch):
+        _patch_list_emails(monkeypatch)
+        result = emails_service.list_emails(_MAILBOX_ID, "ALL_MAIL", _USER_ID)
+        assert len(result) == 1
+        assert result[0].provider_message_id == "m1"
+
+    def test_account_not_found_raises(self, monkeypatch):
+        _patch_list_emails(monkeypatch)
+        with pytest.raises(AccountNotFound, match="during email listing"):
+            emails_service.list_emails(_MAILBOX_ID, "ALL_MAIL", _USER_ID, "nonexistent")
+
+    def test_db_error_on_account_lookup_raises(self, monkeypatch):
+        from database.errors.exceptions import QueryError as DbQueryError
+        _patch_list_emails(monkeypatch)
+
+        def _raise(_mb, _aid):
+            raise DbQueryError("db fail")
+
+        monkeypatch.setattr(emails_service.account_store, "get", _raise)
+        with pytest.raises(Exception):
+            emails_service.list_emails(_MAILBOX_ID, "ALL_MAIL", _USER_ID, _ACCOUNT_ID)
+
+    def test_db_error_on_single_account_query_raises(self, monkeypatch):
+        from database.errors.exceptions import QueryError as DbQueryError
+        _patch_list_emails(monkeypatch)
+
+        def _raise(_aid, _box):
+            raise DbQueryError("db fail")
+
+        monkeypatch.setattr(
+            emails_service.email_metadata_store, "list_by_account_and_box", _raise,
+        )
+        with pytest.raises(Exception):
+            emails_service.list_emails(_MAILBOX_ID, "ALL_MAIL", _USER_ID, _ACCOUNT_ID)
+
+    def test_db_error_on_unified_query_raises(self, monkeypatch):
+        from database.errors.exceptions import QueryError as DbQueryError
+        _patch_list_emails(monkeypatch)
+
+        def _raise(_mbid, _box):
+            raise DbQueryError("db fail")
+
+        monkeypatch.setattr(
+            emails_service.email_metadata_store, "list_by_mailbox_and_box", _raise,
+        )
+        with pytest.raises(Exception):
+            emails_service.list_emails(_MAILBOX_ID, "ALL_MAIL", _USER_ID)
+
+    def test_unexpected_error_raises_email_list_error(self, monkeypatch):
+        _patch_list_emails(monkeypatch)
+
+        def _raise(_mbid, _box):
+            raise RuntimeError("unexpected")
+
+        monkeypatch.setattr(
+            emails_service.email_metadata_store, "list_by_mailbox_and_box", _raise,
+        )
+        with pytest.raises(EmailListError, match="Failed to list email metadata for mailbox"):
+            emails_service.list_emails(_MAILBOX_ID, "ALL_MAIL", _USER_ID)
+
+    def test_empty_result_returns_empty_list(self, monkeypatch):
+        _patch_list_emails(monkeypatch, rows=[])
+        result = emails_service.list_emails(_MAILBOX_ID, "SPAM", _USER_ID)
+        assert result == []

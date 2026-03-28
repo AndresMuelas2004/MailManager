@@ -4,10 +4,13 @@ Email router for metadata sync and sending.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from typing import Literal
+
+from fastapi import APIRouter, Depends, Query
 
 from api.routers.routers_helpers import require_session
 from api.schemas.email import (
+    EmailMetadataOut,
     EmailSendRequest,
     MoveToTrashRequest,
     MoveToTrashResult,
@@ -23,6 +26,20 @@ from api.services import emails_service
 
 
 router = APIRouter(prefix="/mailboxes/{mailbox_id}/emails", tags=["emails"])
+
+
+@router.get("", response_model=list[EmailMetadataOut])
+def list_emails(
+    mailbox_id: str,
+    box: Literal["ALL_MAIL", "SENT", "SPAM", "TRASH"] = Query(...),
+    account_id: str | None = Query(default=None),
+    user_id: str = Depends(require_session),
+) -> list[EmailMetadataOut]:
+    """
+    List email metadata for a mailbox, filtered by box.
+    Optionally filter to a single account.
+    """
+    return emails_service.list_emails(mailbox_id, box, user_id, account_id)
 
 
 @router.post("/sync-metadata", response_model=SyncResultOut)

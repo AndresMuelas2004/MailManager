@@ -78,23 +78,21 @@
 
   Every plan produced in plan mode for a non-trivial feature implementation must include these two final steps, in this order:
 
-  **Penultimate step — Documentation update (critical):**
-  This step is the foundation of the entire quality assurance system. The Documentation Priority rule (§ 1.8) establishes that `.md` files are always the source of truth: when code contradicts documentation, the documentation is correct and the code must change. Review workflows (`/reviewDiffsBeforeCommit`, md-reviewer, etc.) rely on this principle to catch and fix code mistakes.
+  **Penultimate step — Tests update and execution:**
+  Before running tests, review the code changes introduced by the plan and add new tests or update existing ones to cover the new or modified functionality. Then run all test suites that were added or modified during plan execution — unit, integration, and e2e. Do not run only one layer; run every test file that was created or edited as part of the implementation.
+
+  **Final step — Documentation update (critical):**
+  This step is the foundation of the entire quality assurance system. The Documentation Priority rule (§ 8) establishes that `.md` files are always the source of truth: when code contradicts documentation, the documentation is correct and the code must change. Review subagent md-reviewer rely on this principle to catch and fix code mistakes.
 
   This only works if the documentation accurately reflects the intended behavior after every plan execution. If a `*_guide.md` is left outdated or partially updated, two things break:
   1. Legitimate new code may be flagged as "wrong" because it doesn't match the stale `.md`.
   2. Actual code mistakes may go undetected because the `.md` never described the new functionality.
 
   Therefore, this documentation update is not a formality — it is the step that keeps the `.md`-as-source-of-truth model reliable.
-  Launch the `md-reviewer` agent targeting:
+  Claude must directly review and update — without launching any external agent or command — the following files so they accurately reflect the new or changed functionality:
   - Root `repository_guide.md`.
   - Root `README.md`.
   - Every `*_guide.md` in directories affected by the plan's changes.
-
-  Based on the reviewer's findings, propose and apply the necessary documentation updates so all `.md` files accurately reflect the new or changed functionality.
-
-  **Final step — Test execution:**
-  Run all test suites that were added or modified during plan execution — unit, integration, and e2e. Do not run only one layer; run every test file that was created or edited as part of the implementation.
 
   ### 9 Documentation Priority
 
@@ -105,3 +103,10 @@
   **The source code itself** — the actual implementation. When code contradicts documentation at any level above, the documentation is correct and the code is what needs to change.
 
   This hierarchy applies to all decisions: error handling, layer boundaries, naming conventions, allowed imports, and any other rule. If a lower-priority source conflicts with a higher-priority one, always follow the higher-priority source and flag the conflict.
+
+  ### 10 Common Mistakes Tracking
+
+  Recurring mistakes are tracked in @common_mistakes.md. Claude must treat every entry as a hard rule with the same authority as this `CLAUDE.md`.
+
+  **Proactive flagging:** When Claude notices it is repeating an error — or the user corrects the same kind of mistake more than once across conversations — Claude must explicitly ask the user whether the
+  correction should be added to `common_mistakes.md`. Do not add entries autonomously; always ask first.

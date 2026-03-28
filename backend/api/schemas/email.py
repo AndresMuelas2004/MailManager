@@ -4,6 +4,7 @@ Pydantic schemas for email API contracts.
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -111,3 +112,17 @@ class SpamResponse(BaseModel):
 
     moved_count: int
     accounts: list[AccountSpamDetail]
+
+
+class EmailMetadataOut(BaseModel):
+    """Single email metadata item returned by the listing endpoint."""
+
+    provider_message_id: str
+    account_id: str
+    thread_id: str | None = None
+    from_email: str
+    from_name: str | None = None
+    subject: str | None = None
+    received_at: datetime
+    is_read: bool
+    box: str

@@ -105,4 +105,21 @@ Verdict guide:
 
 ---
 
+### Final Gate — Architecture Compliance Check (mandatory, before delivering the report)
+
+Before outputting your final report, review **every issue, recommendation, and suggested fix** you are about to propose and cross-check it against the `CLAUDE.md` file you read in Steps 1-2. For each one, ask yourself:
+
+- Does this suggestion respect the layer boundaries, error hierarchy, and constraints defined in that `CLAUDE.md`?
+- Would implementing this suggestion violate any rule stated in the `CLAUDE.md`?
+
+If a suggestion conflicts with the documented architecture, **remove it or rewrite it** so that it is fully compliant. Never propose a fix that would break an architectural rule, even if the fix would improve error handling in isolation.
+
+At the end of the **Recommendations** section, add a one-line confirmation:
+
+> All suggestions in this report have been verified against `<CLAUDE.md path>`.
+
+If any suggestion had to be dropped or rewritten due to an architectural conflict, note it briefly so the reader knows.
+
+---
+
 Be thorough and direct. Flag every violation you find — do not skip issues to be polite. The goal is to ensure the layer's error handling is robust, consistent, and well-documented.

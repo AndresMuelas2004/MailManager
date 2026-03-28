@@ -12,7 +12,16 @@ Error-path tests live in ``test_api_layer_errors.py`` and
 from __future__ import annotations
 
 from core.email.email_client import LabelUpdate
-from tests.integration.conftest import MAILBOX_URL as _MAILBOX_URL
+import pytest
+
+from tests.integration.conftest import (
+    MAILBOX_URL as _MAILBOX_URL,
+    SEEDED_USER_ID as _SEEDED_USER,
+    SEEDED_GMAIL_ACCOUNT_ID as _SEEDED_GMAIL_ACCOUNT,
+    SEEDED_GMAIL_MAILBOX_ID as _SEEDED_GMAIL_MAILBOX,
+    SEEDED_OUTLOOK_ACCOUNT_ID as _SEEDED_OUTLOOK_ACCOUNT,
+    SEEDED_OUTLOOK_MAILBOX_ID as _SEEDED_OUTLOOK_MAILBOX,
+)
 from tests.shared.email_fakes import build_metadata
 
 
@@ -38,19 +47,25 @@ def test_create_mailbox(test_client):
     assert data["display_name"] == "My Mailbox"
 
 
-def test_list_mailboxes(test_client):
-    test_client.post(_MAILBOX_URL, json={"display_name": "Listed"})
-    resp = test_client.get(_MAILBOX_URL)
+def test_list_mailboxes(seeded_test_client):
+    resp = seeded_test_client.get(_MAILBOX_URL)
     assert resp.status_code == 200
-    names = [m["display_name"] for m in resp.json()]
-    assert "Listed" in names
+    data = resp.json()
+    names = {m["display_name"] for m in data}
+    assert "Gmail inventada" in names
+    assert "Outlook inventada" in names
+    gmail_mb = next(m for m in data if m["mailbox_id"] == _SEEDED_GMAIL_MAILBOX)
+    assert gmail_mb["owner_user_id"] == _SEEDED_USER
+    assert gmail_mb["display_name"] == "Gmail inventada"
 
 
-def test_get_mailbox(test_client):
-    created = test_client.post(_MAILBOX_URL, json={"display_name": "Fetched"}).json()
-    resp = test_client.get(f"{_MAILBOX_URL}/{created['mailbox_id']}")
+def test_get_mailbox(seeded_test_client):
+    resp = seeded_test_client.get(f"{_MAILBOX_URL}/{_SEEDED_GMAIL_MAILBOX}")
     assert resp.status_code == 200
-    assert resp.json()["mailbox_id"] == created["mailbox_id"]
+    data = resp.json()
+    assert data["mailbox_id"] == _SEEDED_GMAIL_MAILBOX
+    assert data["display_name"] == "Gmail inventada"
+    assert data["owner_user_id"] == _SEEDED_USER
 
 
 def test_delete_mailbox(test_client):
@@ -79,18 +94,32 @@ def test_create_account(test_client):
     assert data["provider"] == "gmail"
 
 
-def test_list_accounts(test_client, setup_mailbox_and_account):
-    mid, _ = setup_mailbox_and_account(test_client)
-    resp = test_client.get(f"{_MAILBOX_URL}/{mid}/accounts")
+def test_list_accounts(seeded_test_client):
+    resp = seeded_test_client.get(
+        f"{_MAILBOX_URL}/{_SEEDED_GMAIL_MAILBOX}/accounts"
+    )
     assert resp.status_code == 200
-    assert len(resp.json()) == 1
+    data = resp.json()
+    assert len(data) == 1
+    account = data[0]
+    assert account["account_id"] == _SEEDED_GMAIL_ACCOUNT
+    assert account["provider"] == "gmail"
+    assert account["display_label"] == "Gmail inventada - inventadoParaEndpointGet"
+    assert account["email_address"] == "gmailinventada@gmail.com"
+    assert account["mailbox_id"] == _SEEDED_GMAIL_MAILBOX
 
 
-def test_get_account(test_client, setup_mailbox_and_account):
-    mid, aid = setup_mailbox_and_account(test_client)
-    resp = test_client.get(f"{_MAILBOX_URL}/{mid}/accounts/{aid}")
+def test_get_account(seeded_test_client):
+    resp = seeded_test_client.get(
+        f"{_MAILBOX_URL}/{_SEEDED_OUTLOOK_MAILBOX}/accounts/{_SEEDED_OUTLOOK_ACCOUNT}"
+    )
     assert resp.status_code == 200
-    assert resp.json()["account_id"] == aid
+    data = resp.json()
+    assert data["account_id"] == _SEEDED_OUTLOOK_ACCOUNT
+    assert data["provider"] == "outlook"
+    assert data["display_label"] == "Outlook inventada - inventadoParaEndpointGet"
+    assert data["email_address"] == "outlookinventada@outlook.com"
+    assert data["mailbox_id"] == _SEEDED_OUTLOOK_MAILBOX
 
 
 def test_update_account(test_client, setup_mailbox_and_account):
@@ -117,6 +146,7 @@ def test_connect_account(test_client, setup_mailbox_and_account):
     data = resp.json()
     assert data["connected"] is True
     assert data["account_id"] == aid
+    assert "email_address" in data
 
 
 # ------------------------------------------------------------------
@@ -1127,6 +1157,7 @@ def test_update_read_status_nonexistent_account_404(test_client, setup_mailbox_a
         },
     )
     assert resp.status_code == 404
+    assert resp.json()["error"]["code"] == "account_not_found"
 
 
 def test_update_read_status_nonexistent_mailbox_404(test_client):
@@ -1140,6 +1171,7 @@ def test_update_read_status_nonexistent_mailbox_404(test_client):
         },
     )
     assert resp.status_code == 404
+    assert resp.json()["error"]["code"] == "mailbox_not_found"
 
 
 # ===== Emails -- spam =====
@@ -1233,6 +1265,7 @@ def test_spam_nonexistent_account_404(test_client, setup_mailbox_and_account):
         json={"items": [{"account_id": fake_account_id, "provider_message_id": "m1"}]},
     )
     assert resp.status_code == 404
+    assert resp.json()["error"]["code"] == "account_not_found"
 
 
 def test_spam_nonexistent_mailbox_404(test_client):
@@ -1243,6 +1276,7 @@ def test_spam_nonexistent_mailbox_404(test_client):
         json={"items": [{"account_id": fake_account_id, "provider_message_id": "m1"}]},
     )
     assert resp.status_code == 404
+    assert resp.json()["error"]["code"] == "mailbox_not_found"
 
 
 def test_restore_from_spam_nonexistent_account_404(test_client, setup_mailbox_and_account):
@@ -1253,6 +1287,7 @@ def test_restore_from_spam_nonexistent_account_404(test_client, setup_mailbox_an
         json={"items": [{"account_id": fake_account_id, "provider_message_id": "m1"}]},
     )
     assert resp.status_code == 404
+    assert resp.json()["error"]["code"] == "account_not_found"
 
 
 def test_restore_from_spam_nonexistent_mailbox_404(test_client):
@@ -1263,3 +1298,108 @@ def test_restore_from_spam_nonexistent_mailbox_404(test_client):
         json={"items": [{"account_id": fake_account_id, "provider_message_id": "m1"}]},
     )
     assert resp.status_code == 404
+    assert resp.json()["error"]["code"] == "mailbox_not_found"
+
+
+# ------------------------------------------------------------------
+# Emails — list emails
+# ------------------------------------------------------------------
+
+def test_list_emails_unified_view(seeded_test_client):
+    resp = seeded_test_client.get(
+        f"{_MAILBOX_URL}/{_SEEDED_GMAIL_MAILBOX}/emails?box=ALL_MAIL"
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data) == 30
+    item = data[0]
+    assert "provider_message_id" in item
+    assert "account_id" in item
+    assert "from_email" in item
+    assert "subject" in item
+    assert "received_at" in item
+    assert "is_read" in item
+    assert all(e["box"] == "ALL_MAIL" for e in data)
+    assert all(e["account_id"] == _SEEDED_GMAIL_ACCOUNT for e in data)
+
+
+def test_list_emails_single_account_view(seeded_test_client):
+    resp = seeded_test_client.get(
+        f"{_MAILBOX_URL}/{_SEEDED_OUTLOOK_MAILBOX}/emails",
+        params={"box": "ALL_MAIL", "account_id": _SEEDED_OUTLOOK_ACCOUNT},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data) == 30
+    assert all(e["account_id"] == _SEEDED_OUTLOOK_ACCOUNT for e in data)
+    assert all(e["box"] == "ALL_MAIL" for e in data)
+
+
+def test_list_emails_invalid_box_returns_422(seeded_test_client):
+    resp = seeded_test_client.get(
+        f"{_MAILBOX_URL}/{_SEEDED_GMAIL_MAILBOX}/emails?box=INVALID"
+    )
+    assert resp.status_code == 422
+
+
+def test_list_emails_missing_box_returns_422(seeded_test_client):
+    resp = seeded_test_client.get(
+        f"{_MAILBOX_URL}/{_SEEDED_GMAIL_MAILBOX}/emails"
+    )
+    assert resp.status_code == 422
+
+
+def test_list_emails_nonexistent_account_returns_404(seeded_test_client):
+    fake_account_id = "00000000-0000-4000-a000-000000000099"
+    resp = seeded_test_client.get(
+        f"{_MAILBOX_URL}/{_SEEDED_GMAIL_MAILBOX}/emails",
+        params={"box": "ALL_MAIL", "account_id": fake_account_id},
+    )
+    assert resp.status_code == 404
+    assert resp.json()["error"]["code"] == "account_not_found"
+
+
+def test_list_emails_nonexistent_mailbox_returns_404(seeded_test_client):
+    fake_mailbox_id = "00000000-0000-4000-a000-000000000099"
+    resp = seeded_test_client.get(f"{_MAILBOX_URL}/{fake_mailbox_id}/emails?box=ALL_MAIL")
+    assert resp.status_code == 404
+    assert resp.json()["error"]["code"] == "mailbox_not_found"
+
+
+# ------------------------------------------------------------------
+# Seeded GET endpoint tests — exact count per box (migration 0010)
+# ------------------------------------------------------------------
+
+@pytest.mark.parametrize("box, expected_count", [
+    ("ALL_MAIL", 30),
+    ("SENT", 10),
+    ("TRASH", 4),
+    ("SPAM", 6),
+])
+def test_seeded_list_emails_by_account(seeded_test_client, box, expected_count):
+    resp = seeded_test_client.get(
+        f"{_MAILBOX_URL}/{_SEEDED_GMAIL_MAILBOX}/emails",
+        params={"box": box, "account_id": _SEEDED_GMAIL_ACCOUNT},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data) == expected_count
+    assert all(e["account_id"] == _SEEDED_GMAIL_ACCOUNT for e in data)
+    assert all(e["box"] == box for e in data)
+
+
+@pytest.mark.parametrize("box, expected_count", [
+    ("ALL_MAIL", 30),
+    ("SENT", 10),
+    ("TRASH", 4),
+    ("SPAM", 6),
+])
+def test_seeded_list_emails_by_mailbox(seeded_test_client, box, expected_count):
+    resp = seeded_test_client.get(
+        f"{_MAILBOX_URL}/{_SEEDED_GMAIL_MAILBOX}/emails",
+        params={"box": box},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data) == expected_count
+    assert all(e["box"] == box for e in data)

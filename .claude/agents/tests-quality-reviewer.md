@@ -138,4 +138,21 @@ Verdict guide:
 
 ---
 
+### Phase 5 — Architecture Compliance Gate (mandatory, before delivering the report)
+
+Before outputting your final report, review **every issue and suggestion** you are about to propose and cross-check it against the `CLAUDE.md` file you read in Phase 1. For each proposed fix or recommendation, ask yourself:
+
+- Does this suggestion respect the layer boundaries, conventions, and constraints defined in that `CLAUDE.md`?
+- Would implementing this suggestion violate any rule stated in the `CLAUDE.md`?
+
+If a suggestion conflicts with the documented architecture, **remove it or rewrite it** so that it is fully compliant. Never propose a fix that would break an architectural rule, even if the fix would improve test quality in isolation.
+
+At the end of the **Issues** section, add a one-line confirmation:
+
+> All suggestions in this report have been verified against `<CLAUDE.md path>`.
+
+If any suggestion had to be dropped or rewritten due to an architectural conflict, note it briefly so the reader knows.
+
+---
+
 Be thorough and direct. Trace every import, read every test, read every source file. Do not guess at coverage — verify it by reading the actual code. The goal is to ensure the test suite truly verifies the production code it claims to cover.

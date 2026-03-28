@@ -60,24 +60,6 @@ class PgEmailMetadataStore(EmailMetadataStore):
                 f"Unexpected email metadata upsert error ({type(exc).__name__}): {exc}"
             ) from exc
 
-    def list_by_account(self, account_id: str) -> list[dict[str, Any]]:
-        try:
-            with connection.get_connection() as conn:
-                with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-                    cur.execute(queries.LIST_BY_ACCOUNT, {"account_id": account_id})
-                    rows = cur.fetchall()
-        except psycopg2.errors.InvalidTextRepresentation:
-            return []
-        except DatabaseError:
-            raise
-        except psycopg2.Error as exc:
-            raise QueryError("Failed to list email metadata.") from exc
-        except Exception as exc:
-            raise QueryError(
-                f"Unexpected email metadata list error ({type(exc).__name__}): {exc}"
-            ) from exc
-        return [dict(row) for row in rows]
-
     def delete_by_account(self, account_id: str) -> None:
         try:
             with connection.get_connection() as conn:
@@ -256,6 +238,49 @@ class PgEmailMetadataStore(EmailMetadataStore):
             raise QueryError(
                 f"Unexpected email spam status update error ({type(exc).__name__}): {exc}"
             ) from exc
+
+
+    def list_by_account_and_box(self, account_id: str, box: str) -> list[dict[str, Any]]:
+        try:
+            with connection.get_connection() as conn:
+                with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                    cur.execute(
+                        queries.LIST_BY_ACCOUNT_AND_BOX,
+                        {"account_id": account_id, "box": box},
+                    )
+                    rows = cur.fetchall()
+        except psycopg2.errors.InvalidTextRepresentation:
+            return []
+        except DatabaseError:
+            raise
+        except psycopg2.Error as exc:
+            raise QueryError("Failed to list email metadata by account and box.") from exc
+        except Exception as exc:
+            raise QueryError(
+                f"Unexpected email metadata list by account and box error ({type(exc).__name__}): {exc}"
+            ) from exc
+        return [dict(row) for row in rows]
+
+    def list_by_mailbox_and_box(self, mailbox_id: str, box: str) -> list[dict[str, Any]]:
+        try:
+            with connection.get_connection() as conn:
+                with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                    cur.execute(
+                        queries.LIST_BY_MAILBOX_AND_BOX,
+                        {"mailbox_id": mailbox_id, "box": box},
+                    )
+                    rows = cur.fetchall()
+        except psycopg2.errors.InvalidTextRepresentation:
+            return []
+        except DatabaseError:
+            raise
+        except psycopg2.Error as exc:
+            raise QueryError("Failed to list email metadata by mailbox and box.") from exc
+        except Exception as exc:
+            raise QueryError(
+                f"Unexpected email metadata list by mailbox and box error ({type(exc).__name__}): {exc}"
+            ) from exc
+        return [dict(row) for row in rows]
 
 
 email_metadata_store = PgEmailMetadataStore()

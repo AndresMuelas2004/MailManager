@@ -117,7 +117,9 @@ class EmailManager:
             raise
         except Exception as exc:
             self._last_errors[account_label] = exc
-            raise
+            raise EmailExternalAPIError(
+                f"Unexpected connect_account error ({type(exc).__name__}): {exc}"
+            ) from exc
 
     def fetch_all_email_metadata(
         self,
@@ -155,21 +157,49 @@ class EmailManager:
 
     def delete_messages(self, account_label: str, message_ids: list[str]) -> list[str]:
         client = self._get_client_or_raise(account_label)
-        return client.delete_messages(message_ids)
+        try:
+            return client.delete_messages(message_ids)
+        except CoreError:
+            raise
+        except Exception as exc:
+            raise EmailExternalAPIError(
+                f"Unexpected delete_messages error ({type(exc).__name__}): {exc}"
+            ) from exc
 
     def restore_from_trash(self, account_label: str, items: dict[str, str | None]) -> dict[str, str]:
         client = self._get_client_or_raise(account_label)
-        return client.restore_from_trash(items)
+        try:
+            return client.restore_from_trash(items)
+        except CoreError:
+            raise
+        except Exception as exc:
+            raise EmailExternalAPIError(
+                f"Unexpected restore_from_trash error ({type(exc).__name__}): {exc}"
+            ) from exc
 
     def fetch_messages_metadata(
         self, account_label: str, message_ids: list[str],
     ) -> list[EmailMetadata]:
         client = self._get_client_or_raise(account_label)
-        return client.fetch_messages_metadata(message_ids)
+        try:
+            return client.fetch_messages_metadata(message_ids)
+        except CoreError:
+            raise
+        except Exception as exc:
+            raise EmailExternalAPIError(
+                f"Unexpected fetch_messages_metadata error ({type(exc).__name__}): {exc}"
+            ) from exc
 
     def move_to_trash(self, account_label: str, message_ids: list[str]) -> dict[str, str]:
         client = self._get_client_or_raise(account_label)
-        return client.move_to_trash(message_ids)
+        try:
+            return client.move_to_trash(message_ids)
+        except CoreError:
+            raise
+        except Exception as exc:
+            raise EmailExternalAPIError(
+                f"Unexpected move_to_trash error ({type(exc).__name__}): {exc}"
+            ) from exc
 
     def send_email_from_account(
         self,

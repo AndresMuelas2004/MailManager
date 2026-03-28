@@ -78,10 +78,6 @@ class EmailMetadataStore(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def list_by_account(self, account_id: str) -> list[dict[str, Any]]:
-        raise NotImplementedError
-
-    @abstractmethod
     def delete_by_account(self, account_id: str) -> None:
         raise NotImplementedError
 
@@ -125,6 +121,14 @@ class EmailMetadataStore(ABC):
     def update_spam_status_batch(self, account_id: str, rows: list[tuple]) -> int:
         raise NotImplementedError
 
+    @abstractmethod
+    def list_by_account_and_box(self, account_id: str, box: str) -> list[dict[str, Any]]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def list_by_mailbox_and_box(self, mailbox_id: str, box: str) -> list[dict[str, Any]]:
+        raise NotImplementedError
+
 
 class UserStore(ABC):
     """
@@ -137,10 +141,6 @@ class UserStore(ABC):
 
     @abstractmethod
     def get_by_id(self, user_id: str) -> dict[str, Any] | None:
-        raise NotImplementedError
-
-    @abstractmethod
-    def get_by_google_sub(self, google_sub: str) -> dict[str, Any] | None:
         raise NotImplementedError
 
     @abstractmethod
