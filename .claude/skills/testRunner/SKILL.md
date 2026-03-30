@@ -1,5 +1,7 @@
 ---
 name: testRunner
+description: "Run tests for each of the following directories — launch all test runners in parallel, one independent agent per directory."
+argument-hint: [DirectoryTest-1] [DirectoryTest-2] [DirectoryTest-3]
 disable-model-invocation: true
 ---
 

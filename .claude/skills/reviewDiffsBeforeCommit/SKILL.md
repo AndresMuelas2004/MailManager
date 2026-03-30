@@ -1,5 +1,6 @@
 ---
 name: reviewDiffsBeforeCommit
+description: "Exhaustive pre-commit review: analyze diffs, determine affected backend layers, launch parallel review subagents, and consolidate findings into a severity-graded report."
 disable-model-invocation: true
 ---
 

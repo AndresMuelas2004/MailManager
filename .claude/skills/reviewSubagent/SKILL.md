@@ -1,5 +1,7 @@
 ---
 name: reviewSubagent
+description: "Review subagent definitions for correctness, design quality, and adherence to best practices for each of the following files — run all reviews in parallel, one independent review per file."
+argument-hint: [nameSubagent-1] [nameSubagent-2] [...]
 disable-model-invocation: true
 ---
 

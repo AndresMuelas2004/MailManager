@@ -1,5 +1,7 @@
 ---
 name: reviewMDfile
+description: "Review Markdown documentation for accuracy, completeness, and clarity by cross-referencing source code."
+argument-hint: [MDaddress-1] [MDaddress-2] [...]
 disable-model-invocation: true
 ---
 

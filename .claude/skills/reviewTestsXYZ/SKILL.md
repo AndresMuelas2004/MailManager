@@ -1,5 +1,7 @@
 ---
 name: reviewTestsXYZ
+description: "Audit test quality, review tests, check test coverage, and identify test gaps for each of the following directories — run all reviews in parallel, one independent review per directory."
+argument-hint: [DirectoryTest-1] [DirectoryTest-2] [DirectoryTest-3]
 disable-model-invocation: true
 ---
 
