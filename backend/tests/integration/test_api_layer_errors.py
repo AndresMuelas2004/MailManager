@@ -140,6 +140,15 @@ def test_connect_account_not_found(test_client, setup_mailbox_and_account):
     assert resp.json()["error"]["code"] == "account_not_found"
 
 
+def test_sync_metadata_account_not_found(test_client, setup_mailbox_and_account):
+    mid, _ = setup_mailbox_and_account(test_client)
+    resp = test_client.post(
+        f"{_MAILBOX_URL}/{mid}/emails/sync-metadata?account_id=nonexistent",
+    )
+    assert resp.status_code == 404
+    assert resp.json()["error"]["code"] == "account_not_found"
+
+
 def test_send_account_not_found(test_client, setup_mailbox_and_account):
     mid, _ = setup_mailbox_and_account(test_client)
     resp = test_client.post(

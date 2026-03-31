@@ -47,6 +47,15 @@ Build via `build_manager_for_accounts(accounts)` — never instantiate `EmailCli
 
 Load credentials with `load_wrapped_app_credentials(provider)` / `load_wrapped_account_tokens(mailbox_id, account_id, provider)` (uses `pydantic.SecretStr`). Unwrap with `unwrap_secret()` before persisting.
 
+### Metadata sync endpoint
+
+`POST /mailboxes/{mailbox_id}/emails/sync-metadata?account_id=<optional>` — fetch and persist email metadata.
+
+- **Query params**: `account_id` (optional UUID). When provided, syncs only the specified account; when omitted, syncs all accounts in the mailbox.
+- **Response**: `SyncResultOut` with `total_synced` and per-account `AccountSyncDetail` entries.
+- **Error**: `EmailFetchError` (code `"email_fetch_error"`, HTTP 502) — raised on provider-level or unexpected failures during sync.
+- **Flow**: validate ownership via `ensure_mailbox_access` → if `account_id` provided, validate it belongs to the mailbox via `account_store.get`; if omitted, load all accounts via `account_store.list_by_mailbox` → build manager → authenticate silently → fetch metadata → persist results.
+
 ### Metadata sync helpers
 
 Seven helpers in `services_helpers.py` support the email metadata sync flow:

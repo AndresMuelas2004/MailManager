@@ -250,6 +250,38 @@ class TestSyncEmailMetadata:
         with pytest.raises(ApiError):
             emails_service.sync_email_metadata(_MAILBOX_ID, _USER_ID)
 
+    def test_single_account_happy_path(self, monkeypatch):
+        _patch_common(monkeypatch)
+        result = emails_service.sync_email_metadata(_MAILBOX_ID, _USER_ID, _ACCOUNT_ID)
+        assert result.total_synced == 1
+        assert len(result.accounts) == 1
+        assert result.accounts[0].account_id == _ACCOUNT_ID
+
+    def test_single_account_not_found_raises(self, monkeypatch):
+        _patch_common(monkeypatch)
+        with pytest.raises(AccountNotFound, match="during metadata sync"):
+            emails_service.sync_email_metadata(_MAILBOX_ID, _USER_ID, "nonexistent")
+
+    def test_single_account_db_error_on_lookup(self, monkeypatch):
+        from database import DatabaseError
+        _patch_common(monkeypatch)
+        monkeypatch.setattr(
+            emails_service.account_store, "get",
+            MagicMock(side_effect=DatabaseError("db fail")),
+        )
+        from api.errors.exceptions import ApiError
+        with pytest.raises(ApiError):
+            emails_service.sync_email_metadata(_MAILBOX_ID, _USER_ID, _ACCOUNT_ID)
+
+    def test_single_account_unexpected_error_on_lookup(self, monkeypatch):
+        _patch_common(monkeypatch)
+        monkeypatch.setattr(
+            emails_service.account_store, "get",
+            MagicMock(side_effect=RuntimeError("unexpected")),
+        )
+        with pytest.raises(EmailFetchError, match="Failed to look up account for metadata sync"):
+            emails_service.sync_email_metadata(_MAILBOX_ID, _USER_ID, _ACCOUNT_ID)
+
 
 # ==================================================================
 # send_email

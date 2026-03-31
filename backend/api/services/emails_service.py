@@ -162,17 +162,41 @@ def _build_auth_context(
     return auth_payloads, label_lookup
 
 
-def sync_email_metadata(mailbox_id: str, user_id: str) -> SyncResultOut:
-    """Fetch and persist email metadata for all accounts under a mailbox."""
+def sync_email_metadata(
+    mailbox_id: str,
+    user_id: str,
+    account_id: str | None = None,
+) -> SyncResultOut:
+    """Fetch and persist email metadata for a mailbox, or a single account if specified."""
     ensure_mailbox_access(mailbox_id, user_id)
 
-    try:
-        accounts = account_store.list_by_mailbox(mailbox_id)
-    except DatabaseError as exc:
-        raise translate_database_error(exc) from exc
-    except Exception as exc:
-        logger.warning("Unexpected account listing error during sync (%s): %s", type(exc).__name__, exc)
-        raise ApiError("Failed to list accounts for sync.") from exc
+    if account_id is not None:
+        try:
+            account = account_store.get(mailbox_id, account_id)
+        except DatabaseError as exc:
+            raise translate_database_error(exc) from exc
+        except Exception as exc:
+            logger.warning(
+                "Unexpected account lookup error during metadata sync (%s): %s",
+                type(exc).__name__, exc,
+            )
+            raise EmailFetchError(
+                "Failed to look up account for metadata sync."
+            ) from exc
+        if account is None:
+            raise AccountNotFound(
+                f"Account '{account_id}' not found in mailbox '{mailbox_id}' "
+                "during metadata sync."
+            )
+        accounts = [account]
+    else:
+        try:
+            accounts = account_store.list_by_mailbox(mailbox_id)
+        except DatabaseError as exc:
+            raise translate_database_error(exc) from exc
+        except Exception as exc:
+            logger.warning("Unexpected account listing error during sync (%s): %s", type(exc).__name__, exc)
+            raise ApiError("Failed to list accounts for sync.") from exc
 
     try:
         auth_payloads, label_lookup = _build_auth_context(accounts, mailbox_id)

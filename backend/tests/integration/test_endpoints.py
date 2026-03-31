@@ -188,6 +188,17 @@ def test_sync_email_metadata_persists_to_db(test_client, setup_mailbox_and_accou
     assert row_count == total_synced
 
 
+def test_sync_email_metadata_single_account(test_client, setup_mailbox_and_account, sample_metadata):
+    mid, aid = setup_mailbox_and_account(test_client)
+    resp = test_client.post(f"{_MAILBOX_URL}/{mid}/emails/sync-metadata?account_id={aid}")
+    assert resp.status_code == 200
+    data = resp.json()
+    expected_count = len(sample_metadata)
+    assert data["total_synced"] == expected_count
+    assert len(data["accounts"]) == 1
+    assert data["accounts"][0]["account_id"] == aid
+
+
 def test_send_email(test_client, setup_mailbox_and_account):
     mid, aid = setup_mailbox_and_account(test_client)
     resp = test_client.post(
