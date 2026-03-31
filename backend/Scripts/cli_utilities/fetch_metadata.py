@@ -15,6 +15,7 @@ from api.services.emails_service import sync_email_metadata
 def main() -> None:
     parser = argparse.ArgumentParser(description="Fetch email metadata for a mailbox.")
     parser.add_argument("--mailbox-id", required=True, help="Mailbox ID (UUID).")
+    parser.add_argument("--account-id", default=None, help="Account ID (UUID). If omitted, syncs all accounts.")
     args = parser.parse_args()
 
     mailbox = mailbox_store.get(args.mailbox_id)
@@ -23,9 +24,12 @@ def main() -> None:
         return
 
     owner_user_id = mailbox["owner_user_id"]
-    print(f"Syncing metadata for mailbox '{args.mailbox_id}' (owner: {owner_user_id})...")
+    if args.account_id:
+        print(f"Syncing metadata for account '{args.account_id}' in mailbox '{args.mailbox_id}'...")
+    else:
+        print(f"Syncing metadata for all accounts in mailbox '{args.mailbox_id}'...")
 
-    result = sync_email_metadata(args.mailbox_id, owner_user_id)
+    result = sync_email_metadata(args.mailbox_id, owner_user_id, args.account_id)
     print(f"Total synced: {result.total_synced}")
     for detail in result.accounts:
         print(f"  account_id: {detail.account_id}, provider: {detail.provider}, "

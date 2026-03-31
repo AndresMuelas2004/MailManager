@@ -35,6 +35,19 @@ These endpoints are verified manually by the developer with scripts.
 
 Pre-existing test account identifiers are centralized in `e2e_config.py` with env var overrides. These accounts must exist in the database with valid OAuth refresh tokens before running the suite.
 
+### Pre-existing test accounts — one per provider
+
+The E2E suite requires **one real, authenticated account per supported email provider** (i.e., per client implementation in `backend/core/email/`). Each account is linked to a real mailbox owned by the developer and must have valid OAuth tokens in the database.
+
+Current accounts:
+
+| provider | account_id | mailbox_id | display_label |
+|---|---|---|---|
+| gmail | `9805b672-032b-4d74-9696-4db53a5eb512` | `28a83414-36f5-4115-ab61-977d5a06a8e1` | pruebaGmail |
+| outlook | `3c55eb17-9d5e-4d31-a3b5-14c6c24279b9` | `b61e15d5-153e-42ee-a4c6-2c943bd13c07` | pruebaOutlook |
+
+**Extension rule**: when a new email provider is added to `backend/core/email/`, a corresponding test account must be created and registered in `e2e_config.py`, and the E2E suite must be extended with provider-specific tests (sync, send, read-status, spam, trash) for that account.
+
 ### Session injected via direct DB insert
 
 The `e2e_session` fixture creates a real session row in the `sessions` table using a separate `psycopg2` connection (not the app's pool). The session cookie is set on the `TestClient`. `require_session` validates it against the real database.
@@ -78,10 +91,10 @@ No global "skip all after first failure". Each test checks its own prerequisites
 
 | Test | Endpoint | Dependencies |
 |---|---|---|
-| 15 | `POST .../emails/sync-metadata` (gmail, path 1 — bootstrap) | independent → produces `gmail_path1_done` |
-| 16 | `POST .../emails/sync-metadata` (outlook, path 1 — bootstrap) | independent → produces `outlook_path1_done` |
-| 17 | `POST .../emails/sync-metadata` (gmail, path 2 — incremental) | requires `gmail_path1_done` |
-| 18 | `POST .../emails/sync-metadata` (outlook, path 2 — incremental) | requires `outlook_path1_done` |
+| 15 | `POST .../emails/sync-metadata?account_id=` (gmail, single-account bootstrap) | independent → produces `gmail_path1_done` |
+| 16 | `POST .../emails/sync-metadata?account_id=` (outlook, single-account bootstrap) | independent → produces `outlook_path1_done` |
+| 17 | `POST .../emails/sync-metadata` (gmail, all-accounts sync) | independent |
+| 18 | `POST .../emails/sync-metadata` (outlook, all-accounts sync) | independent |
 | 19 | `POST .../emails/send` (gmail) | independent |
 | 20 | `POST .../emails/send` (outlook) | independent |
 | 21 | `PATCH .../emails/read-status` (gmail) | independent |

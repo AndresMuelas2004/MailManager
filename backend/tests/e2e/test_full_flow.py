@@ -237,36 +237,39 @@ def test_14_get_deleted_mailbox_404(e2e_client, flow_state):
 
 def test_15_sync_metadata_gmail_path_1(e2e_client, flow_state):
     _clear_sync_cursor(GMAIL_ACCOUNT_ID)
-    response = e2e_client.post(f"/mailboxes/{GMAIL_MAILBOX_ID}/emails/sync-metadata")
+    response = e2e_client.post(
+        f"/mailboxes/{GMAIL_MAILBOX_ID}/emails/sync-metadata",
+        params={"account_id": GMAIL_ACCOUNT_ID},
+    )
     _assert_ok(response)
     data = response.json()
     assert isinstance(data["total_synced"], int)
     assert data["total_synced"] >= 0
     accounts = data["accounts"]
-    synced_ids = {a["account_id"] for a in accounts}
-    assert GMAIL_ACCOUNT_ID in synced_ids
-    gmail_account = next(a for a in accounts if a["account_id"] == GMAIL_ACCOUNT_ID)
-    assert gmail_account["sync_cursor"] is not None
+    assert len(accounts) == 1
+    assert accounts[0]["account_id"] == GMAIL_ACCOUNT_ID
+    assert accounts[0]["sync_cursor"] is not None
     flow_state["gmail_path1_done"] = "true"
 
 
 def test_16_sync_metadata_outlook_path_1(e2e_client, flow_state):
     _clear_sync_cursor(OUTLOOK_ACCOUNT_ID)
-    response = e2e_client.post(f"/mailboxes/{OUTLOOK_MAILBOX_ID}/emails/sync-metadata")
+    response = e2e_client.post(
+        f"/mailboxes/{OUTLOOK_MAILBOX_ID}/emails/sync-metadata",
+        params={"account_id": OUTLOOK_ACCOUNT_ID},
+    )
     _assert_ok(response)
     data = response.json()
     assert isinstance(data["total_synced"], int)
     assert data["total_synced"] >= 0
     accounts = data["accounts"]
-    synced_ids = {a["account_id"] for a in accounts}
-    assert OUTLOOK_ACCOUNT_ID in synced_ids
-    outlook_account = next(a for a in accounts if a["account_id"] == OUTLOOK_ACCOUNT_ID)
-    assert outlook_account["sync_cursor"] is not None
+    assert len(accounts) == 1
+    assert accounts[0]["account_id"] == OUTLOOK_ACCOUNT_ID
+    assert accounts[0]["sync_cursor"] is not None
     flow_state["outlook_path1_done"] = "true"
 
 
 def test_17_sync_metadata_gmail_path_2(e2e_client, flow_state):
-    _require(flow_state, "gmail_path1_done")
     response = e2e_client.post(f"/mailboxes/{GMAIL_MAILBOX_ID}/emails/sync-metadata")
     _assert_ok(response)
     data = response.json()
@@ -280,7 +283,6 @@ def test_17_sync_metadata_gmail_path_2(e2e_client, flow_state):
 
 
 def test_18_sync_metadata_outlook_path_2(e2e_client, flow_state):
-    _require(flow_state, "outlook_path1_done")
     response = e2e_client.post(f"/mailboxes/{OUTLOOK_MAILBOX_ID}/emails/sync-metadata")
     _assert_ok(response)
     data = response.json()

@@ -45,12 +45,14 @@ def list_emails(
 @router.post("/sync-metadata", response_model=SyncResultOut)
 def sync_email_metadata(
     mailbox_id: str,
+    account_id: str | None = Query(default=None),
     user_id: str = Depends(require_session),
 ) -> SyncResultOut:
     """
-    Fetch and persist email metadata for all accounts under a mailbox.
+    Fetch and persist email metadata for a mailbox.
+    Optionally sync only a single account.
     """
-    return emails_service.sync_email_metadata(mailbox_id, user_id)
+    return emails_service.sync_email_metadata(mailbox_id, user_id, account_id)
 
 
 @router.post("/send")

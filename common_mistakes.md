@@ -11,3 +11,13 @@ When an E2E test performs a destructive action (delete, disconnect, etc.), the v
 **Where this applies:** E2E tests only. Unit tests follow "one behavior per case" and should stay granular. Integration tests depend on context — simple follow-up assertions can stay in the same test, but distinct contracts (different endpoint, different error translation) deserve their own test.
 
 **Why:** The E2E CLAUDE.md says tests are "split into individual endpoint-level tests." A follow-up 404 check is not a separate endpoint test — it is verifying the side effect of the endpoint already being tested.
+
+### 2. Plans must propose E2E test updates when applicable
+
+When a plan adds new endpoint behavior or modifies existing endpoint behavior, the plan **must** include a clear, explicit step proposing the required E2E test changes. This does not mean every plan needs E2E changes — only those that affect endpoint behavior visible at the E2E level (new endpoints, changed responses, new provider operations, etc.).
+
+The E2E step in the plan must describe **what** will change in the E2E suite and **why**, with enough detail for the user to evaluate it during plan review. The user always reviews plans before accepting, so vague references like "update E2E tests" are not acceptable — specify which tests are added or modified and what they verify.
+
+**Where this applies:** Plan mode only. This is about plan completeness, not about test writing style.
+
+**Why:** Claude has a recurring tendency to propose unit and integration test updates but silently omit E2E tests, even though root CLAUDE.md § 8 explicitly requires all three layers. The omission is not caused by any rule — it is a behavioral bias toward avoiding the more complex E2E flow. This entry exists to counteract that bias.
