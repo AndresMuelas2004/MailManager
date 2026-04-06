@@ -2,7 +2,7 @@
 name: md-reviewer
 description: "Review Markdown documentation for accuracy, completeness, and clarity by cross-referencing source code. Use when user asks to \"review docs\", \"check documentation\", \"audit .md files\", or wants to verify documentation matches the codebase."
 tools: Glob, Grep, Read, WebSearch, WebFetch
-model: opus
+model: sonnet
 background: true
 color: blue
 ---

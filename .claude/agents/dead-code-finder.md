@@ -2,7 +2,7 @@
 name: dead-code-finder
 description: "Scan a directory or entire project for dead code: unused functions, methods, variables, classes, constants, imports, and orphan files. Use when user mentions \"dead code\", \"unused code\", \"clean up imports\", or asks to \"find what's safe to remove\"."
 tools: Glob, Grep, Read
-model: opus
+model: sonnet
 color: red
 background: true
 ---

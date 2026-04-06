@@ -2,7 +2,7 @@
 name: queries-reviewer
 description: "Review SQL queries in backend/database/queries/ for efficiency, reusability, cleanliness, and dead SQL query function detection. Use when user asks to \"review queries\", \"audit queries\", \"check SQL efficiency\", \"optimize queries\", \"find N+1 patterns\", \"check SQL injection risks\", or mentions \"dead SQL queries\" or \"unused query functions\"."
 tools: Glob, Grep, Read
-model: opus
+model: sonnet
 color: teal
 background: true
 ---

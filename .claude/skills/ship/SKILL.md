@@ -4,13 +4,63 @@ description: "Ship a feature from a worktree: commit, push, create PR, merge to 
 model: opus
 effort: max
 allowed-tools: Bash, Read, Edit, Grep, Glob, Agent, AskUserQuestion
+user-invocable: true
+argument-hint: "Worktree directory name to ship (e.g., MailManager-feature)"
 ---
 
 # Ship — Full Worktree Shipping Workflow
 
 This skill finalizes a feature developed in a git worktree: commits, pushes, creates a PR, merges it, cleans up, and rebases every other active worktree so they stay in sync with master.
 
+**Invocation**: Must be run from the main MailManager directory (master branch), with the worktree directory name as an argument. The worktree name is: $ARGUMENTS. Example: `/ship MailManager-feature`
+
 The main repo directory is always named **MailManager**. Worktrees are sibling directories (e.g., `MailManager-feature-name`). The default branch is **master**. GitHub CLI (`gh`) is available.
+
+---
+
+## Phase 0 — Argument Parsing & Validation
+
+### 0.1 Extract argument
+
+Read the worktree directory name from `$ARGUMENTS`. If empty or blank, **STOP** and tell the user:
+> "Please provide the worktree directory name as an argument. Example: `/ship MailManager-feature`"
+
+### 0.2 Validate execution context
+
+Verify we are in the main repo, not inside a worktree:
+
+```bash
+git rev-parse --git-dir
+git rev-parse --git-common-dir
+```
+
+If the two values differ, we are inside a worktree. **STOP** with message:
+> "Run /ship from the main MailManager directory, not from inside a worktree."
+
+### 0.3 Derive and validate worktree path
+
+```bash
+REPO_ROOT=$(git rev-parse --show-toplevel)
+WORKTREE_PATH="$(dirname "$REPO_ROOT")/$ARGUMENTS"
+```
+
+Validate:
+1. The directory exists: `test -d "$WORKTREE_PATH"`
+2. It is a registered git worktree: it appears in the output of `git worktree list`
+
+If either check fails, **STOP** with message:
+> "Worktree directory '$ARGUMENTS' not found or is not a valid git worktree."
+
+### 0.4 Get the branch name
+
+```bash
+git -C "$WORKTREE_PATH" branch --show-current
+```
+
+Store the result as `<branch-name>`.
+
+**Output to chat:**
+> Shipping worktree: `<worktree-path>` (branch: `<branch-name>`)
 
 ---
 
@@ -18,24 +68,27 @@ The main repo directory is always named **MailManager**. Worktrees are sibling d
 
 ### 1.1 Check for uncommitted changes
 
-Run `git status` and `git diff` (including `--cached`).
+Run `git -C <worktree-path> status` and `git -C <worktree-path> diff` (including `--cached`).
 
 - **If there are changes**: analyze the diffs (and any implementation context already in the conversation window) to understand what was built. Draft a concise commit title (imperative mood, max 72 chars) and a short body explaining the "why". Stage relevant files (explicit names, never `git add -A`, never stage `.env` or credentials), commit using a HEREDOC, then push:
   ```bash
-  git push -u origin <branch>
+  git -C <worktree-path> push -u origin <branch>
   ```
+  All staging and commit commands must use `git -C <worktree-path>`.
 - **If there are NO changes** (everything was already committed and pushed incrementally): skip straight to PR creation.
 
 ### 1.2 Create the Pull Request
 
 ```bash
-gh pr create --base master --title "<title>" --body "<description>"
+gh pr create --base master --head <branch-name> --title "<title>" --body "<description>"
 ```
+
+The `--head <branch-name>` flag is required because we are on master, not on the feature branch.
 
 Check the PR for merge conflicts:
 
 ```bash
-gh pr view --json mergeable
+gh pr view <branch-name> --json mergeable
 ```
 
 - **If `mergeable` is `CONFLICTING`**: **STOP IMMEDIATELY**. Tell the user there is a conflict in the PR, explain which files conflict and why. This should never happen because worktrees are created from a rebased state — if it does, it signals a critical issue that needs manual investigation. Do NOT continue.
@@ -51,7 +104,7 @@ gh pr view --json mergeable
 ### 2.1 Merge the PR
 
 ```bash
-gh pr merge --squash --delete-branch
+gh pr merge <branch-name> --squash --delete-branch
 ```
 
 `--delete-branch` removes the remote branch automatically. If squash is not desired by the user in the future, this can be changed to `--merge` or `--rebase`.
@@ -63,29 +116,28 @@ If the merge fails for any reason, **STOP IMMEDIATELY** and notify the user with
 
 ### 2.2 Update local master
 
-Navigate to the main MailManager directory and pull:
+We are already in the main MailManager directory. Pull the latest master:
 
 ```bash
-git -C <path-to-MailManager> checkout master
-git -C <path-to-MailManager> pull origin master
+git pull origin master
 ```
 
 ### 2.3 Clean up the worktree
 
-The worktree you just shipped no longer needs to exist. Clean up in this order:
+The worktree you just shipped no longer needs to exist. Since we are running from the main MailManager directory (not inside the worktree), directory deletion will succeed without CWD conflicts. Clean up in this order:
 
 ```bash
 # Delete the local branch (--delete-branch above handled remote; this handles local)
-git -C <path-to-MailManager> branch -D <branch-name>
+git branch -D <branch-name>
 
 # Remove the worktree registration from git
-git -C <path-to-MailManager> worktree remove <worktree-path> --force
+git worktree remove <worktree-path> --force
 
 # If the directory still exists (edge case), remove it
 rm -rf <worktree-path>
 ```
 
-After cleanup, run `git -C <path-to-MailManager> worktree prune` to clean stale references.
+After cleanup, run `git worktree prune` to clean stale references.
 
 **Output to chat:**
 > Cleanup done: local branch, remote branch, and worktree directory removed.
@@ -97,7 +149,7 @@ After cleanup, run `git -C <path-to-MailManager> worktree prune` to clean stale 
 ### 3.1 List remaining worktrees
 
 ```bash
-git -C <path-to-MailManager> worktree list
+git worktree list
 ```
 
 Filter out the main MailManager directory — only show actual worktrees (sibling directories with branches other than master).
@@ -133,6 +185,27 @@ For each non-excluded worktree, launch a `rebase-conflicts-solver` subagent **in
 
 Wait for all subagents to complete. Each returns a structured conflict report.
 
+### 4.3 Sync local worktree directories
+
+After all subagents complete, the remote branches are updated but local worktree directories may not reflect the rebased state. For each worktree where the rebase reported **SUCCESS**:
+
+```bash
+git -C <worktree-path> fetch origin <branch-name>
+git -C <worktree-path> reset --hard origin/<branch-name>
+```
+
+This ensures the local working tree matches the pushed remote state.
+
+**Skip** worktrees that reported **MANUAL_INTERVENTION_NEEDED** — their local state was already restored by `git rebase --abort` in the subagent, so they remain on their pre-rebase commit (which is correct and safe).
+
+**Safety note**: `git reset --hard` is safe here because:
+1. The rebase subagent requires a clean working tree (no uncommitted changes) to operate
+2. Only worktrees with a successful rebase + push receive this treatment
+3. The reset simply aligns local with the state we just pushed — it is a sync, not a destructive override
+
+**Output to chat (per worktree):**
+> Synced local directory: `<worktree-path>` (branch: `<branch-name>`)
+
 ---
 
 ## Phase 5 — Final Summary
@@ -156,6 +229,7 @@ Present a clear summary for each worktree that was rebased:
 ### Conflict types explained:
 - **Type 1 (Additive)**: Both branches add code to the same file but in different sections or functions. Resolution is straightforward — keep both additions. Low risk.
 - **Type 2 (Combinatorial)**: Both branches modify the same function or method. Resolution requires understanding both intents and combining the logic into one coherent implementation. Higher risk — the summary explains exactly what was done so the user can verify.
+- **Type 3 (Unknown)**: The conflict does not fit Type 1 or Type 2 (e.g., delete/modify, rename/rename, binary). The agent aborted the rebase and provided analysis + proposed resolution without executing it. **Always requires manual intervention** — highlight prominently at the top of the summary.
 
 If any worktree needs manual intervention, highlight it clearly at the top of the summary.
 
@@ -174,5 +248,8 @@ If any worktree needs manual intervention, highlight it clearly at the top of th
 - Never force push (`--force` / `-f`) unless the user explicitly asks.
 - Never skip hooks (`--no-verify`).
 - Never stage `.env`, credentials, or secret files.
-- The main repo path is always derived from the current worktree by finding the MailManager directory among siblings.
-- All git operations targeting the main repo use `git -C <path-to-MailManager>` to avoid changing directories.
+- Must be invoked from the main MailManager directory (master branch), never from inside a worktree.
+- The worktree to ship is specified via `$ARGUMENTS` (the directory name, e.g., `MailManager-feature`).
+- The worktree path is derived as: `<parent-of-repo-root>/<argument>`.
+- All git operations targeting the main repo can omit `git -C` since we are already in the main directory.
+- All git operations targeting the worktree must use `git -C <worktree-path>`.

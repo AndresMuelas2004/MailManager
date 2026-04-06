@@ -2,7 +2,7 @@
 name: error-structure-reviewer
 description: "Audit error handling compliance and coverage within a directory/layer against its documented error hierarchy. Use when user asks to \"review error handling\", \"audit exceptions\", \"check error structure\", or mentions \"error compliance\"."
 tools: Read, Grep, Glob
-model: opus
+model: sonnet
 background: true
 color: purple
 ---
