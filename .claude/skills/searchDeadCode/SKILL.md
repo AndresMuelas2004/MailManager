@@ -1,6 +1,7 @@
 ---
 allowed-tools: Agent
 description: Launch parallel dead-code analysis on one or more directories
+argument-hint: [DirectoryLayer-1] [DirectoryLayer-2] [...]
 ---
 
 The user has provided one or more directory paths as arguments: $ARGUMENTS
