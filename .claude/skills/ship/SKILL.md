@@ -139,8 +139,24 @@ rm -rf <worktree-path>
 
 After cleanup, run `git worktree prune` to clean stale references.
 
+### 2.4 Remove PowerShell navigation shortcut
+
+The `/creacion-worktree` skill adds a navigation function to the PowerShell profile when creating a worktree. That function must be removed now that the worktree no longer exists.
+
+- Profile path: `C:\Users\amuel\Documents\WindowsPowerShell\Microsoft.PowerShell_profile.ps1`
+- Read the profile with the Read tool.
+- The worktree directory name is `$ARGUMENTS` (the same argument passed to `/ship`).
+- Find the 3-line function block matching the worktree directory name:
+  ```powershell
+  function <worktree-directory-name> {
+      Set-Location "<path>"
+  }
+  ```
+- **If found**: use Edit to remove the entire function block (all 3 lines, plus any trailing blank line so no double blanks remain).
+- **If NOT found**: skip silently — the function may not exist if the worktree was created before this convention.
+
 **Output to chat:**
-> Cleanup done: local branch, remote branch, and worktree directory removed.
+> Cleanup done: local branch, remote branch, worktree directory, and PowerShell shortcut removed.
 
 ---
 
