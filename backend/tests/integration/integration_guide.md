@@ -107,7 +107,7 @@ Trash management integration tests first sync emails via the normal sync endpoin
 
 ### GET endpoint testing rules (mandatory)
 
-GET endpoints only read from the database — they never call provider APIs and no fakes are involved in the read path. This means integration tests cover GET endpoints with the **same fidelity as E2E tests**. There is no coverage gap.
+GET endpoints that read exclusively from the database (no provider API calls, no fakes in the read path) can be fully covered by integration tests with the **same fidelity as E2E tests**. GET endpoints that involve external calls (e.g. cache-aside with provider fallback) require additional test strategies beyond the seeded-data approach described here.
 
 **Rule 1 — Use seeded data, not ephemeral data.** All GET endpoint tests must use the seeded fake data from migration 0010 (documented below) via the `seeded_test_client` fixture, which authenticates as the seeded user. Do not create throwaway resources via POST just to test a GET — the seeded data is deterministic, permanent, and provides known expected values.
 
@@ -115,13 +115,13 @@ GET endpoints only read from the database — they never call provider APIs and 
 
 **Rule 3 — Cover all parameter variants.** When a GET endpoint accepts filtering parameters (e.g. `box`, `account_id`), test every valid combination. Use `@pytest.mark.parametrize` to keep the code compact.
 
-**Rule 4 — New GET endpoints must follow these rules.** Whenever a new GET endpoint is added, its integration tests must use the seeded data and assert exact content. If the new endpoint reads data not covered by the current seed, extend the seed (new migration + update the data section below) before writing the tests.
+**Rule 4 — New database-only GET endpoints must follow these rules.** Whenever a new GET endpoint that reads exclusively from the database is added, its integration tests must use the seeded data and assert exact content. If the new endpoint reads data not covered by the current seed, extend the seed (new migration + update the data section below) before writing the tests. GET endpoints with external dependencies (e.g. cache or provider fallback) define their own test strategy in their endpoint documentation.
 
 ### Seeded fake data for GET endpoint assertions (migration 0010)
 
-Migration `0010_seed_fake_data_for_get_tests` inserts a complete set of fake data into the real database, designed exclusively for testing GET endpoints with exact content assertions — not just HTTP 200 status codes. This data is **not authenticated** with any real provider; it exists only to verify that the API returns the correct records from the database.
+Migration `0010_seed_fake_data_for_get_tests` inserts a complete set of fake data into the real database, designed exclusively for testing database-only GET endpoints with exact content assertions — not just HTTP 200 status codes. This data is **not authenticated** with any real provider; it exists only to verify that the API returns the correct records from the database.
 
-**Why this matters for integration tests:** Integration tests already use a real PostgreSQL database (with per-test rollback). Since GET endpoints are pure DB reads (no provider API calls, no fakes involved), integration tests cover them with the same fidelity as E2E. The seeded data allows tests to assert exact counts and content per box/account, rather than just checking status codes.
+**Why this matters for integration tests:** Integration tests already use a real PostgreSQL database (with per-test rollback). For GET endpoints that read exclusively from the database, integration tests cover them with the same fidelity as E2E. The seeded data allows tests to assert exact counts and content per box/account, rather than just checking status codes.
 
 #### Identifiers (fixed UUIDs)
 

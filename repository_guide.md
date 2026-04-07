@@ -25,7 +25,7 @@ Routers (FastAPI)
         → GmailClient, OutlookClient
 ```
 
-Note: the `GET /mailboxes/{mailbox_id}/emails` listing endpoint is a pure database read — it goes directly from Services → Database without involving Core or Auth (no provider API calls).
+Note: the `GET /mailboxes/{mailbox_id}/emails` listing endpoint reads only from the local database (Services → Database, no provider API calls).
 
 ## Key Identifiers
 

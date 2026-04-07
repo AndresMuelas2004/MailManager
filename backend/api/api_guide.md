@@ -117,11 +117,11 @@ One helper in `services_helpers.py` supports the move-to-trash flow:
 - **Error**: `EmailListError` (code `"email_list_error"`, HTTP 500) — raised on database-level failures during listing.
 - **Flow**: validate ownership via `ensure_mailbox_access` → if `account_id` provided, validate it belongs to the mailbox via `account_store.get`, then query `list_by_account_and_box`; if omitted, query `list_by_mailbox_and_box` (JOINs with `accounts` table).
 - **No provider calls**: this endpoint reads only from the local database. Provider sync is handled by `POST .../sync-metadata`.
-- **Testing rule**: this endpoint (and all GET endpoints) must be integration-tested using the seeded fake data from migration 0010 with exact content assertions. See `integration_guide.md` § "GET endpoint testing rules" for the mandatory rules.
+- **Testing rule**: this endpoint must be integration-tested using the seeded fake data from migration 0010 with exact content assertions. See `integration_guide.md` § "GET endpoint testing rules" for the mandatory rules.
 
 ### GET endpoints — integration test coverage rule
 
-All GET endpoints in this API are pure database reads — they never call provider APIs. This means integration tests (real FastAPI + real PostgreSQL) provide the same coverage as E2E tests for these endpoints. See `integration_guide.md` § "GET endpoint testing rules" for the mandatory rules that apply when adding or modifying GET endpoints.
+GET endpoints that read exclusively from the database (no provider API calls) can be fully covered by integration tests (real FastAPI + real PostgreSQL) with the same fidelity as E2E tests. GET endpoints that involve external calls (e.g. cache-aside with provider fallback) require additional test strategies — see each endpoint's documentation for details. See `integration_guide.md` § "GET endpoint testing rules" for the mandatory rules that apply when adding or modifying database-only GET endpoints.
 
 ## Behavioral Contracts — Traps to Avoid
 
