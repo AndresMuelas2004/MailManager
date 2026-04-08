@@ -92,7 +92,7 @@ gh pr view <branch-name> --json mergeable
 ```
 
 - **If `mergeable` is `CONFLICTING`**: **STOP IMMEDIATELY**. Tell the user there is a conflict in the PR, explain which files conflict and why. This should never happen because worktrees are created from a rebased state — if it does, it signals a critical issue that needs manual investigation. Do NOT continue.
-- **If clean**: print the PR URL and continue.
+- **If clean**: continue.
 
 **Output to chat:**
 > Commit + Push + PR created: <PR-URL>
@@ -226,28 +226,59 @@ This ensures the local working tree matches the pushed remote state.
 
 ## Phase 5 — Final Summary
 
-Present a clear summary for each worktree that was rebased:
+After all phases complete, output a structured final summary to chat. This is **in addition to** the interim "Output to chat" messages shown during earlier phases — those keep the user informed in real time, and this summary provides a complete record at the end. The summary must list every concrete action taken (or explicitly skipped), organized by phase.
 
-### Format per worktree:
+### Output format:
 
-```
-### {worktree-name} ({branch})
-**Status**: Rebase successful | Needs manual intervention
-**Conflicts**: None | N conflicts resolved
+```markdown
+## Ship Summary
 
-{If conflicts were resolved:}
+### Phase 0 — Validation
+- Worktree: `<worktree-path>` (branch: `<branch-name>`)
+
+### Phase 1 — Commit + Push + PR
+- Commit: `<commit-title>` | No uncommitted changes (skipped)
+- Push: `origin/<branch-name>` | Already up to date (skipped)
+- PR created: <PR-URL>
+- Merge check: MERGEABLE
+
+### Phase 2 — Merge + Pull + Cleanup
+- Squash merge: completed
+- Pull: `git pull origin master` — local master updated to `<short-hash>`
+- Local branch `<branch-name>`: deleted
+- Remote branch `<branch-name>`: deleted (via --delete-branch)
+- Worktree removed: `<worktree-path>` | failed (<reason>)
+- Worktree directory removed: yes | failed (<reason>)
+- PowerShell shortcut: removed | not found (skipped)
+- `git worktree prune`: done
+
+### Phase 3 — Worktree Selection
+- Remaining worktrees: <N> | None (nothing to rebase)
+- Excluded: none | <list of excluded names>
+
+### Phase 4 — Rebase {only if worktrees exist}
+#### <worktree-name> (`<branch>`)
+- **Status**: SUCCESS | MANUAL INTERVENTION NEEDED
+- **Conflicts**: None | <N> resolved
+- **Local sync**: `git reset --hard origin/<branch>` completed | skipped (manual intervention)
+{If conflicts were resolved, include a detail table:}
 | File | Type | Details |
 |------|------|---------|
 | path/to/file.py | Type 1 (Additive) | Both branches added code to different sections |
 | path/to/other.py | Type 2 (Combinatorial) | Merged logic in `function_name`: branch A added X, branch B added Y, combined as Z |
 ```
 
-### Conflict types explained:
+### Rules for the summary:
+- Every action from every phase must appear — nothing omitted.
+- If a step was skipped, say so explicitly with the reason (e.g., "No uncommitted changes (skipped)").
+- If a step failed, say so explicitly with the error (e.g., "failed (Device or resource busy)").
+- Phase 4 is only shown if there were worktrees to rebase. If none, Phase 3 ends with "None (nothing to rebase)" and Phase 4 is omitted entirely.
+- If any worktree needs manual intervention, highlight it at the very top of the summary before Phase 0.
+
+### Conflict types reference (for Phase 4 detail tables):
 - **Type 1 (Additive)**: Both branches add code to the same file but in different sections or functions. Resolution is straightforward — keep both additions. Low risk.
 - **Type 2 (Combinatorial)**: Both branches modify the same function or method. Resolution requires understanding both intents and combining the logic into one coherent implementation. Higher risk — the summary explains exactly what was done so the user can verify.
-- **Type 3 (Unknown)**: The conflict does not fit Type 1 or Type 2 (e.g., delete/modify, rename/rename, binary). The agent aborted the rebase and provided analysis + proposed resolution without executing it. **Always requires manual intervention** — highlight prominently at the top of the summary.
-
-If any worktree needs manual intervention, highlight it clearly at the top of the summary.
+- **Type 3 (Unknown)**: The conflict does not fit Type 1 or Type 2 (e.g., delete/modify, rename/rename, binary). The agent aborted the rebase and provided analysis + proposed resolution without executing it. **Always requires manual intervention**.
 
 ---
 
