@@ -12,6 +12,7 @@ logger = logging.getLogger(__name__)
 from api.errors.exceptions import (
     AccountNotFound,
     ApiError,
+    EmailContentFetchError,
     EmailFetchError,
     EmailListError,
     EmailNotInTrash,
@@ -27,6 +28,7 @@ from api.schemas.email import (
     AccountReadStatusDetail,
     AccountSpamDetail,
     AccountSyncDetail,
+    EmailContentOut,
     EmailMetadataOut,
     EmailSendRequest,
     MoveToTrashRequest,
@@ -45,6 +47,7 @@ from api.services.services_helpers import (
     build_manager_for_accounts,
     delete_email_metadata_batch,
     ensure_mailbox_access,
+    get_email_content,
     get_trash_emails_by_ids,
     load_stored_message_ids,
     load_sync_cursors,
@@ -52,10 +55,12 @@ from api.services.services_helpers import (
     load_wrapped_app_credentials,
     mark_as_deleted_batch,
     move_to_trash_batch,
+    persist_email_content,
     persist_email_metadata_batch,
     raise_on_silent_auth_errors,
     restore_from_trash_batch,
     restore_from_trash_discovered_batch,
+    sanitize_email_html,
     translate_core_error,
     translate_database_error,
     unwrap_secret,
@@ -749,3 +754,70 @@ def list_emails(
         )
         for row in rows
     ]
+
+
+def get_email_full_content(
+    mailbox_id: str,
+    provider_message_id: str,
+    account_id: str,
+    user_id: str,
+) -> EmailContentOut:
+    """Return full email body, fetching from provider on cache miss."""
+    ensure_mailbox_access(mailbox_id, user_id)
+
+    try:
+        account = account_store.get(mailbox_id, account_id)
+    except DatabaseError as exc:
+        raise translate_database_error(exc) from exc
+    except Exception as exc:
+        logger.warning(
+            "Unexpected account lookup error during content fetch (%s): %s",
+            type(exc).__name__, exc,
+        )
+        raise EmailContentFetchError(
+            "Failed to look up account for email content fetch."
+        ) from exc
+    if account is None:
+        raise AccountNotFound(
+            f"Account '{account_id}' not found in mailbox '{mailbox_id}' "
+            "during email content fetch."
+        )
+
+    row = get_email_content(account_id, provider_message_id)
+    if row is not None:
+        return EmailContentOut(html_body=row["html_body"], text_body=row["text_body"])
+
+    try:
+        auth_payloads, label_lookup = _build_auth_context([account], mailbox_id)
+        manager = build_manager_for_accounts([account])
+        account_label = f"{mailbox_id}__{account_id}"
+
+        updated_tokens = manager.authenticate_all_silent(auth_payloads)
+        if updated_tokens:
+            _persist_refreshed_tokens(updated_tokens, label_lookup)
+        raise_on_silent_auth_errors(manager.get_last_errors(), fallback=EmailContentFetchError)
+
+        try:
+            content = manager.fetch_email_content(account_label, provider_message_id)
+        except CoreError as exc:
+            raise translate_core_error(exc, fallback=EmailContentFetchError) from exc
+
+        sanitized_html = sanitize_email_html(content.html_body) if content.html_body else None
+
+        try:
+            persist_email_content(account_id, provider_message_id, sanitized_html, content.text_body)
+        except Exception as exc:
+            logger.warning(
+                "Content fetched but DB persist failed for account '%s' (%s): %s",
+                account_id, type(exc).__name__, exc,
+            )
+
+        return EmailContentOut(html_body=sanitized_html, text_body=content.text_body)
+    except ApiError:
+        raise
+    except Exception as exc:
+        logger.warning(
+            "Unexpected email content fetch error (%s): %s",
+            type(exc).__name__, exc,
+        )
+        raise EmailContentFetchError("Failed to fetch email content.") from exc

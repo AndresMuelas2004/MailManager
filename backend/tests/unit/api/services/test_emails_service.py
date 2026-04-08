@@ -1,7 +1,7 @@
 """
 Unit tests for emails_service.sync_email_metadata, emails_service.send_email,
 emails_service.update_read_status, emails_service.move_to_spam,
-and emails_service.restore_from_spam.
+emails_service.restore_from_spam, and emails_service.get_email_full_content.
 
 All external dependencies are monkeypatched so tests run without DB or provider APIs.
 """
@@ -15,6 +15,7 @@ import pytest
 from api.errors.exceptions import (
     AccountNotConnected,
     AccountNotFound,
+    EmailContentFetchError,
     EmailFetchError,
     EmailListError,
     EmailNotInTrash,
@@ -30,7 +31,7 @@ from api.schemas.email import ReadStatusItem, ReadStatusRequest, SpamItem, SpamR
 # Note: EmailExternalAPIError maps to ExternalAPIError via _CORE_TO_API_MAP,
 # while generic (non-CoreError) exceptions fall back to the caller-specified fallback.
 from api.services import emails_service
-from core.email import EmailManager, SyncResult
+from core.email import EmailContent, EmailManager, SyncResult
 from core.email.errors import EmailAuthError, EmailExternalAPIError
 from tests.shared.email_fakes import FakeEmailClient, build_metadata
 
@@ -1288,3 +1289,172 @@ class TestListEmails:
         _patch_list_emails(monkeypatch, rows=[])
         result = emails_service.list_emails(_MAILBOX_ID, "SPAM", _USER_ID)
         assert result == []
+
+
+# ==================================================================
+# get_email_full_content
+# ==================================================================
+
+
+def _patch_get_content_common(monkeypatch, *, fake_client_kwargs=None):
+    """Apply common monkeypatches for get_email_full_content tests."""
+    monkeypatch.setattr(
+        emails_service, "ensure_mailbox_access",
+        lambda _mb, _uid: {"mailbox_id": _MAILBOX_ID, "owner_user_id": _USER_ID},
+    )
+    monkeypatch.setattr(
+        emails_service.account_store, "get",
+        lambda _mb, _aid: _fake_account() if _aid == _ACCOUNT_ID else None,
+    )
+    monkeypatch.setattr(
+        emails_service, "load_wrapped_app_credentials",
+        lambda _prov: {"client_id": "cid", "client_secret": "cs"},
+    )
+    monkeypatch.setattr(
+        emails_service, "load_wrapped_account_tokens",
+        lambda _mb, _acc, _prov: {"access_token": "at", "refresh_token": "rt"},
+    )
+    monkeypatch.setattr(
+        emails_service.account_store, "upsert_tokens",
+        lambda *_a, **_kw: None,
+    )
+
+    kwargs = fake_client_kwargs or {}
+
+    def _build(accounts):
+        manager = EmailManager()
+        for acc in accounts:
+            mid = str(acc.get("mailbox_id", ""))
+            aid = str(acc.get("account_id", ""))
+            label = f"{mid}__{aid}"
+            manager.add_client(FakeEmailClient(
+                label,
+                auth_return={"access_token": "tok", "refresh_token": "ref"},
+                **kwargs,
+            ))
+        return manager
+
+    monkeypatch.setattr(emails_service, "build_manager_for_accounts", _build)
+
+    # Stub persist helper (best-effort, no-op by default)
+    monkeypatch.setattr(emails_service, "persist_email_content", lambda *_a: None)
+
+
+class TestGetEmailFullContent:
+
+    def test_db_hit(self, monkeypatch):
+        """When DB already has content, return it without calling core."""
+        _patch_get_content_common(monkeypatch)
+        monkeypatch.setattr(
+            emails_service, "get_email_content",
+            lambda _aid, _mid: {"html_body": "<p>cached</p>", "text_body": "cached"},
+        )
+
+        result = emails_service.get_email_full_content(
+            _MAILBOX_ID, "m1", _ACCOUNT_ID, _USER_ID,
+        )
+        assert result.html_body == "<p>cached</p>"
+        assert result.text_body == "cached"
+
+    def test_db_miss_fetches_from_provider(self, monkeypatch):
+        """When DB returns None, fetch from provider and persist."""
+        _patch_get_content_common(monkeypatch, fake_client_kwargs={
+            "email_content": EmailContent(
+                html_body="<p>from provider</p>", text_body="from provider",
+            ),
+        })
+        monkeypatch.setattr(
+            emails_service, "get_email_content",
+            lambda _aid, _mid: None,
+        )
+
+        persist_calls = []
+        monkeypatch.setattr(
+            emails_service, "persist_email_content",
+            lambda aid, mid, html, txt: persist_calls.append((aid, mid, html, txt)),
+        )
+
+        result = emails_service.get_email_full_content(
+            _MAILBOX_ID, "m1", _ACCOUNT_ID, _USER_ID,
+        )
+        assert result.text_body == "from provider"
+        assert len(persist_calls) == 1
+        # Verify persist was called with the account_id and message id
+        assert persist_calls[0][0] == _ACCOUNT_ID
+        assert persist_calls[0][1] == "m1"
+
+    def test_sanitizes_html(self, monkeypatch):
+        """HTML body from provider is sanitized before being persisted and returned."""
+        _patch_get_content_common(monkeypatch, fake_client_kwargs={
+            "email_content": EmailContent(
+                html_body="<p>safe</p><script>alert(1)</script>", text_body="safe",
+            ),
+        })
+        monkeypatch.setattr(
+            emails_service, "get_email_content",
+            lambda _aid, _mid: None,
+        )
+
+        persist_calls = []
+        monkeypatch.setattr(
+            emails_service, "persist_email_content",
+            lambda aid, mid, html, txt: persist_calls.append((aid, mid, html, txt)),
+        )
+
+        result = emails_service.get_email_full_content(
+            _MAILBOX_ID, "m1", _ACCOUNT_ID, _USER_ID,
+        )
+        assert "<script>" not in (result.html_body or "")
+        assert "<p>safe</p>" in (result.html_body or "")
+        # Verify persisted html is also sanitized
+        assert "<script>" not in (persist_calls[0][2] or "")
+
+    def test_account_not_found(self, monkeypatch):
+        """Non-existent account_id raises AccountNotFound."""
+        _patch_get_content_common(monkeypatch)
+        monkeypatch.setattr(
+            emails_service, "get_email_content",
+            lambda _aid, _mid: None,
+        )
+
+        with pytest.raises(AccountNotFound):
+            emails_service.get_email_full_content(
+                _MAILBOX_ID, "m1", "nonexistent", _USER_ID,
+            )
+
+    def test_core_error_translated(self, monkeypatch):
+        """CoreError from manager.fetch_email_content is translated to EmailContentFetchError."""
+        _patch_get_content_common(monkeypatch, fake_client_kwargs={
+            "fetch_content_exc": EmailExternalAPIError("provider down"),
+        })
+        monkeypatch.setattr(
+            emails_service, "get_email_content",
+            lambda _aid, _mid: None,
+        )
+
+        with pytest.raises(ExternalAPIError):
+            emails_service.get_email_full_content(
+                _MAILBOX_ID, "m1", _ACCOUNT_ID, _USER_ID,
+            )
+
+    def test_persist_failure_best_effort(self, monkeypatch):
+        """If persist_email_content raises, the content is still returned."""
+        _patch_get_content_common(monkeypatch, fake_client_kwargs={
+            "email_content": EmailContent(
+                html_body="<p>ok</p>", text_body="ok",
+            ),
+        })
+        monkeypatch.setattr(
+            emails_service, "get_email_content",
+            lambda _aid, _mid: None,
+        )
+        monkeypatch.setattr(
+            emails_service, "persist_email_content",
+            MagicMock(side_effect=RuntimeError("db write failed")),
+        )
+
+        result = emails_service.get_email_full_content(
+            _MAILBOX_ID, "m1", _ACCOUNT_ID, _USER_ID,
+        )
+        assert result.text_body == "ok"
+        assert result.html_body is not None

@@ -114,6 +114,13 @@ class SpamResponse(BaseModel):
     accounts: list[AccountSpamDetail]
 
 
+class EmailContentOut(BaseModel):
+    """Full email body content."""
+
+    html_body: str | None = None
+    text_body: str | None = None
+
+
 class EmailMetadataOut(BaseModel):
     """Single email metadata item returned by the listing endpoint."""
 

@@ -126,6 +126,20 @@ class EmailMetadataStore(ABC):
         raise NotImplementedError
 
 
+class EmailContentStore(ABC):
+    """
+    Contract for email content persistence (full email body).
+    """
+
+    @abstractmethod
+    def get(self, account_id: str, provider_message_id: str) -> dict[str, Any] | None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def upsert(self, account_id: str, provider_message_id: str, html_body: str | None, text_body: str | None) -> None:
+        raise NotImplementedError
+
+
 class UserStore(ABC):
     """
     Contract for user persistence.

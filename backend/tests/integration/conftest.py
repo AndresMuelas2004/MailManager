@@ -12,6 +12,7 @@ from pydantic import SecretStr
 from database import connection as connection_module
 from database.migrations.runner import ensure_schema_at_head
 from database.repositories import account_repository as account_repo_module
+from database.repositories import email_content_repository as email_content_repo_module
 from database.repositories import email_metadata_repository as email_metadata_repo_module
 from database.repositories import mailbox_repository as mailbox_repo_module
 from database.repositories import session_repository as session_repo_module
@@ -127,6 +128,7 @@ def isolated_db(monkeypatch):
     monkeypatch.setattr(user_repo_module.connection, "get_connection", _get_conn)
     monkeypatch.setattr(session_repo_module.connection, "get_connection", _get_conn)
     monkeypatch.setattr(email_metadata_repo_module.connection, "get_connection", _get_conn)
+    monkeypatch.setattr(email_content_repo_module.connection, "get_connection", _get_conn)
 
     yield conn
 

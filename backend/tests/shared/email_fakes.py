@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from core.email import EmailClient, EmailMetadata, LabelUpdate, SpamMoveResult, SyncResult
+from core.email import EmailClient, EmailContent, EmailMetadata, LabelUpdate, SpamMoveResult, SyncResult
 
 
 DEFAULT_RECEIVED_AT = datetime(2024, 1, 1, 12, 0, 0)
@@ -57,6 +57,7 @@ class FakeEmailClient(EmailClient):
         update_read_status_exc: Exception | None = None,
         move_to_spam_exc: Exception | None = None,
         restore_from_spam_exc: Exception | None = None,
+        fetch_content_exc: Exception | None = None,
         metadata: list[EmailMetadata] | None = None,
         sync_cursor_return: str = DEFAULT_SYNC_CURSOR,
         auth_return: dict | None = None,
@@ -69,6 +70,7 @@ class FakeEmailClient(EmailClient):
         restore_return: dict[str, str] | None = None,
         move_to_trash_return: dict[str, str] | None = None,
         fetch_messages_metadata_return: list[EmailMetadata] | None = None,
+        email_content: EmailContent | None = None,
     ) -> None:
         self._account_label = account_label
         self._auth_exc = auth_exc
@@ -83,6 +85,8 @@ class FakeEmailClient(EmailClient):
         self._update_read_status_exc = update_read_status_exc
         self._move_to_spam_exc = move_to_spam_exc
         self._restore_from_spam_exc = restore_from_spam_exc
+        self._fetch_content_exc = fetch_content_exc
+        self._email_content = email_content or EmailContent(html_body=None, text_body=None)
         self._metadata = list(metadata or [])
         self._sync_cursor_return = sync_cursor_return
         self._auth_return = auth_return
@@ -103,6 +107,7 @@ class FakeEmailClient(EmailClient):
         self.restore_calls = 0
         self.move_to_trash_calls = 0
         self.fetch_messages_metadata_calls = 0
+        self.fetch_content_calls = 0
         self.update_read_status_calls: list[tuple[list[str], bool]] = []
         self.move_to_spam_calls: list[list[str]] = []
         self.restore_from_spam_calls: list[list[str]] = []
@@ -212,6 +217,12 @@ class FakeEmailClient(EmailClient):
             box="SENT",
             is_read=True,
         )
+
+    def fetch_email_content(self, provider_message_id: str) -> EmailContent:
+        self.fetch_content_calls += 1
+        if self._fetch_content_exc:
+            raise self._fetch_content_exc
+        return self._email_content
 
     def get_account_label(self) -> str:
         return self._account_label

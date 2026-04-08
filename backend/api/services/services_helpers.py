@@ -9,6 +9,7 @@ from typing import Any, Iterable
 
 logger = logging.getLogger(__name__)
 
+import bleach
 from pydantic import SecretStr
 
 from auth import (
@@ -67,6 +68,7 @@ from api.errors.exceptions import (
 )
 from database import (
     account_store,
+    email_content_store,
     ConnectionPoolError,
     CredentialReadError,
     DatabaseError,
@@ -581,3 +583,69 @@ def update_sync_cursor(mailbox_id: str, account_id: str, cursor: str) -> None:
     except Exception as exc:
         logger.warning("Unexpected sync cursor update error (%s): %s", type(exc).__name__, exc)
         raise ApiError("Failed to update sync cursor.") from exc
+
+
+# ---------------------------------------------------------------------------
+# Email content helpers
+# ---------------------------------------------------------------------------
+
+_SANITIZE_ALLOWED_TAGS = [
+    "a", "abbr", "b", "blockquote", "br", "center", "code", "dd", "del",
+    "div", "dl", "dt", "em", "font", "h1", "h2", "h3", "h4", "h5", "h6",
+    "hr", "i", "img", "ins", "li", "mark", "ol", "p", "pre", "q", "s",
+    "small", "span", "strong", "sub", "sup", "table", "tbody", "td",
+    "tfoot", "th", "thead", "tr", "u", "ul", "wbr",
+]
+
+_SANITIZE_ALLOWED_ATTRIBUTES = {
+    "*": ["class", "id", "style", "dir", "lang", "title", "align", "valign"],
+    "a": ["href", "target", "rel"],
+    "img": ["src", "alt", "width", "height", "border"],
+    "td": ["colspan", "rowspan", "width", "height", "align", "valign", "bgcolor"],
+    "th": ["colspan", "rowspan", "width", "height", "align", "valign", "bgcolor"],
+    "table": ["border", "cellpadding", "cellspacing", "width", "align", "bgcolor"],
+    "font": ["color", "size", "face"],
+    "ol": ["start", "type"],
+}
+
+_SANITIZE_ALLOWED_PROTOCOLS = ["http", "https", "mailto", "cid"]
+
+
+def sanitize_email_html(html: str) -> str:
+    """Sanitize email HTML to remove dangerous tags, attributes and protocols."""
+    if not html or html.isspace():
+        return html
+    return bleach.clean(
+        html,
+        tags=_SANITIZE_ALLOWED_TAGS,
+        attributes=_SANITIZE_ALLOWED_ATTRIBUTES,
+        protocols=_SANITIZE_ALLOWED_PROTOCOLS,
+        strip=True,
+    )
+
+
+def get_email_content(account_id: str, provider_message_id: str) -> dict[str, Any] | None:
+    """Read cached email content from DB. Returns dict or None."""
+    try:
+        return email_content_store.get(account_id, provider_message_id)
+    except DatabaseError as exc:
+        raise translate_database_error(exc) from exc
+    except Exception as exc:
+        logger.warning("Unexpected email content read error (%s): %s", type(exc).__name__, exc)
+        raise ApiError("Failed to read email content from database.") from exc
+
+
+def persist_email_content(
+    account_id: str,
+    provider_message_id: str,
+    html_body: str | None,
+    text_body: str | None,
+) -> None:
+    """Persist email content to DB. CAN raise — caller decides best-effort wrapping."""
+    try:
+        email_content_store.upsert(account_id, provider_message_id, html_body, text_body)
+    except DatabaseError as exc:
+        raise translate_database_error(exc) from exc
+    except Exception as exc:
+        logger.warning("Unexpected email content persist error (%s): %s", type(exc).__name__, exc)
+        raise ApiError("Failed to persist email content.") from exc

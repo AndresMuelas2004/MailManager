@@ -54,6 +54,13 @@ class SpamMoveResult:
     new_id: str  # Same as old_id for Gmail; different for Outlook
 
 
+@dataclass
+class EmailContent:
+    """Full body content of a single email message."""
+    html_body: str | None
+    text_body: str | None
+
+
 class EmailClient(ABC):
     """
     Abstract base class that defines the contract for any email provider
@@ -154,6 +161,10 @@ class EmailClient(ABC):
     @abstractmethod
     def restore_from_spam(self, message_ids: list[str]) -> list[SpamMoveResult]:
         """Restore messages from spam at the provider. Returns results for successfully restored messages."""
+
+    @abstractmethod
+    def fetch_email_content(self, provider_message_id: str) -> EmailContent:
+        """Fetch the full body content for a single email message."""
 
     @abstractmethod
     def get_account_label(self) -> str:

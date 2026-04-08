@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from typing import Any
-from .email_client import EmailClient, EmailMetadata, SpamMoveResult, SyncResult
+from .email_client import EmailClient, EmailContent, EmailMetadata, SpamMoveResult, SyncResult
 from .errors import (
     CoreError,
     EmailAccountNotFoundError,
@@ -269,6 +269,18 @@ class EmailManager:
         except Exception as exc:
             raise EmailExternalAPIError(
                 f"Unexpected restore_from_spam error ({type(exc).__name__}): {exc}"
+            ) from exc
+
+    def fetch_email_content(self, account_label: str, provider_message_id: str) -> EmailContent:
+        """Fetch the full body content for a single email by account label."""
+        client = self._get_client_or_raise(account_label)
+        try:
+            return client.fetch_email_content(provider_message_id)
+        except CoreError:
+            raise
+        except Exception as exc:
+            raise EmailExternalAPIError(
+                f"Unexpected fetch_email_content error ({type(exc).__name__}): {exc}"
             ) from exc
 
     def get_last_errors(self) -> dict[str, Exception]:

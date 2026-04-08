@@ -92,6 +92,13 @@ Trash management integration tests first sync emails via the normal sync endpoin
 - **`test_core_error_translation.py`** (6): for both move and restore — `EmailExternalAPIError` -> 502, `EmailAuthError` (silent auth failure) -> 409, `RuntimeError` -> 502 (wrapped by `EmailManager`).
 - **`test_api_layer_errors.py`** (2): empty items list -> 422 (move), empty items list -> 422 (restore).
 
+### Email content integration coverage
+
+- `test_email_content.py`: 6 tests for `GET /mailboxes/{mid}/emails/{msg_id}/content?account_id=...`.
+- Cache-aside pattern: DB hit path (returns cached content without calling core) and DB miss path (fetches from provider via FakeEmailClient, FakeEmailClient defaults return `html_body=None` and `text_body=None`).
+- Error paths: wrong user 403, missing account 404, missing mailbox 404, core error 502.
+- Additional error translation tests in `test_core_error_translation.py`: silent auth error (`EmailAuthError`) -> 409 `account_not_connected`, RuntimeError -> 502 `external_api_error` (RuntimeError is wrapped by EmailManager into EmailExternalAPIError before the service sees it).
+
 ### Email listing integration coverage
 
 14 tests in `test_endpoints.py`:
