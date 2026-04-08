@@ -9,7 +9,7 @@ import urllib.request
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from .email_client import EmailClient, EmailMetadata, LabelUpdate, SpamMoveResult, SyncResult
+from .email_client import EmailClient, EmailContent, EmailMetadata, LabelUpdate, SpamMoveResult, SyncResult
 from .errors import (
     CoreError,
     EmailExternalAPIError,
@@ -798,6 +798,30 @@ class OutlookClient(EmailClient):
             except EmailExternalAPIError:
                 pass  # 404 or other error = not found
         return existing
+
+    def fetch_email_content(self, provider_message_id: str) -> EmailContent:
+        """Fetch the full body content for a single Outlook message."""
+        if self._access_token is None:
+            raise EmailNotAuthenticatedError("Outlook fetch_email_content requires authentication.")
+        try:
+            response = self._graph_request(
+                "GET",
+                f"{GRAPH_BASE_URL}/me/messages/{provider_message_id}?$select=body",
+            )
+            body = response.get("body", {})
+            content_type = body.get("contentType", "").lower()
+            content = body.get("content")
+            if content_type == "html":
+                return EmailContent(html_body=content, text_body=None)
+            return EmailContent(html_body=None, text_body=content)
+        except EmailExternalAPIError:
+            raise
+        except CoreError:
+            raise
+        except Exception as exc:
+            raise EmailExternalAPIError(
+                f"Outlook unexpected fetch_email_content error ({type(exc).__name__}): {exc}"
+            ) from exc
 
     def get_account_label(self) -> str:
         """

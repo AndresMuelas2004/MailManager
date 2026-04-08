@@ -226,6 +226,8 @@ Emails:
 - `POST /mailboxes/{mailbox_id}/emails/trash`
 - `POST /mailboxes/{mailbox_id}/emails/move-to-trash`
 - `POST /mailboxes/{mailbox_id}/emails/spam` — Move emails to spam
+- `GET /mailboxes/{mailbox_id}/emails` — List email metadata filtered by box
+- `GET /mailboxes/{mailbox_id}/emails/{provider_message_id}/content` — Fetch full email body (cache-aside)
 - `POST /mailboxes/{mailbox_id}/emails/restore-from-spam` — Restore emails from spam
 
 Auth:
@@ -282,6 +284,8 @@ Primary API error codes include:
 - `move_to_trash_error`
 - `spam_move_error` — 502
 - `spam_restore_error` — 502
+- `email_list_error` — 500
+- `email_content_fetch_error` — 502
 
 ## Testing
 

@@ -117,11 +117,30 @@ One helper in `services_helpers.py` supports the move-to-trash flow:
 - **Error**: `EmailListError` (code `"email_list_error"`, HTTP 500) — raised on database-level failures during listing.
 - **Flow**: validate ownership via `ensure_mailbox_access` → if `account_id` provided, validate it belongs to the mailbox via `account_store.get`, then query `list_by_account_and_box`; if omitted, query `list_by_mailbox_and_box` (JOINs with `accounts` table).
 - **No provider calls**: this endpoint reads only from the local database. Provider sync is handled by `POST .../sync-metadata`.
-- **Testing rule**: this endpoint (and all GET endpoints) must be integration-tested using the seeded fake data from migration 0010 with exact content assertions. See `integration_guide.md` § "GET endpoint testing rules" for the mandatory rules.
+- **Extensibility note**: the `box` parameter is the single filtering axis for email classification. When new email categories are added (e.g. promotions, social, updates), the approach is to extend the allowed `box` values in the `Literal` type, the database CHECK constraint, and the box mapping logic in provider clients — then reuse this same `list_emails` endpoint with the new box value. Do not create separate listing endpoints per category; always funnel through this endpoint by expanding the `box` enum.
+- **Testing rule**: this endpoint must be integration-tested using the seeded fake data from migration 0010 with exact content assertions. See `integration_guide.md` § "GET endpoint testing rules" for the mandatory rules.
 
 ### GET endpoints — integration test coverage rule
 
-All GET endpoints in this API are pure database reads — they never call provider APIs. This means integration tests (real FastAPI + real PostgreSQL) provide the same coverage as E2E tests for these endpoints. See `integration_guide.md` § "GET endpoint testing rules" for the mandatory rules that apply when adding or modifying GET endpoints.
+GET endpoints that read exclusively from the database (no provider API calls) can be fully covered by integration tests (real FastAPI + real PostgreSQL) with the same fidelity as E2E tests. GET endpoints that involve external calls (e.g. cache-aside with provider fallback) require additional test strategies — see each endpoint's documentation for details. See `integration_guide.md` § "GET endpoint testing rules" for the mandatory rules that apply when adding or modifying database-only GET endpoints.
+
+### Email content endpoint
+
+`GET /mailboxes/{mailbox_id}/emails/{provider_message_id}/content?account_id=<required>` — return the full email body (HTML and/or plain text).
+
+- **Query params**: `account_id` (required, `min_length=1`).
+- **Response**: `EmailContentOut` with `html_body: str | None` and `text_body: str | None`.
+- **Error**: `EmailContentFetchError` (code `"email_content_fetch_error"`, HTTP 502) — raised on provider-level or unexpected failures when fetching content.
+- **Flow**: validate ownership via `ensure_mailbox_access` → validate account exists → check DB cache via `get_email_content` helper → if cached, return immediately → if not cached, build manager → authenticate silently → fetch from provider via `manager.fetch_email_content` → sanitize HTML via `sanitize_email_html` → best-effort persist via `persist_email_content` → return content.
+- **Best-effort persist**: if the DB write fails after content is fetched, the error is logged but swallowed — the content is still returned to the user. Same pattern as `send_email` metadata persistence.
+- **HTML sanitization**: `sanitize_email_html` strips dangerous tags (`<script>`, `<iframe>`, etc.), blocks `javascript:`/`data:` protocols in `href` and `src`, and preserves safe email formatting tags. Applied before persisting to DB.
+
+### Email content helpers
+
+Two helpers in `services_helpers.py` support the email content flow:
+
+- `get_email_content(account_id, provider_message_id)` — reads cached content from the `email_content` table. Returns dict or `None`.
+- `persist_email_content(account_id, provider_message_id, html_body, text_body)` — upserts content to DB. CAN raise — the caller wraps it in `try/except` for best-effort.
 
 ## Behavioral Contracts — Traps to Avoid
 
@@ -194,6 +213,7 @@ After a successful send, the service persists the sent email's metadata. If pers
 | `EmailSendError` | `email_send_error` | 502 | Provider-side failure when sending an email. |
 | `UserNotFound` | `user_not_found` | 404 | Authenticated user does not exist in the database (e.g. during `DELETE /auth/me` or `GET /auth/me`). |
 | `TokenEncryptionError` | `token_encryption_error` | 500 | Failure while encrypting account tokens before storage. Translated from the database layer's `TokenEncryptError`. |
+| `EmailContentFetchError` | `email_content_fetch_error` | 502 | Provider-side or unexpected failure when fetching full email content. |
 | `EmailListError` | `email_list_error` | 500 | Database-level failure when listing email metadata. |
 
 ## Extension

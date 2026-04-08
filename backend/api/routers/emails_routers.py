@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, Query
 
 from api.routers.routers_helpers import require_session
 from api.schemas.email import (
+    EmailContentOut,
     EmailMetadataOut,
     EmailSendRequest,
     MoveToTrashRequest,
@@ -125,3 +126,18 @@ def restore_from_spam(
     Restore emails from spam across accounts in a mailbox.
     """
     return emails_service.restore_from_spam(mailbox_id, payload, user_id)
+
+
+@router.get(
+    "/{provider_message_id}/content",
+    response_model=EmailContentOut,
+)
+def get_email_full_content(
+    mailbox_id: str,
+    provider_message_id: str,
+    account_id: str = Query(..., min_length=1),
+    user_id: str = Depends(require_session),
+) -> EmailContentOut:
+    return emails_service.get_email_full_content(
+        mailbox_id, provider_message_id, account_id, user_id,
+    )

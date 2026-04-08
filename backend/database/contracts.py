@@ -78,10 +78,6 @@ class EmailMetadataStore(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def delete_by_account(self, account_id: str) -> None:
-        raise NotImplementedError
-
-    @abstractmethod
     def delete_batch_by_message_ids(self, account_id: str, message_ids: list[str]) -> int:
         raise NotImplementedError
 
@@ -127,6 +123,20 @@ class EmailMetadataStore(ABC):
 
     @abstractmethod
     def list_by_mailbox_and_box(self, mailbox_id: str, box: str) -> list[dict[str, Any]]:
+        raise NotImplementedError
+
+
+class EmailContentStore(ABC):
+    """
+    Contract for email content persistence (full email body).
+    """
+
+    @abstractmethod
+    def get(self, account_id: str, provider_message_id: str) -> dict[str, Any] | None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def upsert(self, account_id: str, provider_message_id: str, html_body: str | None, text_body: str | None) -> None:
         raise NotImplementedError
 
 

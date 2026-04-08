@@ -25,6 +25,7 @@ from api.services.services_helpers import (
     build_manager_for_accounts,
     delete_email_metadata_batch,
     ensure_mailbox_access,
+    get_email_content,
     get_trash_emails_by_ids,
     is_auth_error,
     load_stored_message_ids,
@@ -33,6 +34,7 @@ from api.services.services_helpers import (
     load_wrapped_app_credentials,
     mark_as_deleted_batch,
     move_to_trash_batch,
+    persist_email_content,
     persist_email_metadata_batch,
     raise_on_silent_auth_errors,
     restore_from_trash_batch,
@@ -735,3 +737,53 @@ class TestWrapSecret:
         result = _wrap_secret("my-value")
         assert isinstance(result, SecretStr)
         assert result.get_secret_value() == "my-value"
+
+
+# ------------------------------------------------------------------
+# get_email_content
+# ------------------------------------------------------------------
+
+class TestGetEmailContent:
+
+    def test_happy_path_returns_dict(self):
+        fake_row = {"html_body": "<p>hi</p>", "text_body": "hi"}
+        with patch("api.services.services_helpers.email_content_store") as mock_store:
+            mock_store.get.return_value = fake_row
+            result = get_email_content("acc-1", "m1")
+        assert result == fake_row
+
+    def test_database_error_translated(self):
+        with patch("api.services.services_helpers.email_content_store") as mock_store:
+            mock_store.get.side_effect = QueryError("DB fail")
+            with pytest.raises(DatabaseQueryError):
+                get_email_content("acc-1", "m1")
+
+    def test_generic_exception_raises_api_error(self):
+        with patch("api.services.services_helpers.email_content_store") as mock_store:
+            mock_store.get.side_effect = RuntimeError("boom")
+            with pytest.raises(ApiError, match="Failed to read email content"):
+                get_email_content("acc-1", "m1")
+
+
+# ------------------------------------------------------------------
+# persist_email_content
+# ------------------------------------------------------------------
+
+class TestPersistEmailContent:
+
+    def test_happy_path_calls_store(self):
+        with patch("api.services.services_helpers.email_content_store") as mock_store:
+            persist_email_content("acc-1", "m1", "<p>hi</p>", "hi")
+        mock_store.upsert.assert_called_once_with("acc-1", "m1", "<p>hi</p>", "hi")
+
+    def test_database_error_translated(self):
+        with patch("api.services.services_helpers.email_content_store") as mock_store:
+            mock_store.upsert.side_effect = QueryError("DB fail")
+            with pytest.raises(DatabaseQueryError):
+                persist_email_content("acc-1", "m1", None, None)
+
+    def test_generic_exception_raises_api_error(self):
+        with patch("api.services.services_helpers.email_content_store") as mock_store:
+            mock_store.upsert.side_effect = RuntimeError("boom")
+            with pytest.raises(ApiError, match="Failed to persist email content"):
+                persist_email_content("acc-1", "m1", None, None)

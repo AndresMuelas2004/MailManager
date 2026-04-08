@@ -32,7 +32,13 @@ from core.email import (
 )
 
 
-from tests.integration.conftest import MAILBOX_URL as _MAILBOX_URL, _setup_mailbox_and_account
+from tests.integration.conftest import (
+    MAILBOX_URL as _MAILBOX_URL,
+    SEEDED_GMAIL_ACCOUNT_ID as _GMAIL_ACCOUNT_ID,
+    SEEDED_GMAIL_MAILBOX_ID as _GMAIL_MAILBOX_ID,
+    SEEDED_USER_ID as _SEEDED_USER_ID,
+    _setup_mailbox_and_account,
+)
 
 
 # ==================================================================
@@ -602,3 +608,47 @@ def test_move_to_trash_core_error_translations(
     )
     assert resp.status_code == expected_status
     assert resp.json()["error"]["code"] == expected_code
+
+
+# ==================================================================
+# get_email_content - silent auth error -> 409
+# ==================================================================
+
+@pytest.mark.parametrize(
+    "failing_test_client",
+    [{"auth_silent_exc": EmailAuthError("Token expired.")}],
+    indirect=True,
+)
+def test_get_email_content_silent_auth_error_returns_409(
+    failing_test_client, setup_mailbox_and_account,
+):
+    """Silent auth failure before fetch_email_content -> AccountNotConnected (409)."""
+    mid, aid = setup_mailbox_and_account(failing_test_client)
+    resp = failing_test_client.get(
+        f"{_MAILBOX_URL}/{mid}/emails/test-msg-001/content?account_id={aid}",
+    )
+    assert resp.status_code == 409
+    assert resp.json()["error"]["code"] == "account_not_connected"
+
+
+# ==================================================================
+# get_email_content - RuntimeError -> 502
+# ==================================================================
+
+@pytest.mark.parametrize(
+    "failing_test_client",
+    [{"fetch_content_exc": RuntimeError("crash")}],
+    indirect=True,
+)
+def test_get_email_content_runtime_error_returns_502(
+    failing_test_client, setup_mailbox_and_account,
+):
+    """RuntimeError during fetch_email_content -> manager wraps -> 502 external_api_error."""
+    mid, aid = setup_mailbox_and_account(failing_test_client)
+    # Sync metadata first so the account is connected
+    failing_test_client.post(f"{_MAILBOX_URL}/{mid}/emails/sync-metadata")
+    resp = failing_test_client.get(
+        f"{_MAILBOX_URL}/{mid}/emails/test-msg-001/content?account_id={aid}",
+    )
+    assert resp.status_code == 502
+    assert resp.json()["error"]["code"] == "external_api_error"

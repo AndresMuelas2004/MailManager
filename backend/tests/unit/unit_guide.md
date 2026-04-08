@@ -67,3 +67,11 @@ These helpers centralize the monkeypatching so individual test functions stay co
 
 - `list_emails` service function is covered by `TestListEmails` in `test_emails_service.py` (8 tests: single account happy path, unified view, account not found, DB errors on lookup/query, unexpected error, empty result).
 - `PgEmailMetadataStore.list_by_account_and_box` and `list_by_mailbox_and_box` are covered in `test_email_metadata_repository.py` (5 tests each: happy path, invalid text, psycopg2 error, generic error, connection pool error propagation).
+
+### Email content coverage
+
+- `TestGetEmailFullContent` in `test_emails_service.py`: 6 tests covering DB hit, DB miss with provider fetch, HTML sanitization, account not found, core error translation, best-effort persist failure. Helper `_patch_get_content_common` patches `account_store.get`, `ensure_mailbox_access`, `build_manager_for_accounts`, and `get_email_content` for content endpoint tests.
+- `test_sanitize.py`: tests for `sanitize_email_html` -- strips scripts, preserves safe tags, strips event handlers, blocks javascript href, allows mailto/cid protocols, handles empty/whitespace input, strips onerror on img, strips style tag.
+- `test_email_content_repository.py`: 10 tests for `PgEmailContentStore` (get/upsert with error wrapping, InvalidTextRepresentation handling).
+- `TestGetEmailContent` and `TestPersistEmailContent` in `test_services_helpers.py`: 3 tests each covering happy path, DatabaseError translation, and generic exception fallback.
+- `EmailManager.fetch_email_content` delegation is covered by 4 standalone functions in `test_email_manager_extended.py`: happy path, account not found, CoreError passthrough, unexpected exception wrapping.

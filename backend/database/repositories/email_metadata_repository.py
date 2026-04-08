@@ -60,22 +60,6 @@ class PgEmailMetadataStore(EmailMetadataStore):
                 f"Unexpected email metadata upsert error ({type(exc).__name__}): {exc}"
             ) from exc
 
-    def delete_by_account(self, account_id: str) -> None:
-        try:
-            with connection.get_connection() as conn:
-                with conn.cursor() as cur:
-                    cur.execute(queries.DELETE_BY_ACCOUNT, {"account_id": account_id})
-        except psycopg2.errors.InvalidTextRepresentation:
-            return
-        except DatabaseError:
-            raise
-        except psycopg2.Error as exc:
-            raise QueryError("Failed to delete email metadata.") from exc
-        except Exception as exc:
-            raise QueryError(
-                f"Unexpected email metadata delete error ({type(exc).__name__}): {exc}"
-            ) from exc
-
     def delete_batch_by_message_ids(self, account_id: str, message_ids: list[str]) -> int:
         if not message_ids:
             return 0

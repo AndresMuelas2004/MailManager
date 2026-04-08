@@ -135,5 +135,9 @@ class SpamRestoreError(ApiError):
     code = "spam_restore_error"
 
 
+class EmailContentFetchError(ApiError):
+    code = "email_content_fetch_error"
+
+
 class EmailListError(ApiError):
     code = "email_list_error"

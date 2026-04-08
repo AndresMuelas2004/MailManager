@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import binascii
 import logging
 import os
 import time
@@ -20,7 +21,7 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
-from .email_client import EmailClient, EmailMetadata, LabelUpdate, SpamMoveResult, SyncResult
+from .email_client import EmailClient, EmailContent, EmailMetadata, LabelUpdate, SpamMoveResult, SyncResult
 from .errors import (
     CoreError,
     EmailExternalAPIError,
@@ -1090,6 +1091,70 @@ class GmailClient(EmailClient):
                     )
 
         return all_updated
+
+    def fetch_email_content(self, provider_message_id: str) -> EmailContent:
+        """Fetch the full body content for a single Gmail message."""
+        if self.service is None:
+            raise EmailNotAuthenticatedError("Gmail fetch_email_content requires authentication.")
+        try:
+            response = (
+                self.service.users()
+                .messages()
+                .get(userId="me", id=provider_message_id, format="full")
+                .execute()
+            )
+        except HttpError as exc:
+            status, reason = http_error_detail(exc)
+            raise EmailExternalAPIError(
+                f"Gmail failed to fetch email content (HTTP {status}: {reason})."
+            ) from exc
+        except Exception as exc:
+            raise EmailExternalAPIError(
+                f"Gmail unexpected fetch_email_content error ({type(exc).__name__}): {exc}"
+            ) from exc
+        html_body, text_body = self._extract_body_from_payload(response.get("payload", {}))
+        return EmailContent(html_body=html_body, text_body=text_body)
+
+    @staticmethod
+    def _extract_body_from_payload(payload: dict[str, Any]) -> tuple[str | None, str | None]:
+        # Gmail returns the raw MIME tree (nested parts[] with base64url-encoded bodies)
+        # instead of decoded content like Outlook does. This function recursively traverses
+        # that tree to find and decode the text/html and text/plain parts.
+        html_body: str | None = None
+        text_body: str | None = None
+
+        def _decode_body_data(data: str) -> str | None:
+            try:
+                return base64.urlsafe_b64decode(data + "==").decode("utf-8")
+            except (binascii.Error, UnicodeDecodeError):
+                return None
+
+        def _traverse(part: dict[str, Any]) -> None:
+            nonlocal html_body, text_body
+            mime_type = part.get("mimeType", "")
+            if mime_type.startswith("multipart/"):
+                for sub_part in part.get("parts", []):
+                    _traverse(sub_part)
+                return
+            body_data = part.get("body", {}).get("data")
+            if not body_data:
+                return
+            if mime_type == "text/html" and html_body is None:
+                decoded = _decode_body_data(body_data)
+                if decoded is not None:
+                    html_body = decoded
+            elif mime_type == "text/plain" and text_body is None:
+                decoded = _decode_body_data(body_data)
+                if decoded is not None:
+                    text_body = decoded
+
+        if "parts" in payload:
+            for part in payload["parts"]:
+                _traverse(part)
+        else:
+            _traverse(payload)
+
+        return html_body, text_body
 
     def get_account_label(self) -> str:
         """

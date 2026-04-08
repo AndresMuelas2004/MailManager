@@ -231,8 +231,20 @@ _DDL_STATEMENTS = [
         ('outlook-spam-006', 'bbbbbbbb-bbbb-4000-a000-bbbbbbbbb002', 'thread-ol-036', 'microsoft@fake-ms.com',    'Microsoft Security (fake)',  'Your Office 365 license will expire today',    '2026-03-11T00:00:00Z', FALSE, 'SPAM', NULL)
     ON CONFLICT (provider_message_id, account_id) DO NOTHING;
     """,
+    # Migration 0011: email_content table for full email body storage
+    """
+    CREATE TABLE IF NOT EXISTS email_content (
+        provider_message_id  VARCHAR(255) NOT NULL,
+        account_id           UUID         NOT NULL
+                             REFERENCES accounts(account_id) ON DELETE CASCADE,
+        html_body            TEXT,
+        text_body            TEXT,
+        fetched_at           TIMESTAMPTZ  NOT NULL DEFAULT now(),
+        PRIMARY KEY (provider_message_id, account_id)
+    );
+    """,
     "DELETE FROM alembic_version;",
-    "INSERT INTO alembic_version(version_num) VALUES ('0010_seed_fake_data_for_get_tests');",
+    "INSERT INTO alembic_version(version_num) VALUES ('0011_create_email_content_table');",
 ]
 
 

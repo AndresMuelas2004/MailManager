@@ -47,10 +47,6 @@ Added in migration `0008`. Nullable `VARCHAR(20)` with CHECK constraint allowing
 
 Added in migration `0008` to the `box` CHECK constraint. Acts as a soft-delete marker for emails deleted from trash. The sync pipeline's `UPSERT_EMAIL_METADATA_BATCH` and `UPDATE_LABELS_BATCH` queries use a `CASE` expression to prevent the provider's `TRASH` status from overwriting a `DELETED` row. If the provider reports a box other than `TRASH`, it means the user restored the email at the provider and the row is updated.
 
-### `LIST_BY_ACCOUNT` filter
-
-`LIST_BY_ACCOUNT` excludes `DELETED` rows (`box != 'DELETED'`) so they don't appear in the user's email list.
-
 ### `EmailMetadataStore` trash method contracts
 
 - **`mark_as_deleted_batch(account_id, message_ids) → int`** — soft-deletes by setting `box = 'DELETED'`. **Only updates rows where `box = 'TRASH'`** — if a row has a different box, it is silently skipped. Returns count of affected rows.
@@ -64,7 +60,6 @@ Added in migration `0008` to the `box` CHECK constraint. Acts as a soft-delete m
 - **`get_trash_emails_by_ids(account_id, message_ids) → list[dict]`** — returns rows where `box = 'TRASH'` matching the given IDs. Each dict includes `provider_message_id`, `account_id`, `box`, and `previous_box`. Used to verify emails are in trash before acting.
 - **`list_provider_message_ids(account_id) → list[str]`** — returns all stored `provider_message_id` values for an account. Used by ghost email reconciliation.
 - **`update_labels_batch(account_id, rows) → int`** — bulk-updates `is_read` and `box` for email metadata. Uses the same `CASE` expression as `UPSERT_EMAIL_METADATA_BATCH` to protect `DELETED` rows from being reverted to `TRASH` by provider sync.
-- **`delete_by_account(account_id) → None`** — hard-deletes ALL metadata rows for an account. Used during account disconnect to remove all email data for the disconnected account.
 - **`upsert_batch(account_id, rows) → int`** — bulk-upserts email metadata. Uses a `CASE` expression to protect rows with `box = 'DELETED'` from being overwritten by provider sync.
 
 ## Behavioral Contracts — Email Metadata
@@ -84,6 +79,19 @@ Returns email metadata rows across all accounts in a mailbox, filtered by the ex
 ### `EmailMetadataStore.update_spam_status_batch(account_id, rows) → int`
 
 Batch-updates the `provider_message_id` and `box` columns for existing email metadata rows. Uses `UPDATE_SPAM_STATUS_BATCH` which matches on the old `provider_message_id` + `account_id` and sets both the new `provider_message_id` and new `box`. This is needed because Outlook's `/move` API returns a new message ID when moving between folders. `rows` format: `list[tuple]` of `(old_message_id, account_id, new_message_id, new_box)`. Returns the number of rows updated.
+
+## Behavioral Contracts — Email Content
+
+### `EmailContentStore`
+
+Stores the full HTML/text body of individual emails in a separate `email_content` table (not columns on `email_metadata`). This separation keeps `email_metadata` lightweight for listing queries.
+
+- **`get(account_id, provider_message_id) → dict | None`** — returns `{html_body, text_body, fetched_at}` or `None` if not cached. Handles `InvalidTextRepresentation` gracefully (returns `None` for invalid UUIDs).
+- **`upsert(account_id, provider_message_id, html_body, text_body) → None`** — inserts or updates the cached content. Uses `ON CONFLICT ... DO UPDATE` to overwrite `html_body`, `text_body`, and set `fetched_at = now()`.
+
+No delete methods in the contract — deletion happens via `ON DELETE CASCADE` (when the parent account is deleted) or via inline SQL in cleanup scripts (`Scripts/cli_utilities/clear_email_content.py`).
+
+The `email_content` table has the same composite PK as `email_metadata` (`provider_message_id, account_id`) but no FK to `email_metadata` — content can exist independently (orphaned content is harmless).
 
 ## Project-Specific Error Hierarchy
 

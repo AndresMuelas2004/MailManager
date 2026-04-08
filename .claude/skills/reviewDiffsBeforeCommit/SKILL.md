@@ -34,14 +34,18 @@ Execute these steps sequentially:
    - `backend/auth/` → `backend/auth/auth_guide.md`
    - `backend/core/` → `backend/core/core_guide.md`
 
-5. Parse $ARGUMENTS (if provided):
-   - If `--tests` flag present: use the paths following it as the test directories (until the next flag or end).
-   - If `--tests` flag absent: use defaults `backend/tests/unit/` `backend/tests/integration/` `backend/tests/e2e/`.
+5. Determine which **test directories** are affected by the diffs. Default candidates: `backend/tests/unit/`, `backend/tests/integration/`, `backend/tests/e2e/`. A test directory is "affected" if at least one changed file's path starts with it. Only affected test directories will receive a tests-quality-reviewer and an md-reviewer agent.
+
+6. Parse $ARGUMENTS (if provided):
+   - If `--tests` flag present: use the paths following it as the test directory candidates, but still filter to only those with at least one changed file in the diffs.
+   - If `--tests` flag absent: use the defaults filtered in step 5.
    - If `--md` flag present: collect the paths following it as extra MD files to review.
 
-6. Check whether `README.md` exists at the repo root (via Glob or ls). Note its existence for Phase 2.
+7. If `backend/database/` is affected, collect the list of changed query files: filter the diff file list for paths matching `backend/database/queries/*.py` (exclude `__init__.py`). These are the only query files that will receive a queries-reviewer agent. If no query files were changed, skip query review entirely.
 
-7. Print a brief summary to the user:
+8. Check whether `README.md` exists at the repo root (via Glob or ls). Note its existence for Phase 2.
+
+9. Print a brief summary to the user:
    - List of changed files (truncated if > 30)
    - Affected backend directories
    - Test directories to review
@@ -64,12 +68,13 @@ For EACH affected directory, launch:
 2. **dead-code-finder** — `subagent_type: "dead-code-finder"`
    - Prompt: "Scan `{directory}` for dead code: unused functions, methods, variables, classes, constants, imports, and orphan files. Pay special attention to files changed in the current diffs: {list of changed files in this directory}."
 
-### Test quality (1 agent per test directory):
+### Test quality (1 agent per **affected** test directory):
 
-For EACH test directory (from defaults or $ARGUMENTS override), launch:
+For EACH **affected** test directory (filtered in Phase 1 step 5), launch:
 
 3. **tests-quality-reviewer** — `subagent_type: "tests-quality-reviewer"`
    - Prompt: "Audit test quality, coverage completeness, and architectural soundness in `{test_directory}`. Check for test gaps, missing edge cases, and structural issues."
+   - Do NOT launch for test directories that have zero changed files in the diffs.
 
 ### Documentation MD (variable number of agents):
 
@@ -77,24 +82,23 @@ For EACH test directory (from defaults or $ARGUMENTS override), launch:
    - One agent per `*_guide.md` of each affected directory.
    - Prompt: "Review `{guide_path}` for accuracy, completeness, and clarity by cross-referencing the source code in its directory. Check that all documented contracts, functions, and behaviors match the current implementation."
 
-5. **md-reviewer for test guides** (always, one per test directory) — `subagent_type: "md-reviewer"`
+5. **md-reviewer for test guides** (one per **affected** test directory only) — `subagent_type: "md-reviewer"`
+   - Only launch for test directories that were identified as affected in Phase 1 step 5.
    - Prompt: "Review `{test_guide_path}` for accuracy and completeness by cross-referencing the test files and source code."
-   - Default paths: `backend/tests/unit/unit_guide.md`, `backend/tests/integration/integration_guide.md`, `backend/tests/e2e/e2e_guide.md`
+   - Guide paths: `backend/tests/unit/unit_guide.md`, `backend/tests/integration/integration_guide.md`, `backend/tests/e2e/e2e_guide.md`
 
-6. **md-reviewer for root CLAUDE.md** (always) — `subagent_type: "md-reviewer"`
-   - Prompt: "Review `CLAUDE.md` (root) for accuracy and completeness. IMPORTANT: Only Section 2 (Project-Specific) is editable — Section 1 must never be modified. Flag any inaccuracies in Section 2 by cross-referencing the current codebase. Do NOT suggest changes to Section 1."
-
-7. **md-reviewer for README.md** (only if it exists) — `subagent_type: "md-reviewer"`
+6. **md-reviewer for README.md** (only if it exists) — `subagent_type: "md-reviewer"`
    - Prompt: "Review `README.md` for accuracy, completeness, and clarity by cross-referencing the current codebase."
 
-8. **md-reviewer for extra MDs** (only if `--md` in $ARGUMENTS) — `subagent_type: "md-reviewer"`
+7. **md-reviewer for extra MDs** (only if `--md` in $ARGUMENTS) — `subagent_type: "md-reviewer"`
    - One agent per extra MD path provided.
 
-### Query review (only if `backend/database/` is affected):
+### Query review (only if changed query files exist in the diffs):
 
-9. **queries-reviewer per query file** — `subagent_type: "queries-reviewer"`
-   - Use `Glob` to list all `.py` files in `backend/database/queries/` (exclude `__init__.py`).
-   - Launch one agent per file. Each agent's prompt: "Analyze ONLY the file `{file_path}`. Focus exclusively on this file and on the usage flow of the query functions it contains. Do NOT read or analyze any other query file in `backend/database/queries/`. Follow all analysis phases (inventory, usage, efficiency, quality, cross-validation) scoped exclusively to this file."
+8. **queries-reviewer per changed query file** — `subagent_type: "queries-reviewer"`
+   - From the diff file list (collected in Phase 1 step 7), use only the `.py` files in `backend/database/queries/` (exclude `__init__.py`) that were actually changed.
+   - If no query files were changed → skip query review entirely, even if `backend/database/` is affected.
+   - Launch one agent per changed query file. Each agent's prompt: "Analyze ONLY the file `{file_path}`. Focus exclusively on this file and on the usage flow of the query functions it contains. Do NOT read or analyze any other query file in `backend/database/queries/`. Follow all analysis phases (inventory, usage, efficiency, quality, cross-validation) scoped exclusively to this file."
 
 ### After launching:
 
@@ -110,7 +114,12 @@ Only when ALL agents have reported back (via automatic completion notifications)
 
 2. Deduplicate: remove findings that overlap between reviewers (e.g., a dead-code finding that an error-reviewer also flagged).
 
-3. Classify each finding by severity:
+3. **Two-tier classification — MANDATORY.** Every finding must first be classified into one of two groups by comparing the finding's file against the diff file list:
+
+   - **Group A — New code findings**: the finding concerns code, tests, or documentation that was introduced or modified in this diff. If the file appears in the diff list AND the finding is about new/changed content, it belongs here.
+   - **Group B — Pre-existing findings**: the finding was detected by reviewers in code that was NOT changed in this diff. These are informational only — they never affect the commit verdict.
+
+4. Within each group, classify each finding by severity:
 
 | Severity       | Criteria |
 |----------------|----------|
@@ -119,53 +128,54 @@ Only when ALL agents have reported back (via automatic completion notifications)
 | **Minor**      | Should fix — style issues, naming inconsistencies, small doc gaps |
 | **Suggestion** | Optional — improvement ideas, future refactoring opportunities |
 
-4. Present the consolidated report in this format:
+5. Present the consolidated report in this format:
 
 ```
 ## Pre-Commit Review Report
 
 ### Executive Summary
-- X blocker(s), Y major(s), Z minor(s), W suggestion(s)
-- Verdict: BLOCK COMMIT / REVIEW BEFORE COMMIT / SAFE TO COMMIT
+- Group A (new code): X blocker(s), Y major(s), Z minor(s), W suggestion(s)
+- Group B (pre-existing): X blocker(s), Y major(s), Z minor(s), W suggestion(s)
+- Verdict: BLOCK COMMIT / REVIEW BEFORE COMMIT / SAFE TO COMMIT (based on Group A only)
 
-### backend/api/
-#### Error Handling
-- [Severity] finding...
-#### Dead Code
-- [Severity] finding...
+### Group A — New Code Findings
 
-### backend/database/
-#### Error Handling
+#### backend/api/
+##### Error Handling
 - [Severity] finding...
-#### Dead Code
-- [Severity] finding...
-#### Query Review
+##### Dead Code
 - [Severity] finding...
 
-### backend/auth/
-(same structure, only if affected)
-
-### backend/core/
-(same structure, only if affected)
-
-### Tests
-#### unit
+#### backend/database/
+##### Error Handling
 - [Severity] finding...
-#### integration
-- [Severity] finding...
-#### e2e
+##### Query Review
 - [Severity] finding...
 
-### Documentation
-#### Guides
+#### Tests
+##### unit
 - [Severity] finding...
-#### Root docs (CLAUDE.md, README.md)
+##### integration
+- [Severity] finding...
+
+#### Documentation
+- [Severity] finding...
+
+### Group B — Pre-Existing Findings (informational, do not affect verdict)
+
+#### backend/api/
+- [Severity] finding...
+
+#### backend/core/
+- [Severity] finding...
+
+#### Documentation
 - [Severity] finding...
 ```
 
-5. Verdict rules:
-   - Any Blocker → **BLOCK COMMIT**
-   - No Blockers but any Major → **REVIEW BEFORE COMMIT**
-   - Only Minor/Suggestion or no findings → **SAFE TO COMMIT**
+6. Verdict rules — **based on Group A only** (Group B findings never block the commit):
+   - Any Blocker **in Group A** → **BLOCK COMMIT**
+   - No Blockers but any Major **in Group A** → **REVIEW BEFORE COMMIT**
+   - Only Minor/Suggestion **in Group A** or no Group A findings → **SAFE TO COMMIT**
 
-6. If no findings at all across all agents, say: "All reviews passed. No issues found. SAFE TO COMMIT."
+7. If no findings at all across all agents, say: "All reviews passed. No issues found. SAFE TO COMMIT."

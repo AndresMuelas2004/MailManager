@@ -100,18 +100,18 @@ No global "skip all after first failure". Each test checks its own prerequisites
 | 21 | `PATCH .../emails/read-status` (gmail) | independent |
 | 22 | `PATCH .../emails/read-status` (outlook) | independent |
 
-### Section 5: Spam operations — pre-existing accounts (tests 23–26)
+### Section 4b: Spam operations — pre-existing accounts (tests 23–26)
 
 | Test | Endpoint | Dependencies |
 |---|---|---|
 | 23 | `POST .../emails/spam` (gmail) | independent (syncs first internally) → produces `gmail_spam_done` |
-| 24 | `POST .../emails/restore-from-spam` (gmail) | requires `gmail_spam_done` → produces `gmail_spam_restore_done` |
+| 24 | `POST .../emails/restore-from-spam` (gmail) | requires `gmail_spam_done` → produces `gmail_restore_done` |
 | 25 | `POST .../emails/spam` (outlook) | independent (syncs first internally) → produces `outlook_spam_done` |
 | 26 | `POST .../emails/restore-from-spam` (outlook) | requires `outlook_spam_done` |
 
 Each spam test syncs metadata first, picks 10 `ALL_MAIL` emails, moves them to spam, and verifies the DB `box` column changed. Restore tests reverse the operation on 10 `SPAM` emails. Tests skip if fewer than 10 qualifying emails exist.
 
-### Section 6: Trash lifecycle — pre-existing accounts (tests 27–31)
+### Section 5: Trash lifecycle — pre-existing accounts (tests 27–31)
 
 | Test | Endpoint | Dependencies |
 |---|---|---|
@@ -121,7 +121,7 @@ Each spam test syncs metadata first, picks 10 `ALL_MAIL` emails, moves them to s
 | 30 | `POST .../emails/trash` (outlook, delete) | requires `move_to_trash_done` → produces `outlook_delete_done` |
 | 31 | `POST .../emails/trash` (outlook, restore) | requires `move_to_trash_done` → produces `outlook_restore_done` |
 
-### Section 7: Auth lifecycle — MUST BE LAST (tests 32–33)
+### Section 6: Auth lifecycle — MUST BE LAST (tests 32–33)
 
 | Test | Endpoint | Dependencies |
 |---|---|---|
@@ -142,7 +142,7 @@ The pre-existing user, mailboxes, and accounts (defined in `e2e_config.py`) must
 
 `POST /auth/logout` (test 32) invalidates the session cookie. Any test running after it will get 401. This is why Section 7 is the final section.
 
-### Section 7. Extension Checklist
+### Extension Checklist — Adding a New Provider
 
 When adding a new provider:
 

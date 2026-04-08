@@ -118,9 +118,9 @@ otherwise                 → box = "ALL_MAIL"
 
 ### Gmail — batch fetch approach
 
-1. List message IDs (paginated `messages.list`, `includeSpamTrash=True`).
-2. Batch-fetch metadata in chunks of 100 (`format="metadata"`). When credentials are available, chunks run in parallel via `ThreadPoolExecutor`; otherwise falls back to sequential execution.
-3. Get current `historyId` from `getProfile` as `new_sync_cursor`.
+1. Get current `historyId` from `getProfile` as `new_sync_cursor`. Captured **before** listing messages so that any emails arriving during the bootstrap window are guaranteed to be replayed in the next incremental sync.
+2. List message IDs (paginated `messages.list`, `includeSpamTrash=True`).
+3. Batch-fetch metadata in chunks of 100 (`format="metadata"`). When credentials are available, chunks run in parallel via `ThreadPoolExecutor`; otherwise falls back to sequential execution.
 
 **Parallel execution**: controlled by `GMAIL_BATCH_MAX_WORKERS` environment variable (default `5`). Each parallel chunk builds its own thread-local HTTP transport because `httplib2` is not thread-safe. Retry logic (up to `_BATCH_MAX_RETRIES` = 4 retries (5 total attempts), `_BATCH_RETRY_DELAY` = 1s between retries) applies per chunk. Messages that permanently fail are logged and skipped.
 
@@ -199,7 +199,19 @@ Beyond `authenticate`, `authenticate_silent`, and `fetch_email_metadata`, the `E
 - **`update_read_status(message_ids, is_read) → list[str]`** — mark messages as read or unread at the provider. Returns the list of `provider_message_id`s that were successfully updated. Messages not found at the provider are silently skipped (no error raised). Gmail adds/removes the `UNREAD` label via batch `messages.modify`. Outlook patches each message with `PATCH /me/messages/{id}` setting `{"isRead": bool}`. Raises `EmailNotAuthenticatedError` if the client is not authenticated (guard), and `EmailExternalAPIError` on provider-level failures.
 - **`move_to_spam(message_ids) → list[SpamMoveResult]`** — move messages to spam at the provider. Gmail adds the `SPAM` label via batch `messages.modify`. Outlook uses `POST /me/messages/{id}/move` with `destinationId: "junkemail"`. Returns `SpamMoveResult` pairs with `old_id` and `new_id`. **Outlook caveat**: the `/move` endpoint returns a new message ID; `SpamMoveResult.new_id` captures this (for Gmail, `new_id == old_id`). Raises `EmailNotAuthenticatedError` if not authenticated; silently skips failures for individual messages.
 - **`restore_from_spam(message_ids) → list[SpamMoveResult]`** — restore messages from spam. Gmail removes the `SPAM` label and adds `INBOX` (replicating the "Not Spam" button behavior). Outlook uses `POST /me/messages/{id}/move` with `destinationId: "inbox"`. Same ID-change caveat as `move_to_spam`.
+- **`fetch_email_content(provider_message_id) → EmailContent`** — fetch the full body (HTML and/or plain text) for a single email. Gmail requires MIME tree traversal and base64url decoding via the private helper `_extract_body_from_payload` because the Gmail API (`format="full"`) returns the raw MIME structure with nested `parts[]` and base64url-encoded bodies. Outlook's Graph API (`$select=body`) returns the decoded HTML/text content directly — no decoding needed. Both raise `EmailNotAuthenticatedError` if not authenticated and `EmailExternalAPIError` on provider failures.
 - **`get_account_label() → str`** — return the label identifying this account within the app.
+
+### Data Structures — Email Content
+
+### `EmailContent`
+
+Full body content of a single email message:
+
+- `html_body: str | None` — HTML version of the email body. Most modern emails include this.
+- `text_body: str | None` — plain text version of the email body. Some simple emails only include this.
+
+An email can have both, only one, or neither (rare). The fields are `None` when the corresponding content type is not present in the email.
 
 ### Data Structures — Spam Operations
 
@@ -221,7 +233,7 @@ When Outlook moves a message between folders (via `POST /me/messages/{id}/move`)
 Core layer:
 
 - [ ] Implement `EmailClient` in `backend/core/email/<provider>_client.py`.
-- [ ] Implement all abstract methods: `authenticate`, `authenticate_silent`, `fetch_email_metadata`, `send_email`, `verify_message_existence`, `delete_messages`, `restore_from_trash`, `fetch_messages_metadata`, `move_to_trash`, `update_read_status`, `move_to_spam`, `restore_from_spam`, `get_account_label`.
+- [ ] Implement all abstract methods: `authenticate`, `authenticate_silent`, `fetch_email_metadata`, `send_email`, `verify_message_existence`, `delete_messages`, `restore_from_trash`, `fetch_messages_metadata`, `move_to_trash`, `update_read_status`, `move_to_spam`, `restore_from_spam`, `fetch_email_content`, `get_account_label`.
 - [ ] Reuse helper functions from `helpers.py`.
 - [ ] Add provider branch in `EmailManager._build_client`.
 - [ ] Raise typed `CoreError` subclasses for all failure paths.

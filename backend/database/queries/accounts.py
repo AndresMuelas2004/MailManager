@@ -23,7 +23,7 @@ UPSERT_ACCOUNT = """
     ON CONFLICT (account_id) DO UPDATE SET
         display_label = EXCLUDED.display_label,
         config = EXCLUDED.config
-    RETURNING account_id, mailbox_id, provider, display_label, config, created_at
+    RETURNING account_id, mailbox_id, provider, display_label, config, email_address, created_at
 """
 
 DELETE_ACCOUNT = """
