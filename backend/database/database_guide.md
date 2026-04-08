@@ -64,7 +64,6 @@ Added in migration `0008` to the `box` CHECK constraint. Acts as a soft-delete m
 - **`get_trash_emails_by_ids(account_id, message_ids) → list[dict]`** — returns rows where `box = 'TRASH'` matching the given IDs. Each dict includes `provider_message_id`, `account_id`, `box`, and `previous_box`. Used to verify emails are in trash before acting.
 - **`list_provider_message_ids(account_id) → list[str]`** — returns all stored `provider_message_id` values for an account. Used by ghost email reconciliation.
 - **`update_labels_batch(account_id, rows) → int`** — bulk-updates `is_read` and `box` for email metadata. Uses the same `CASE` expression as `UPSERT_EMAIL_METADATA_BATCH` to protect `DELETED` rows from being reverted to `TRASH` by provider sync.
-- **`delete_by_account(account_id) → None`** — hard-deletes ALL metadata rows for an account. Used during account disconnect to remove all email data for the disconnected account.
 - **`upsert_batch(account_id, rows) → int`** — bulk-upserts email metadata. Uses a `CASE` expression to protect rows with `box = 'DELETED'` from being overwritten by provider sync.
 
 ## Behavioral Contracts — Email Metadata

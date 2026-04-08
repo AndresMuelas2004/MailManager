@@ -76,47 +76,6 @@ def test_upsert_batch_propagates_connection_pool_error(monkeypatch):
         em_module.email_metadata_store.upsert_batch("acc1", [("m1",)])
 
 
-# ===== delete_by_account =====
-
-
-def test_delete_by_account_happy_path(monkeypatch):
-    cursor = FakeCursor()
-    patch_connection(monkeypatch, em_module, [cursor])
-
-    em_module.email_metadata_store.delete_by_account("acc1")
-    assert len(cursor.executed) == 1
-
-
-def test_delete_by_account_invalid_text_noop(monkeypatch):
-    cursor = FakeCursor(execute_side_effect=psycopg2.errors.InvalidTextRepresentation())
-    patch_connection(monkeypatch, em_module, [cursor])
-
-    em_module.email_metadata_store.delete_by_account("not-a-uuid")
-
-
-def test_delete_by_account_psycopg2_raises_query_error(monkeypatch):
-    cursor = FakeCursor(execute_side_effect=psycopg2.OperationalError("fail"))
-    patch_connection(monkeypatch, em_module, [cursor])
-
-    with pytest.raises(QueryError, match="Failed to delete email metadata"):
-        em_module.email_metadata_store.delete_by_account("acc1")
-
-
-def test_delete_by_account_generic_raises_query_error(monkeypatch):
-    cursor = FakeCursor(execute_side_effect=RuntimeError("boom"))
-    patch_connection(monkeypatch, em_module, [cursor])
-
-    with pytest.raises(QueryError, match="RuntimeError"):
-        em_module.email_metadata_store.delete_by_account("acc1")
-
-
-def test_delete_by_account_propagates_connection_pool_error(monkeypatch):
-    patch_connection_error(monkeypatch, em_module, ConnectionPoolError("pool down"))
-
-    with pytest.raises(ConnectionPoolError, match="pool down"):
-        em_module.email_metadata_store.delete_by_account("acc1")
-
-
 # ===== delete_batch_by_message_ids =====
 
 

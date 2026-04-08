@@ -18,10 +18,6 @@ UPSERT_EMAIL_METADATA_BATCH = """
         END
 """
 
-DELETE_BY_ACCOUNT = """
-    DELETE FROM email_metadata WHERE account_id = %(account_id)s
-"""
-
 DELETE_BATCH_BY_MESSAGE_IDS = """
     DELETE FROM email_metadata
     WHERE account_id = %(account_id)s

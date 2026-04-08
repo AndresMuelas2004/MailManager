@@ -8,7 +8,12 @@ from dotenv import load_dotenv
 
 load_dotenv(Path(__file__).resolve().parents[2] / ".env", override=False)
 
-from database import account_store, email_metadata_store
+from database import account_store
+from database.connection import get_connection
+
+_DELETE_METADATA_BY_ACCOUNT = """
+    DELETE FROM email_metadata WHERE account_id = %(account_id)s
+"""
 
 
 def main() -> None:
@@ -23,7 +28,9 @@ def main() -> None:
 
     for account in accounts:
         account_id = account["account_id"]
-        email_metadata_store.delete_by_account(account_id)
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(_DELETE_METADATA_BY_ACCOUNT, {"account_id": account_id})
         account_store.update_sync_cursor(args.mailbox_id, account_id, None)
         print(f"  Deleted emails and reset sync cursor for account '{account_id}'.")
 
