@@ -14,6 +14,7 @@ import pytest
 from core.email.email_client import SpamMoveResult, SyncResult
 from core.email.errors import (
     EmailExternalAPIError,
+    EmailInvalidCredentialsDataError,
     EmailMissingAppCredentialsError,
     EmailMissingRefreshTokenError,
     EmailMissingTokenError,
@@ -1050,10 +1051,10 @@ class TestAuthenticate:
         assert result["refresh_token"].get_secret_value() == "refresh-tok"
 
     @patch("core.email.gmail_client.InstalledAppFlow")
-    def test_flow_build_failure_raises_missing_credentials(self, mock_flow_cls, client: GmailClient):
+    def test_flow_build_failure_raises_invalid_credentials_data(self, mock_flow_cls, client: GmailClient):
         mock_flow_cls.from_client_config.side_effect = ValueError("bad config")
 
-        with pytest.raises(EmailMissingAppCredentialsError, match="failed to build OAuth flow"):
+        with pytest.raises(EmailInvalidCredentialsDataError, match="failed to build OAuth flow"):
             client.authenticate(app_credentials={"client_id": "id", "client_secret": "secret"})
 
     @patch("core.email.gmail_client.InstalledAppFlow")

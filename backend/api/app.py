@@ -43,6 +43,7 @@ from database import close_pool, run_startup_migrations_if_enabled, warmup_conne
 from api.errors.handlers import register_error_handlers
 from api.routers.accounts_routers import router as accounts_router
 from api.routers.auth_routers import router as auth_router
+from api.routers.drafts_routers import router as drafts_router
 from api.routers.emails_routers import router as emails_router
 from api.routers.health_routers import router as health_router
 from api.routers.mailboxes_routers import router as mailboxes_router
@@ -82,6 +83,7 @@ def create_app() -> FastAPI:
     app.include_router(mailboxes_router)
     app.include_router(accounts_router)
     app.include_router(emails_router)
+    app.include_router(drafts_router)
     return app
 
 

@@ -21,10 +21,10 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
-from .email_client import EmailClient, EmailContent, EmailMetadata, LabelUpdate, SpamMoveResult, SyncResult
+from .email_client import DraftMetadata, EmailClient, EmailContent, EmailMetadata, LabelUpdate, SpamMoveResult, SyncResult
 from .errors import (
-    CoreError,
     EmailExternalAPIError,
+    EmailInvalidCredentialsDataError,
     EmailMissingAppCredentialsError,
     EmailMissingRefreshTokenError,
     EmailMissingTokenError,
@@ -111,7 +111,7 @@ class GmailClient(EmailClient):
         try:
             flow = InstalledAppFlow.from_client_config(client_config, GMAIL_SCOPES)
         except Exception as exc:
-            raise EmailMissingAppCredentialsError(
+            raise EmailInvalidCredentialsDataError(
                 f"Gmail failed to build OAuth flow from app credentials: {exc}"
             ) from exc
         try:
@@ -846,6 +846,66 @@ class GmailClient(EmailClient):
             box="SENT",
         )
 
+    def create_draft(
+        self,
+        to_recipients: list[str],
+        cc_recipients: list[str],
+        bcc_recipients: list[str],
+        subject: str,
+        body_html: str,
+    ) -> DraftMetadata:
+        """
+        Create a draft in Gmail via users().drafts().create(). All fields
+        may be empty; Gmail accepts empty drafts.
+        """
+        if self.service is None:
+            raise EmailNotAuthenticatedError("Gmail create_draft requires authentication.")
+
+        from email.mime.multipart import MIMEMultipart
+        from email.mime.text import MIMEText
+
+        message = MIMEMultipart("alternative")
+        if to_recipients:
+            message["to"] = ", ".join(to_recipients)
+        if cc_recipients:
+            message["cc"] = ", ".join(cc_recipients)
+        if bcc_recipients:
+            message["bcc"] = ", ".join(bcc_recipients)
+        message["subject"] = subject or ""
+        message.attach(MIMEText(body_html or "", "html"))
+
+        raw_message = base64.urlsafe_b64encode(message.as_bytes()).decode("utf-8")
+
+        try:
+            response = (
+                self.service.users()
+                .drafts()
+                .create(userId="me", body={"message": {"raw": raw_message}})
+                .execute()
+            )
+        except HttpError as exc:
+            status, reason = http_error_detail(exc)
+            raise EmailExternalAPIError(
+                f"Gmail failed to create draft (HTTP {status}: {reason})."
+            ) from exc
+        except Exception as exc:
+            raise EmailExternalAPIError(
+                f"Gmail unexpected create_draft error ({type(exc).__name__}): {exc}"
+            ) from exc
+
+        provider_draft_id = response.get("id", "")
+        now = datetime.now(timezone.utc)
+        return DraftMetadata(
+            provider_draft_id=provider_draft_id,
+            to_recipients=list(to_recipients),
+            cc_recipients=list(cc_recipients),
+            bcc_recipients=list(bcc_recipients),
+            subject=subject,
+            body_html=body_html,
+            created_at=now,
+            updated_at=now,
+        )
+
     def delete_messages(self, message_ids: list[str]) -> list[str]:
         if self.service is None:
             raise EmailNotAuthenticatedError("Gmail delete_messages requires authentication.")
@@ -1058,8 +1118,6 @@ class GmailClient(EmailClient):
                             request_id=msg_id,
                         )
                     batch.execute()
-                except CoreError:
-                    raise
                 except HttpError as exc:
                     status, reason = http_error_detail(exc)
                     raise EmailExternalAPIError(

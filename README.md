@@ -9,6 +9,7 @@ It lets you group Gmail and Outlook accounts under mailbox entities, connect the
 - Multi-provider support: Gmail and Outlook are implemented.
 - Unified inbox per mailbox across all connected accounts.
 - Send email from a specific account in a mailbox.
+- Draft creation that mirrors the draft at the provider (Gmail and Outlook).
 - Batch read/unread status management across accounts.
 - Trash management: move emails to trash, permanently delete, or restore.
 - Spam operations: move to spam and restore from spam with cross-provider support.
@@ -192,6 +193,13 @@ docker compose down -v   # stop and delete database volume
 | `AUTH_SESSION_LIFETIME_DAYS` | No | Session duration in days. Default: `7`. |
 | `AUTH_COOKIE_SECURE` | No | HTTPS-only session cookies. Default: `false`. |
 | `CORS_ALLOWED_ORIGINS` | No | Comma-separated CORS origins. Default: `http://localhost:5173`. |
+
+### Frontend environment variables
+
+The following variable is consumed only by the Vite dev server / frontend bundle. It is **not** read by the backend; configure it in `frontend/.env`.
+
+| Variable | Required | Description |
+|---|---|---|
 | `VITE_API_BASE_URL` | No | Frontend override for the backend URL. Defaults to `http://localhost:8000`. |
 
 Outlook credential file keys: `client_id`, `client_secret`, `tenant`, `redirect_uri`, `scopes`.
@@ -226,9 +234,13 @@ Emails:
 - `POST /mailboxes/{mailbox_id}/emails/trash`
 - `POST /mailboxes/{mailbox_id}/emails/move-to-trash`
 - `POST /mailboxes/{mailbox_id}/emails/spam` — Move emails to spam
-- `GET /mailboxes/{mailbox_id}/emails` — List email metadata filtered by box
-- `GET /mailboxes/{mailbox_id}/emails/{provider_message_id}/content` — Fetch full email body (cache-aside)
+- `GET /mailboxes/{mailbox_id}/emails` — List email metadata filtered by box. Required query param: `box=ALL_MAIL|SENT|SPAM|TRASH`. Optional query param: `account_id` (filter to one account).
+- `GET /mailboxes/{mailbox_id}/emails/{provider_message_id}/content` — Fetch full email body (cache-aside). Required query param: `account_id`.
 - `POST /mailboxes/{mailbox_id}/emails/restore-from-spam` — Restore emails from spam
+
+Drafts:
+
+- `POST /mailboxes/{mailbox_id}/accounts/{account_id}/drafts` — Create a draft at the provider and persist it locally (Provider-First; Outlook uses `Prefer: IdType="ImmutableId"`)
 
 Auth:
 
@@ -253,39 +265,40 @@ All API errors follow this schema:
 }
 ```
 
-Primary API error codes include:
+Each API error code maps to a fixed HTTP status. The list below shows every code with its status. The full reference (with usage notes per class) lives in `backend/api/api_guide.md` under "Service-Layer Error Classes".
 
-- `api_error`
-- `mailbox_not_found`
-- `account_not_found`
-- `user_not_found`
-- `account_misconfigured`
-- `recipients_missing`
-- `unauthorized`
-- `account_connect_auth_error`
-- `forbidden`
-- `account_not_connected`
-- `app_credentials_invalid`
-- `app_credentials_missing`
-- `env_var_error`
-- `credential_file_error`
-- `database_connection_error`
-- `database_query_error`
-- `database_migration_error`
-- `token_decryption_error`
+- `api_error` — 500 (default for any unmapped class)
+- `mailbox_not_found` — 404
+- `account_not_found` — 404
+- `user_not_found` — 404
+- `account_misconfigured` — 400
+- `recipients_missing` — 400
+- `unauthorized` — 401
+- `account_connect_auth_error` — 401
+- `forbidden` — 403
+- `account_not_connected` — 409
+- `email_not_in_trash` — 409
+- `app_credentials_invalid` — 500
+- `app_credentials_missing` — 500
+- `env_var_error` — 500
+- `credential_file_error` — 500
+- `database_connection_error` — 503
+- `database_query_error` — 503
+- `database_migration_error` — 500
+- `token_decryption_error` — 500
 - `token_encryption_error` — 500
-- `token_integrity_error`
-- `email_fetch_error`
-- `email_send_error`
-- `external_api_error`
+- `token_integrity_error` — 500
+- `trash_operation_error` — 500
+- `email_list_error` — 500
+- `email_fetch_error` — 502
+- `email_send_error` — 502
+- `external_api_error` — 502
 - `read_status_update_error` — 502
-- `email_not_in_trash`
-- `trash_operation_error`
-- `move_to_trash_error`
+- `move_to_trash_error` — 502
 - `spam_move_error` — 502
 - `spam_restore_error` — 502
-- `email_list_error` — 500
 - `email_content_fetch_error` — 502
+- `draft_creation_error` — 502
 
 ## Testing
 

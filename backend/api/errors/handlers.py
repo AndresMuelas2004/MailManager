@@ -25,6 +25,7 @@ from api.errors.exceptions import (
     DatabaseConnectionError,
     DatabaseMigrationError,
     DatabaseQueryError,
+    DraftCreationError,
     EmailContentFetchError,
     EmailFetchError,
     EmailNotInTrash,
@@ -80,6 +81,7 @@ _STATUS_MAP: dict[type[ApiError], int] = {
     TrashOperationError: status.HTTP_500_INTERNAL_SERVER_ERROR,
     MoveToTrashError: status.HTTP_502_BAD_GATEWAY,
     EmailListError: status.HTTP_500_INTERNAL_SERVER_ERROR,
+    DraftCreationError: status.HTTP_502_BAD_GATEWAY,
 }
 
 

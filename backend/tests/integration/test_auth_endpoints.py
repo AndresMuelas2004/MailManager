@@ -476,3 +476,17 @@ def test_delete_foreign_mailbox_forbidden(test_client, isolated_db):
     resp = test_client.delete(f"{_MAILBOX_URL}/{mid}")
     assert resp.status_code == 403
     assert resp.json()["error"]["code"] == "forbidden"
+
+
+def test_create_draft_on_foreign_mailbox_forbidden(test_client, isolated_db):
+    mid = _create_foreign_mailbox(isolated_db)
+    resp = test_client.post(
+        f"{_MAILBOX_URL}/{mid}/accounts/00000000-0000-4000-a000-000000000099/drafts",
+        json={
+            "to_recipients": ["a@b.com"],
+            "subject": "x",
+            "body_html": "x",
+        },
+    )
+    assert resp.status_code == 403
+    assert resp.json()["error"]["code"] == "forbidden"

@@ -45,7 +45,7 @@ Added in migration `0008`. Nullable `VARCHAR(20)` with CHECK constraint allowing
 
 ### `DELETED` box value
 
-Added in migration `0008` to the `box` CHECK constraint. Acts as a soft-delete marker for emails deleted from trash. The sync pipeline's `UPSERT_EMAIL_METADATA_BATCH` and `UPDATE_LABELS_BATCH` queries use a `CASE` expression to prevent the provider's `TRASH` status from overwriting a `DELETED` row. If the provider reports a box other than `TRASH`, it means the user restored the email at the provider and the row is updated.
+Added in migration `0008` to the `box` CHECK constraint. Acts as a soft-delete marker for emails deleted from trash. The sync pipeline's `UPSERT_EMAIL_METADATA_BATCH` and `UPDATE_LABELS_BATCH` queries use a `CASE` expression to prevent the provider's `TRASH` status **specifically** from overwriting a `DELETED` row. Any other incoming box value (`ALL_MAIL`, `SENT`, `SPAM`) does overwrite `DELETED` — this is intentional because it means the user restored the email at the provider.
 
 ### `EmailMetadataStore` trash method contracts
 
@@ -93,6 +93,28 @@ No delete methods in the contract — deletion happens via `ON DELETE CASCADE` (
 
 The `email_content` table has the same composite PK as `email_metadata` (`provider_message_id, account_id`) but no FK to `email_metadata` — content can exist independently (orphaned content is harmless).
 
+## Behavioral Contracts — Drafts
+
+### `drafts` table (migration 0012)
+
+Stores provider-backed draft emails in a separate table from `email_metadata` because: (1) drafts are created via a different API path, (2) recipients require `TEXT[]` arrays (`email_metadata` only has scalar `from_email`), and (3) drafts may exist at the provider without ever being sent.
+
+Schema:
+- Composite PK: `(provider_draft_id, account_id)` — analogous to `email_metadata`. The `provider_draft_id` is always present because the application follows the Provider-First Rule (provider creates the draft and returns its ID before any local persistence).
+- FK: `account_id REFERENCES accounts(account_id) ON DELETE CASCADE`. There is **no direct FK to `mailboxes`** — `accounts.mailbox_id` provides the chain.
+- Recipients are stored as `TEXT[] NOT NULL DEFAULT '{}'` for `to_recipients`, `cc_recipients`, `bcc_recipients`. psycopg2 transparently maps Python `list[str]` to PostgreSQL `TEXT[]`.
+- `subject TEXT NOT NULL DEFAULT ''` and `body_html TEXT NOT NULL DEFAULT ''`. Empty drafts are valid (no `min_length` constraint).
+- `created_at` and `updated_at` use `TIMESTAMPTZ NOT NULL DEFAULT now()` — set by the database, not by the caller.
+- Index: `idx_drafts_account_id ON drafts(account_id)`.
+
+### `DraftStore.create(draft) → dict`
+
+Inserts a new draft row using `INSERT_DRAFT` (defined in `queries/drafts.py`). The query uses `RETURNING` to bring back all columns including DB-generated `created_at` and `updated_at`. The repository (`PgDraftStore`) maps the row through `_row_to_dict`, which casts `account_id` to `str` and ensures recipient arrays are never `None`. Raises `QueryError` on any SQL failure or unexpected exception (the generic `except Exception` fallback also raises `QueryError`, keeping the contract uniform).
+
+**Return contract**: always a populated dict. The method does NOT return an empty dict when `RETURNING` yields no row — that is a programming error and will surface as `TypeError` from `_row_to_dict(None)`, which the service layer's outer `except Exception` converts to `DraftCreationError`. This matches the pattern used by peer `create` methods (`PgMailboxStore.create`, `PgSessionStore.create`).
+
+The contract intentionally exposes only `create` for now — list, update, send, and delete methods will be added incrementally as the corresponding drafts endpoints are implemented.
+
 ## Project-Specific Error Hierarchy
 
 Full tree of exceptions defined in `errors/exceptions.py`:
@@ -113,10 +135,14 @@ DatabaseError
 
 ## Extension
 
-### Adding a new provider
+### Adding a new provider or migration
+
+Whenever a new Alembic migration is created in `migrations/versions/`, **`migrations/runner.py` must be updated in the same change**: add the equivalent DDL to `_DDL_STATEMENTS` and advance the stamp at the bottom to the new migration name. Forgetting this step silently breaks any environment that relies on the fallback runner (local setup without Alembic, some CI configurations).
+
+**Provider-specific changes** (only when adding a new email provider):
 
 1. Register the provider env var in `settings.py` (`_PROVIDER_CREDENTIALS_ENV_VARS`).
 2. Add provider-specific JSON parsing in `security/app_credentials.py` if needed.
 3. Update provider validation constraints via a new Alembic migration.
-4. Update fallback runner (`migrations/runner.py`) with the new DDL and stamp the latest migration version.
+4. Update fallback runner (`migrations/runner.py`) with the new DDL and stamp the latest migration version — see the rule above.
 5. Add/adjust integration and E2E tests for connect, send, and inbox flows.

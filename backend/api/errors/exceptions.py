@@ -141,3 +141,7 @@ class EmailContentFetchError(ApiError):
 
 class EmailListError(ApiError):
     code = "email_list_error"
+
+
+class DraftCreationError(ApiError):
+    code = "draft_creation_error"

@@ -35,6 +35,17 @@ These endpoints are verified manually by the developer with scripts.
 
 Pre-existing test account identifiers are centralized in `e2e_config.py` with env var overrides. These accounts must exist in the database with valid OAuth refresh tokens before running the suite.
 
+| Identifier | Env var override | Hardcoded default |
+|---|---|---|
+| `TEST_USER_ID` | `E2E_TEST_USER_ID` | seeded user UUID |
+| `GMAIL_MAILBOX_ID` | `E2E_GMAIL_MAILBOX_ID` | `28a83414-36f5-4115-ab61-977d5a06a8e1` |
+| `OUTLOOK_MAILBOX_ID` | `E2E_OUTLOOK_MAILBOX_ID` | `b61e15d5-153e-42ee-a4c6-2c943bd13c07` |
+| `GMAIL_ACCOUNT_ID` | `E2E_GMAIL_ACCOUNT_ID` | `9805b672-032b-4d74-9696-4db53a5eb512` |
+| `OUTLOOK_ACCOUNT_ID` | `E2E_OUTLOOK_ACCOUNT_ID` | `3c55eb17-9d5e-4d31-a3b5-14c6c24279b9` |
+| `SEND_RECIPIENT` | `E2E_SEND_RECIPIENT` | `muelonmuelon12@gmail.com` |
+
+`SEND_RECIPIENT` is the destination address used by `test_19_send_email_gmail`, `test_20_send_email_outlook`, `test_32_create_draft_gmail`, and `test_33_create_draft_outlook`. Override it via `E2E_SEND_RECIPIENT` when running the suite against an environment where the default address is not available.
+
 ### Pre-existing test accounts — one per provider
 
 The E2E suite requires **one real, authenticated account per supported email provider** (i.e., per client implementation in `backend/core/email/`). Each account is linked to a real mailbox owned by the developer and must have valid OAuth tokens in the database.
@@ -121,12 +132,23 @@ Each spam test syncs metadata first, picks 10 `ALL_MAIL` emails, moves them to s
 | 30 | `POST .../emails/trash` (outlook, delete) | requires `move_to_trash_done` → produces `outlook_delete_done` |
 | 31 | `POST .../emails/trash` (outlook, restore) | requires `move_to_trash_done` → produces `outlook_restore_done` |
 
-### Section 6: Auth lifecycle — MUST BE LAST (tests 32–33)
+### Section 5b: Drafts — pre-existing accounts (tests 32–33)
 
 | Test | Endpoint | Dependencies |
 |---|---|---|
-| 32 | `POST /auth/logout` | independent → produces `logged_out` |
-| 33 | `GET /auth/me` → 401 | requires `logged_out` |
+| 32 | `POST .../accounts/{aid}/drafts` (gmail) | independent — creates a real Gmail draft and verifies the local row |
+| 33 | `POST .../accounts/{aid}/drafts` (outlook) | independent — creates a real Outlook draft (verifies the `Prefer: IdType="ImmutableId"` path) |
+
+**Cleanup workaround**: each test verifies the `drafts` row exists in the local DB, then deletes it inline via raw SQL (`DELETE FROM drafts WHERE provider_draft_id = ... AND account_id = ...`). This is a temporary measure until the future `DELETE /mailboxes/{mid}/accounts/{aid}/drafts/{provider_draft_id}` endpoint exists, which will replace the manual DB cleanup with proper provider-side deletion. The draft is intentionally left at the provider for now.
+
+The DB existence check and the cleanup live in the **same** test function (per `common_mistakes.md` § 1) — they are not split into separate tests.
+
+### Section 6: Auth lifecycle — MUST BE LAST (tests 34–35)
+
+| Test | Endpoint | Dependencies |
+|---|---|---|
+| 34 | `POST /auth/logout` | independent → produces `logged_out` |
+| 35 | `GET /auth/me` → 401 | requires `logged_out` |
 
 ## Behavioral Contracts — Traps to Avoid
 
@@ -140,7 +162,7 @@ The pre-existing user, mailboxes, and accounts (defined in `e2e_config.py`) must
 
 ### Auth lifecycle tests must be last
 
-`POST /auth/logout` (test 32) invalidates the session cookie. Any test running after it will get 401. This is why Section 7 is the final section.
+`POST /auth/logout` (test 34) invalidates the session cookie. Any test running after it will get 401. This is why Section 6 is the final section.
 
 ### Extension Checklist — Adding a New Provider
 
@@ -149,6 +171,7 @@ When adding a new provider:
 - [ ] Add account creation for the provider.
 - [ ] Add connect step for the provider.
 - [ ] Add operation steps (send, fetch, etc.) for the provider.
+- [ ] Add a draft creation test (`POST .../accounts/{aid}/drafts`) for the provider.
 - [ ] Ensure flow assertions include the new provider behavior.
 
 The E2E suite should always represent the full set of supported providers.

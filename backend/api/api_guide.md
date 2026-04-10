@@ -142,6 +142,18 @@ Two helpers in `services_helpers.py` support the email content flow:
 - `get_email_content(account_id, provider_message_id)` — reads cached content from the `email_content` table. Returns dict or `None`.
 - `persist_email_content(account_id, provider_message_id, html_body, text_body)` — upserts content to DB. CAN raise — the caller wraps it in `try/except` for best-effort.
 
+### Draft creation endpoint
+
+`POST /mailboxes/{mailbox_id}/accounts/{account_id}/drafts` — create a draft at the provider and persist it locally.
+
+- **Path params**: `mailbox_id`, `account_id` (both in the URL path; this differs from the email send endpoint which carries `account_id` in the request body).
+- **Request**: `DraftCreate` with all fields optional and defaulted: `to_recipients: list[str] = []`, `cc_recipients: list[str] = []`, `bcc_recipients: list[str] = []`, `subject: str = ""`, `body_html: str = ""`. Empty drafts are accepted (matches Gmail/Outlook native behavior).
+- **Response**: `DraftOut` with `provider_draft_id`, `account_id`, recipients, `subject`, `body_html`, `created_at`, `updated_at`.
+- **Error**: `DraftCreationError` (code `"draft_creation_error"`, HTTP 502) — raised on provider-side or unexpected failures during draft creation.
+- **Flow**: validate ownership via `ensure_mailbox_access` → fetch the account via `account_store.get` (404 if missing) → build manager via `build_manager_for_accounts` → silent auth + token refresh persistence → **Provider-First**: call `manager.create_draft(...)` (translated `CoreError` via `translate_core_error(fallback=DraftCreationError)`) → only on success, build the row dict and call `draft_store.create(...)` → return `DraftOut` from the persisted row.
+- **Outlook critical**: the Outlook client passes `Prefer: IdType="ImmutableId"` when creating the draft so the message ID stays stable across state transitions (critical for the future send-draft endpoint, which would reuse the same ID).
+- **Service module**: lives in `api/services/drafts_service.py` with a local `_persist_refreshed_tokens` helper. The service is the only one that imports `draft_store` from `database`.
+
 ## Behavioral Contracts — Traps to Avoid
 
 ### `connect_account` response includes `email_address`
@@ -205,16 +217,78 @@ Request/response schemas: `MoveToTrashRequest`, `MoveToTrashResult`.
 
 After a successful send, the service persists the sent email's metadata. If persistence fails, the error is logged but swallowed — the send is still reported as successful. This is deliberate: the user cares that the email was sent, not that we tracked it internally.
 
-## Additional Error Classes
+## Service-Layer Error Classes
+
+Complete, authoritative list of every `ApiError` subclass registered in `_STATUS_MAP` (see `backend/api/errors/handlers.py`). Services should reuse these classes rather than invent new ones. When a new subclass is added to `exceptions.py`, register it in `_STATUS_MAP` **and** add a row here.
+
+### Resource / ownership (404–409)
+
+| Class | Code | HTTP | Usage |
+|---|---|---|---|
+| `MailboxNotFound` | `mailbox_not_found` | 404 | Mailbox not found or ownership check failed mid-query. |
+| `AccountNotFound` | `account_not_found` | 404 | Account not found inside its mailbox during an operation. |
+| `UserNotFound` | `user_not_found` | 404 | Authenticated user does not exist in the database (e.g. during `DELETE /auth/me` or `GET /auth/me`). |
+| `EmailNotInTrash` | `email_not_in_trash` | 409 | A `manage_trash` pre-check rejected an email that was not currently in the `TRASH` box. |
+| `AccountNotConnected` | `account_not_connected` | 409 | Silent auth failed or tokens are missing — the user must reconnect the account. Raised by `raise_on_silent_auth_errors`. |
+
+### Auth / access control (400–403)
+
+| Class | Code | HTTP | Usage |
+|---|---|---|---|
+| `Unauthorized` | `unauthorized` | 401 | Missing or invalid session cookie. |
+| `AccountConnectAuthError` | `account_connect_auth_error` | 401 | `EmailAuthError` translated specifically during the interactive `POST .../connect` flow. |
+| `Forbidden` | `forbidden` | 403 | Authenticated user does not own the requested mailbox. Raised by `ensure_mailbox_access`. |
+| `AccountMisconfigured` | `account_misconfigured` | 400 | `EmailConfigError` family (bad provider name, malformed tokens, invalid expiry). Usually translated from `build_manager_for_accounts`. |
+| `RecipientsMissing` | `recipients_missing` | 400 | Send or draft call rejected because no recipients were supplied. |
+
+### Provider-side / external API (502)
 
 | Class | Code | HTTP | Usage |
 |---|---|---|---|
 | `EmailFetchError` | `email_fetch_error` | 502 | Provider-side failure when fetching/syncing email metadata. |
 | `EmailSendError` | `email_send_error` | 502 | Provider-side failure when sending an email. |
-| `UserNotFound` | `user_not_found` | 404 | Authenticated user does not exist in the database (e.g. during `DELETE /auth/me` or `GET /auth/me`). |
-| `TokenEncryptionError` | `token_encryption_error` | 500 | Failure while encrypting account tokens before storage. Translated from the database layer's `TokenEncryptError`. |
 | `EmailContentFetchError` | `email_content_fetch_error` | 502 | Provider-side or unexpected failure when fetching full email content. |
-| `EmailListError` | `email_list_error` | 500 | Database-level failure when listing email metadata. |
+| `DraftCreationError` | `draft_creation_error` | 502 | Provider-side or unexpected failure during draft creation. |
+| `ExternalAPIError` | `external_api_error` | 502 | Generic catch-all for translated `EmailExternalAPIError`. Use more specific subclasses where possible. |
+| `MoveToTrashError` | `move_to_trash_error` | 502 | Provider-side failure during `move_to_trash`. |
+| `ReadStatusUpdateError` | `read_status_update_error` | 502 | Provider-side failure during `update_read_status`. |
+| `SpamMoveError` | `spam_move_error` | 502 | Provider-side failure during `move_to_spam`. |
+| `SpamRestoreError` | `spam_restore_error` | 502 | Provider-side failure during `restore_from_spam`. |
+
+### Database / persistence (500–503)
+
+| Class | Code | HTTP | Usage |
+|---|---|---|---|
+| `DatabaseConnectionError` | `database_connection_error` | 503 | Pool exhausted or unable to acquire a connection. |
+| `DatabaseQueryError` | `database_query_error` | 503 | SQL execution failure reaching the client. |
+| `DatabaseMigrationError` | `database_migration_error` | 500 | Schema migration failure at startup. |
+| `EmailListError` | `email_list_error` | 500 | Database-level failure when listing email metadata (not translated to `DatabaseQueryError` because it is the only place the list operation can fail). |
+| `TrashOperationError` | `trash_operation_error` | 500 | Internal bookkeeping failure inside `manage_trash` (not a provider error). |
+
+### Token / credential security (500)
+
+| Class | Code | HTTP | Usage |
+|---|---|---|---|
+| `TokenEncryptionError` | `token_encryption_error` | 500 | Failure while encrypting account tokens before storage. |
+| `TokenDecryptionError` | `token_decryption_error` | 500 | Failure while decrypting stored tokens. |
+| `TokenIntegrityError` | `token_integrity_error` | 500 | Stored token record is malformed/inconsistent. |
+| `AppCredentialsInvalid` | `app_credentials_invalid` | 500 | Developer-provided app credentials are structurally invalid. |
+| `AppCredentialsMissing` | `app_credentials_missing` | 500 | Developer-provided app credentials are absent entirely. |
+| `CredentialFileError` | `credential_file_error` | 500 | Failure reading/parsing a credential file on disk. |
+| `EnvVarError` | `env_var_error` | 500 | Missing or invalid environment variable detected at boot. |
+
+## Service Conventions — Auth context ordering
+
+When an endpoint must authenticate against a provider and then perform a provider call, the service function **must** follow this exact sequence. Skipping or reordering any step leads to silent token staleness, missing error surfacing, or unauthenticated provider calls.
+
+1. **Build the manager.** `manager = build_manager_for_accounts([account])` — wraps `EmailConfigError` translation into `AccountMisconfigured`.
+2. **Load wrapped credentials and tokens.** `load_wrapped_app_credentials(provider)` and `load_wrapped_account_tokens(mailbox_id, account_id, provider)`. Tokens are unwrapped only at the provider boundary.
+3. **Silent auth.** `updated_tokens = manager.authenticate_all_silent(auth_payloads)`. This may refresh tokens in place.
+4. **Persist refreshed tokens.** If `updated_tokens` is non-empty, call `account_store.upsert_tokens` for each updated account. Any failure here must surface as the endpoint's primary error class (e.g. `DraftCreationError` for drafts, `EmailFetchError` for sync).
+5. **Raise on silent auth errors.** `raise_on_silent_auth_errors(manager.get_last_errors(), fallback=<endpoint-specific class>)` — this is what turns per-client `EmailAuthError` into `AccountNotConnected` (409).
+6. **Provider call.** Only now call `manager.send_email_from_account`, `manager.create_draft`, `manager.fetch_all_email_metadata`, etc. Wrap in `try / except CoreError / except Exception` per CLAUDE.md §9.
+
+The `drafts_service.create_draft` function is the canonical reference implementation of this sequence.
 
 ## Extension
 

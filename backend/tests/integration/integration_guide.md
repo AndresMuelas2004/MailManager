@@ -59,7 +59,11 @@ Tests mutate `config` between API calls to simulate different provider responses
 
 ### Trap: new service module must be patched in `_apply_test_monkeypatches`
 
-`_apply_test_monkeypatches` patches `build_manager_for_accounts` in three modules: `services_helpers`, `accounts_service`, and `emails_service`. Each module imports this function at its own module level, so all three must be patched independently. If a new service module is added that also imports `build_manager_for_accounts`, it must be added to `_apply_test_monkeypatches` — otherwise, that module's tests will call the real builder and hit real provider APIs.
+`_apply_test_monkeypatches` patches `build_manager_for_accounts` in **four** modules today: `services_helpers`, `accounts_service`, `emails_service`, and `drafts_service`. Each module imports this function at its own module level, so all of them must be patched independently. **This list grows whenever a new service module imports `build_manager_for_accounts`** — when adding a fifth service, the module must be added here, otherwise its integration tests will call the real builder and hit real provider APIs. The same applies to `load_wrapped_app_credentials`, `load_wrapped_account_tokens`, and `account_store.upsert_tokens`.
+
+### `seeded_test_client` fixture
+
+`seeded_test_client` is a per-test fixture used by GET endpoint tests against the seeded data from migration `0010`. It overrides the auth dependency to return the seeded user ID (instead of the default test user), runs the body of the test, and then restores the previous override on teardown via a `try/finally` inside the fixture's yield. Because the override is global to the FastAPI app, any test that uses this fixture must not interleave with other auth overrides; the fixture is fully self-contained.
 
 ### Missing claims tests for Google login
 
@@ -98,6 +102,20 @@ Trash management integration tests first sync emails via the normal sync endpoin
 - Cache-aside pattern: DB hit path (returns cached content without calling core) and DB miss path (fetches from provider via FakeEmailClient, FakeEmailClient defaults return `html_body=None` and `text_body=None`).
 - Error paths: wrong user 403, missing account 404, missing mailbox 404, core error 502.
 - Additional error translation tests in `test_core_error_translation.py`: silent auth error (`EmailAuthError`) -> 409 `account_not_connected`, RuntimeError -> 502 `external_api_error` (RuntimeError is wrapped by EmailManager into EmailExternalAPIError before the service sees it).
+
+### Drafts integration coverage
+
+`test_drafts.py`: 5 tests for `POST /mailboxes/{mid}/accounts/{aid}/drafts`:
+
+- Happy path returns `DraftOut` with all payload fields round-tripped and provider-assigned `provider_draft_id`.
+- Persisted to the `drafts` table (verified via `isolated_db.cursor()` reading the `to_recipients`, `cc_recipients`, `bcc_recipients`, `subject`, and `body_html` columns).
+- Empty body (`{}`) is accepted — `subject`, `body_html`, and recipient arrays default to empty.
+- Nonexistent account returns 404 `account_not_found`.
+- Nonexistent mailbox returns 404 `mailbox_not_found` (ownership check runs first).
+
+**Trap reminder**: this test file required two updates to `conftest.py` to comply with the integration traps documented above:
+1. The new `draft_repository` module must be added to the `isolated_db` fixture so it shares the per-test transaction connection (otherwise the `INSERT_DRAFT` query bypasses the rollback and leaks data between tests).
+2. The new `drafts_service` module must be added to `_apply_test_monkeypatches` for `build_manager_for_accounts`, `load_wrapped_app_credentials`, `load_wrapped_account_tokens`, and `account_store.upsert_tokens` (otherwise the service hits the real provider APIs).
 
 ### Email listing integration coverage
 

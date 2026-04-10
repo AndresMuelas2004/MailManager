@@ -243,8 +243,25 @@ _DDL_STATEMENTS = [
         PRIMARY KEY (provider_message_id, account_id)
     );
     """,
+    # Migration 0012: drafts table for provider-first draft persistence
+    """
+    CREATE TABLE IF NOT EXISTS drafts (
+        provider_draft_id VARCHAR(255) NOT NULL,
+        account_id        UUID         NOT NULL
+                          REFERENCES accounts(account_id) ON DELETE CASCADE,
+        to_recipients     TEXT[]       NOT NULL DEFAULT '{}',
+        cc_recipients     TEXT[]       NOT NULL DEFAULT '{}',
+        bcc_recipients    TEXT[]       NOT NULL DEFAULT '{}',
+        subject           TEXT         NOT NULL DEFAULT '',
+        body_html         TEXT         NOT NULL DEFAULT '',
+        created_at        TIMESTAMPTZ  NOT NULL DEFAULT now(),
+        updated_at        TIMESTAMPTZ  NOT NULL DEFAULT now(),
+        PRIMARY KEY (provider_draft_id, account_id)
+    );
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_drafts_account_id ON drafts(account_id);",
     "DELETE FROM alembic_version;",
-    "INSERT INTO alembic_version(version_num) VALUES ('0011_create_email_content_table');",
+    "INSERT INTO alembic_version(version_num) VALUES ('0012_create_drafts_table');",
 ]
 
 

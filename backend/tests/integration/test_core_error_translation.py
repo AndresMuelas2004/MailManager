@@ -652,3 +652,71 @@ def test_get_email_content_runtime_error_returns_502(
     )
     assert resp.status_code == 502
     assert resp.json()["error"]["code"] == "external_api_error"
+
+
+# ==================================================================
+# create_draft - CoreError translations
+# ==================================================================
+
+def _draft_payload() -> dict:
+    return {
+        "to_recipients": ["a@b.com"],
+        "cc_recipients": [],
+        "bcc_recipients": [],
+        "subject": "S",
+        "body_html": "<p>B</p>",
+    }
+
+
+@pytest.mark.parametrize(
+    "failing_test_client",
+    [{"create_draft_exc": EmailExternalAPIError("Provider fail")}],
+    indirect=True,
+)
+def test_create_draft_external_api_error_returns_502(
+    failing_test_client, setup_mailbox_and_account,
+):
+    """EmailExternalAPIError during create_draft -> ExternalAPIError (502)."""
+    mid, aid = setup_mailbox_and_account(failing_test_client)
+    resp = failing_test_client.post(
+        f"{_MAILBOX_URL}/{mid}/accounts/{aid}/drafts",
+        json=_draft_payload(),
+    )
+    assert resp.status_code == 502
+    assert resp.json()["error"]["code"] == "external_api_error"
+
+
+@pytest.mark.parametrize(
+    "failing_test_client",
+    [{"auth_silent_exc": EmailAuthError("Refresh token expired.")}],
+    indirect=True,
+)
+def test_create_draft_silent_auth_failure_returns_409(
+    failing_test_client, setup_mailbox_and_account,
+):
+    """Silent auth failure before create_draft -> AccountNotConnected (409)."""
+    mid, aid = setup_mailbox_and_account(failing_test_client)
+    resp = failing_test_client.post(
+        f"{_MAILBOX_URL}/{mid}/accounts/{aid}/drafts",
+        json=_draft_payload(),
+    )
+    assert resp.status_code == 409
+    assert resp.json()["error"]["code"] == "account_not_connected"
+
+
+@pytest.mark.parametrize(
+    "failing_test_client",
+    [{"create_draft_exc": RuntimeError("crash")}],
+    indirect=True,
+)
+def test_create_draft_runtime_error_returns_502(
+    failing_test_client, setup_mailbox_and_account,
+):
+    """RuntimeError during create_draft -> manager wraps -> 502 external_api_error."""
+    mid, aid = setup_mailbox_and_account(failing_test_client)
+    resp = failing_test_client.post(
+        f"{_MAILBOX_URL}/{mid}/accounts/{aid}/drafts",
+        json=_draft_payload(),
+    )
+    assert resp.status_code == 502
+    assert resp.json()["error"]["code"] == "external_api_error"

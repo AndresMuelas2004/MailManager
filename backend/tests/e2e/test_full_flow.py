@@ -11,6 +11,7 @@ Run with: python -m pytest backend/tests/e2e -v --tb=short
 from __future__ import annotations
 
 import os
+from datetime import datetime, timezone
 
 import psycopg2
 import pytest
@@ -70,6 +71,38 @@ def _count_by_box(account_id: str, box: str) -> int:
                 (account_id, box),
             )
             return cur.fetchone()[0]
+    finally:
+        conn.close()
+
+
+def _boxes_for_ids(account_id: str, ids: list[str]) -> dict[str, str]:
+    """Return {provider_message_id: box} for the given IDs under an account."""
+    if not ids:
+        return {}
+    conn = _db_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT provider_message_id, box FROM email_metadata "
+                "WHERE account_id = %s AND provider_message_id = ANY(%s)",
+                (account_id, ids),
+            )
+            return {row[0]: row[1] for row in cur.fetchall()}
+    finally:
+        conn.close()
+
+
+def _ids_in_box(account_id: str, box: str) -> set[str]:
+    """Return the full set of provider_message_ids currently in `box` for an account."""
+    conn = _db_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT provider_message_id FROM email_metadata "
+                "WHERE account_id = %s AND box = %s",
+                (account_id, box),
+            )
+            return {row[0] for row in cur.fetchall()}
     finally:
         conn.close()
 
@@ -383,8 +416,6 @@ def test_23_move_to_spam_gmail(e2e_client, flow_state):
     if len(msg_ids) < 10:
         pytest.skip("Not enough ALL_MAIL emails for Gmail spam test")
 
-    spam_before = _count_by_box(GMAIL_ACCOUNT_ID, "SPAM")
-
     response = e2e_client.post(
         f"/mailboxes/{GMAIL_MAILBOX_ID}/emails/spam",
         json={
@@ -401,8 +432,12 @@ def test_23_move_to_spam_gmail(e2e_client, flow_state):
     assert data["accounts"][0]["account_id"] == GMAIL_ACCOUNT_ID
     assert data["accounts"][0]["moved"] == 10
 
-    spam_after = _count_by_box(GMAIL_ACCOUNT_ID, "SPAM")
-    assert spam_after == spam_before + 10
+    # Verify each moved email is now in SPAM (robust to concurrent provider events).
+    boxes = _boxes_for_ids(GMAIL_ACCOUNT_ID, msg_ids)
+    for mid in msg_ids:
+        assert boxes.get(mid) == "SPAM", (
+            f"Expected Gmail email {mid} to be in SPAM, got {boxes.get(mid)}"
+        )
 
     flow_state["gmail_spam_done"] = "true"
 
@@ -414,8 +449,6 @@ def test_24_restore_from_spam_gmail(e2e_client, flow_state):
     msg_ids = _fetch_email_ids(GMAIL_ACCOUNT_ID, 10, "SPAM")
     if len(msg_ids) < 10:
         pytest.skip("Not enough SPAM emails for Gmail restore test")
-
-    spam_before = _count_by_box(GMAIL_ACCOUNT_ID, "SPAM")
 
     response = e2e_client.post(
         f"/mailboxes/{GMAIL_MAILBOX_ID}/emails/restore-from-spam",
@@ -433,14 +466,18 @@ def test_24_restore_from_spam_gmail(e2e_client, flow_state):
     assert data["accounts"][0]["account_id"] == GMAIL_ACCOUNT_ID
     assert data["accounts"][0]["moved"] == 10
 
-    spam_after = _count_by_box(GMAIL_ACCOUNT_ID, "SPAM")
-    assert spam_after == spam_before - 10
+    # Verify each restored email is no longer in SPAM (robust to concurrent provider events).
+    boxes = _boxes_for_ids(GMAIL_ACCOUNT_ID, msg_ids)
+    for mid in msg_ids:
+        assert boxes.get(mid) != "SPAM", (
+            f"Expected Gmail email {mid} to be out of SPAM, still in {boxes.get(mid)}"
+        )
 
     flow_state["gmail_restore_done"] = "true"
 
 
 def test_25_move_to_spam_outlook(e2e_client, flow_state):
-    """Sync, pick 10 emails, move to spam, verify DB."""
+    """Sync, pick 10 emails, move to spam, verify DB, stash new SPAM IDs."""
     sync_resp = e2e_client.post(f"/mailboxes/{OUTLOOK_MAILBOX_ID}/emails/sync-metadata")
     _assert_ok(sync_resp)
 
@@ -448,7 +485,11 @@ def test_25_move_to_spam_outlook(e2e_client, flow_state):
     if len(msg_ids) < 10:
         pytest.skip("Not enough ALL_MAIL emails for Outlook spam test")
 
-    spam_before = _count_by_box(OUTLOOK_ACCOUNT_ID, "SPAM")
+    # Outlook mutates provider_message_id when moving between folders. The IDs
+    # we send are NOT the IDs that end up in SPAM after the move — Outlook
+    # assigns new ones. To identify the 10 rows we just created, snapshot the
+    # set of SPAM IDs before the move and take the delta after.
+    spam_before_ids = _ids_in_box(OUTLOOK_ACCOUNT_ID, "SPAM")
 
     response = e2e_client.post(
         f"/mailboxes/{OUTLOOK_MAILBOX_ID}/emails/spam",
@@ -466,21 +507,34 @@ def test_25_move_to_spam_outlook(e2e_client, flow_state):
     assert data["accounts"][0]["account_id"] == OUTLOOK_ACCOUNT_ID
     assert data["accounts"][0]["moved"] == 10
 
-    spam_after = _count_by_box(OUTLOOK_ACCOUNT_ID, "SPAM")
-    assert spam_after == spam_before + 10
+    # Compute the delta: IDs that appeared in SPAM as a result of the move.
+    spam_after_ids = _ids_in_box(OUTLOOK_ACCOUNT_ID, "SPAM")
+    newly_spam_ids = sorted(spam_after_ids - spam_before_ids)
+    assert len(newly_spam_ids) == 10, (
+        f"Expected 10 new SPAM IDs after move, got {len(newly_spam_ids)}"
+    )
 
+    # Verify DB consistency for each new ID.
+    boxes = _boxes_for_ids(OUTLOOK_ACCOUNT_ID, newly_spam_ids)
+    for mid in newly_spam_ids:
+        assert boxes.get(mid) == "SPAM", (
+            f"Expected Outlook email {mid} to be in SPAM, got {boxes.get(mid)}"
+        )
+
+    # Stash for test 26 — these are the exact IDs it should attempt to restore,
+    # avoiding stale residue from previous E2E runs.
+    flow_state["outlook_spam_moved_ids"] = newly_spam_ids
     flow_state["outlook_spam_done"] = "true"
 
 
 def test_26_restore_from_spam_outlook(e2e_client, flow_state):
-    """Pick 10 spam emails, restore, verify DB."""
-    _require(flow_state, "outlook_spam_done")
+    """Restore the exact 10 SPAM IDs that test 25 just created."""
+    _require(flow_state, "outlook_spam_done", "outlook_spam_moved_ids")
 
-    msg_ids = _fetch_email_ids(OUTLOOK_ACCOUNT_ID, 10, "SPAM")
-    if len(msg_ids) < 10:
-        pytest.skip("Not enough SPAM emails for Outlook restore test")
-
-    spam_before = _count_by_box(OUTLOOK_ACCOUNT_ID, "SPAM")
+    msg_ids = flow_state["outlook_spam_moved_ids"]
+    assert len(msg_ids) == 10, (
+        f"Expected 10 IDs from flow_state, got {len(msg_ids)}"
+    )
 
     response = e2e_client.post(
         f"/mailboxes/{OUTLOOK_MAILBOX_ID}/emails/restore-from-spam",
@@ -498,8 +552,16 @@ def test_26_restore_from_spam_outlook(e2e_client, flow_state):
     assert data["accounts"][0]["account_id"] == OUTLOOK_ACCOUNT_ID
     assert data["accounts"][0]["moved"] == 10
 
-    spam_after = _count_by_box(OUTLOOK_ACCOUNT_ID, "SPAM")
-    assert spam_after == spam_before - 10
+    # After restore, none of the original 10 IDs should still be in SPAM.
+    # Outlook mutates IDs again on this second move, so the DB row for the
+    # old ID is either gone (replaced by a new one) or its box is no longer
+    # 'SPAM'.
+    boxes = _boxes_for_ids(OUTLOOK_ACCOUNT_ID, msg_ids)
+    for mid in msg_ids:
+        assert boxes.get(mid) != "SPAM", (
+            f"Expected Outlook email {mid} to be out of SPAM after restore, "
+            f"still in {boxes.get(mid)}"
+        )
 
 
 # ===================================================================
@@ -574,11 +636,18 @@ def test_27_move_to_trash(e2e_client, flow_state):
                 assert row[0] == "TRASH", f"Gmail email {mid} box should be TRASH, got {row[0]}"
                 assert row[1] is not None, f"Gmail email {mid} previous_box should be set"
 
-            # Outlook IDs may have changed — verify by account + TRASH box
+            # Outlook IDs change on move, so we cannot rely on the pre-move IDs.
+            # Fetch any 2 TRASH rows for this account so later tests (28-31)
+            # can operate on real current IDs. Filter by previous_box IS NOT NULL
+            # to prefer rows that were just moved by our app when possible, but
+            # fall back to any TRASH row if no such rows are found (rows that
+            # had the ID mutated may have lost the previous_box linkage in the
+            # upsert path, which is an Outlook-specific quirk).
             cur.execute(
                 "SELECT provider_message_id FROM email_metadata "
                 "WHERE account_id = %s AND box = 'TRASH' "
-                "ORDER BY provider_message_id LIMIT %s",
+                "ORDER BY (previous_box IS NOT NULL) DESC, provider_message_id "
+                "LIMIT %s",
                 (OUTLOOK_ACCOUNT_ID, len(outlook_ids)),
             )
             new_outlook_ids = [row[0] for row in cur.fetchall()]
@@ -693,9 +762,26 @@ def test_30_delete_outlook_from_trash(e2e_client, flow_state):
 
 
 def test_31_restore_outlook_from_trash(e2e_client, flow_state):
-    """Restore 1 Outlook email from trash — verify restored + provider_message_id updated."""
+    """Restore 1 Outlook email from trash — verify restored (provider_message_id may or may not change)."""
     _require(flow_state, "move_to_trash_done")
     outlook_id = flow_state["trash_outlook_ids"][1]
+
+    dsn = os.getenv("DATABASE_URL", "").strip()
+
+    # Snapshot: count rows in non-TRASH/non-DELETED boxes with cleared previous_box.
+    # After a successful restore, this count must grow by exactly 1.
+    conn = psycopg2.connect(dsn=dsn)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT COUNT(*) FROM email_metadata "
+                "WHERE account_id = %s AND box NOT IN ('TRASH', 'DELETED') "
+                "AND previous_box IS NULL",
+                (OUTLOOK_ACCOUNT_ID,),
+            )
+            restored_count_before = cur.fetchone()[0]
+    finally:
+        conn.close()
 
     resp = e2e_client.post(
         f"/mailboxes/{OUTLOOK_MAILBOX_ID}/emails/trash",
@@ -707,34 +793,36 @@ def test_31_restore_outlook_from_trash(e2e_client, flow_state):
     _assert_ok(resp)
     assert resp.json()["affected"] == 1
 
-    dsn = os.getenv("DATABASE_URL", "").strip()
     conn = psycopg2.connect(dsn=dsn)
     try:
         with conn.cursor() as cur:
-            # Outlook restore changes the provider_message_id, so the old one should be gone
+            # Outlook restore may or may not change the provider_message_id.
             cur.execute(
                 "SELECT box, previous_box FROM email_metadata "
                 "WHERE provider_message_id = %s AND account_id = %s",
                 (outlook_id, OUTLOOK_ACCOUNT_ID),
             )
             old_row = cur.fetchone()
-            # Check if the old ID was replaced (Outlook changes ID on move)
-            # or if it stayed the same
             if old_row is not None:
                 # ID stayed the same (some moves don't change ID)
                 assert old_row[0] != "TRASH", f"Should be restored, got {old_row[0]}"
                 assert old_row[1] is None, "previous_box should be NULL after restore"
             else:
-                # ID changed — find the new record by checking for non-TRASH entries
-                # that were recently restored (previous_box is NULL after restore)
+                # ID changed — the set of restored rows must have grown by
+                # exactly 1. A simple `len(rows) > 0` would pass even if the
+                # restore silently failed, because other emails already sit in
+                # non-TRASH boxes with NULL previous_box.
                 cur.execute(
-                    "SELECT provider_message_id, box FROM email_metadata "
+                    "SELECT COUNT(*) FROM email_metadata "
                     "WHERE account_id = %s AND box NOT IN ('TRASH', 'DELETED') "
                     "AND previous_box IS NULL",
                     (OUTLOOK_ACCOUNT_ID,),
                 )
-                rows = cur.fetchall()
-                assert len(rows) > 0, "Should find at least one restored email"
+                restored_count_after = cur.fetchone()[0]
+                assert restored_count_after == restored_count_before + 1, (
+                    f"Expected restored-row count to increase by 1, "
+                    f"got {restored_count_before} -> {restored_count_after}"
+                )
     finally:
         conn.close()
 
@@ -742,17 +830,110 @@ def test_31_restore_outlook_from_trash(e2e_client, flow_state):
 
 
 # ===================================================================
+# Section 5b: Drafts — pre-existing accounts (tests 32–33)
+#
+# TODO: Manual DB cleanup is performed inline because the DELETE drafts
+# endpoint does not exist yet. The draft is intentionally left at the
+# provider; a future DELETE drafts endpoint will replace this manual
+# cleanup with proper provider-side deletion.
+# ===================================================================
+
+def test_32_create_draft_gmail(e2e_client):
+    """Create a draft on the seeded Gmail test account and clean up the local row."""
+    subject = f"E2E draft — Gmail {datetime.now(timezone.utc).isoformat()}"
+    response = e2e_client.post(
+        f"/mailboxes/{GMAIL_MAILBOX_ID}/accounts/{GMAIL_ACCOUNT_ID}/drafts",
+        json={
+            "to_recipients": [SEND_RECIPIENT],
+            "cc_recipients": [],
+            "bcc_recipients": [],
+            "subject": subject,
+            "body_html": "<p>E2E test body</p>",
+        },
+    )
+    _assert_ok(response)
+    data = response.json()
+    assert data["provider_draft_id"]
+    assert data["account_id"] == GMAIL_ACCOUNT_ID
+    assert data["subject"] == subject
+    assert data["to_recipients"] == [SEND_RECIPIENT]
+    assert data["cc_recipients"] == []
+    assert data["bcc_recipients"] == []
+    assert data["body_html"] == "<p>E2E test body</p>"
+    assert data["created_at"]
+    assert data["updated_at"]
+
+    conn = _db_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT 1 FROM drafts WHERE provider_draft_id = %s AND account_id = %s",
+                (data["provider_draft_id"], GMAIL_ACCOUNT_ID),
+            )
+            assert cur.fetchone() is not None
+            cur.execute(
+                "DELETE FROM drafts WHERE provider_draft_id = %s AND account_id = %s",
+                (data["provider_draft_id"], GMAIL_ACCOUNT_ID),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def test_33_create_draft_outlook(e2e_client):
+    """Create a draft on the seeded Outlook test account; verifies the ImmutableId header path."""
+    subject = f"E2E draft — Outlook {datetime.now(timezone.utc).isoformat()}"
+    response = e2e_client.post(
+        f"/mailboxes/{OUTLOOK_MAILBOX_ID}/accounts/{OUTLOOK_ACCOUNT_ID}/drafts",
+        json={
+            "to_recipients": [SEND_RECIPIENT],
+            "cc_recipients": [],
+            "bcc_recipients": [],
+            "subject": subject,
+            "body_html": "<p>E2E Outlook test body</p>",
+        },
+    )
+    _assert_ok(response)
+    data = response.json()
+    assert data["provider_draft_id"]
+    assert data["account_id"] == OUTLOOK_ACCOUNT_ID
+    assert data["subject"] == subject
+    assert data["to_recipients"] == [SEND_RECIPIENT]
+    assert data["cc_recipients"] == []
+    assert data["bcc_recipients"] == []
+    assert data["body_html"] == "<p>E2E Outlook test body</p>"
+    assert data["created_at"]
+    assert data["updated_at"]
+
+    conn = _db_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT 1 FROM drafts WHERE provider_draft_id = %s AND account_id = %s",
+                (data["provider_draft_id"], OUTLOOK_ACCOUNT_ID),
+            )
+            assert cur.fetchone() is not None
+            cur.execute(
+                "DELETE FROM drafts WHERE provider_draft_id = %s AND account_id = %s",
+                (data["provider_draft_id"], OUTLOOK_ACCOUNT_ID),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+# ===================================================================
 # Section 6: Auth lifecycle (MUST BE LAST — invalidates session)
 # ===================================================================
 
-def test_32_post_auth_logout(e2e_client, flow_state):
+def test_34_post_auth_logout(e2e_client, flow_state):
     response = e2e_client.post("/auth/logout")
     _assert_ok(response)
     assert response.json() == {"status": "logged_out"}
     flow_state["logged_out"] = "true"
 
 
-def test_33_get_auth_me_after_logout_401(e2e_client, flow_state):
+def test_35_get_auth_me_after_logout_401(e2e_client, flow_state):
     _require(flow_state, "logged_out")
     response = e2e_client.get("/auth/me")
     _assert_ok(response, expected=401)

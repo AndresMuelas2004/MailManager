@@ -5,6 +5,7 @@ Shared helpers used across service modules.
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any, Iterable
 
 logger = logging.getLogger(__name__)
@@ -610,11 +611,24 @@ _SANITIZE_ALLOWED_ATTRIBUTES = {
 
 _SANITIZE_ALLOWED_PROTOCOLS = ["http", "https", "mailto", "cid"]
 
+# Raw-text HTML elements whose contents must be stripped together with their
+# tags. bleach's ``strip=True`` only removes the tags of disallowed elements
+# but preserves their text contents, which is unsafe for <script> and <style>
+# because the inner text is executable/interpreted by the browser. We remove
+# these blocks with a regex before handing the HTML to bleach. The alternation
+# ``</\1\s*>|\Z`` also matches unterminated blocks that extend to EOF, so a
+# malformed ``<script>alert(1)`` without a closing tag is still removed.
+_RAW_TEXT_BLOCK_PATTERN = re.compile(
+    r"<(script|style)\b[^>]*>.*?(?:</\1\s*>|\Z)",
+    re.DOTALL | re.IGNORECASE,
+)
+
 
 def sanitize_email_html(html: str) -> str:
     """Sanitize email HTML to remove dangerous tags, attributes and protocols."""
     if not html or html.isspace():
         return html
+    html = _RAW_TEXT_BLOCK_PATTERN.sub("", html)
     return bleach.clean(
         html,
         tags=_SANITIZE_ALLOWED_TAGS,

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from typing import Any
-from .email_client import EmailClient, EmailContent, EmailMetadata, SpamMoveResult, SyncResult
+from .email_client import DraftMetadata, EmailClient, EmailContent, EmailMetadata, SpamMoveResult, SyncResult
 from .errors import (
     CoreError,
     EmailAccountNotFoundError,
@@ -220,6 +220,30 @@ class EmailManager:
         except Exception as exc:
             raise EmailExternalAPIError(
                 f"Unexpected send_email error ({type(exc).__name__}): {exc}"
+            ) from exc
+
+    def create_draft(
+        self,
+        account_label: str,
+        to_recipients: list[str],
+        cc_recipients: list[str],
+        bcc_recipients: list[str],
+        subject: str,
+        body_html: str,
+    ) -> DraftMetadata:
+        """
+        Create a draft using the client that matches the requested account label.
+        """
+        client = self._get_client_or_raise(account_label)
+        try:
+            return client.create_draft(
+                to_recipients, cc_recipients, bcc_recipients, subject, body_html,
+            )
+        except CoreError:
+            raise
+        except Exception as exc:
+            raise EmailExternalAPIError(
+                f"Unexpected create_draft error ({type(exc).__name__}): {exc}"
             ) from exc
 
     def update_read_status(

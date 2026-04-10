@@ -27,6 +27,7 @@ Routers (FastAPI)
 
 Note: the `GET /mailboxes/{mailbox_id}/emails` listing endpoint reads only from the local database (Services → Database, no provider API calls).
 Note: the `GET /mailboxes/{mailbox_id}/emails/{id}/content` endpoint uses a cache-aside pattern — checks the `email_content` table first (DB read), and on cache miss fetches from the provider API, sanitizes the HTML, persists in DB, then returns.
+Note: the `POST /mailboxes/{mailbox_id}/accounts/{account_id}/drafts` endpoint follows the Provider-First Rule — the draft is created at the provider first (Gmail `drafts.create` or Outlook `POST /me/messages` with `Prefer: IdType="ImmutableId"`), and only on success persisted to the local `drafts` table.
 
 ## Key Identifiers
 
@@ -37,6 +38,7 @@ Note: the `GET /mailboxes/{mailbox_id}/emails/{id}/content` endpoint uses a cach
 - `user_id` — UUID identifying an authenticated user (from `users` table).
 - `owner_user_id` — FK on `mailboxes` linking to the owning user (NOT NULL, CASCADE on user delete).
 - `email_address` — the email address of the connected account, fetched best-effort from the provider during `connect_account`. Stored as plain text (not encrypted) in the `accounts` table. May be `NULL` if the fetch failed.
+- `provider_draft_id` — the draft identifier returned by the provider (Gmail `drafts.create` or Outlook `POST /me/messages` with `Prefer: IdType="ImmutableId"`). Together with `account_id`, forms the composite PK of the `drafts` table.
 
 ## Testing
 
