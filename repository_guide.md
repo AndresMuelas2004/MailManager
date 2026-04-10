@@ -28,6 +28,7 @@ Routers (FastAPI)
 Note: the `GET /mailboxes/{mailbox_id}/emails` listing endpoint reads only from the local database (Services → Database, no provider API calls).
 Note: the `GET /mailboxes/{mailbox_id}/emails/{id}/content` endpoint uses a cache-aside pattern — checks the `email_content` table first (DB read), and on cache miss fetches from the provider API, sanitizes the HTML, persists in DB, then returns.
 Note: the `POST /mailboxes/{mailbox_id}/accounts/{account_id}/drafts` endpoint follows the Provider-First Rule — the draft is created at the provider first (Gmail `drafts.create` or Outlook `POST /me/messages` with `Prefer: IdType="ImmutableId"`), and only on success persisted to the local `drafts` table.
+Note: the `GET /mailboxes/{mailbox_id}/drafts` listing endpoint reads only from the local database (Services → Database, no provider API calls). Query param `account_id` is optional: when provided, returns drafts of that account; when omitted, returns the unified view across all accounts in the mailbox.
 
 ## Key Identifiers
 

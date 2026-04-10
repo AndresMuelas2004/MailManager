@@ -13,6 +13,7 @@ from api.errors.exceptions import (
     AccountNotFound,
     ApiError,
     DraftCreationError,
+    DraftListError,
 )
 from api.schemas.draft import DraftCreate, DraftOut
 from api.services.services_helpers import (
@@ -172,3 +173,77 @@ def create_draft(
             type(exc).__name__, exc,
         )
         raise DraftCreationError("Failed to create draft.") from exc
+
+
+def list_drafts(
+    mailbox_id: str,
+    user_id: str,
+    account_id: str | None = None,
+) -> list[DraftOut]:
+    """
+    List drafts for a mailbox, optionally filtered to a single account.
+
+    Pure DB read: does not contact any provider. Enforces mailbox ownership
+    via ensure_mailbox_access.
+    """
+    ensure_mailbox_access(mailbox_id, user_id)
+
+    if account_id is not None:
+        try:
+            account = account_store.get(mailbox_id, account_id)
+        except DatabaseError as exc:
+            raise translate_database_error(exc) from exc
+        except Exception as exc:
+            logger.warning(
+                "Unexpected account lookup error during draft listing (%s): %s",
+                type(exc).__name__, exc,
+            )
+            raise DraftListError(
+                "Failed to look up account for draft listing."
+            ) from exc
+        if account is None:
+            raise AccountNotFound(
+                f"Account '{account_id}' not found in mailbox '{mailbox_id}' "
+                "during draft listing."
+            )
+
+        try:
+            rows = draft_store.list_by_account(account_id)
+        except DatabaseError as exc:
+            raise translate_database_error(exc) from exc
+        except Exception as exc:
+            logger.warning(
+                "Unexpected draft listing error for account '%s' (%s): %s",
+                account_id, type(exc).__name__, exc,
+            )
+            raise DraftListError(
+                "Failed to list drafts for account."
+            ) from exc
+    else:
+        try:
+            rows = draft_store.list_by_mailbox(mailbox_id)
+        except DatabaseError as exc:
+            raise translate_database_error(exc) from exc
+        except Exception as exc:
+            logger.warning(
+                "Unexpected draft listing error for mailbox '%s' (%s): %s",
+                mailbox_id, type(exc).__name__, exc,
+            )
+            raise DraftListError(
+                "Failed to list drafts for mailbox."
+            ) from exc
+
+    return [
+        DraftOut(
+            provider_draft_id=row["provider_draft_id"],
+            account_id=str(row["account_id"]),
+            to_recipients=row.get("to_recipients") or [],
+            cc_recipients=row.get("cc_recipients") or [],
+            bcc_recipients=row.get("bcc_recipients") or [],
+            subject=row.get("subject") or "",
+            body_html=row.get("body_html") or "",
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
+        for row in rows
+    ]

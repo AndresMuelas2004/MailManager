@@ -154,6 +154,20 @@ Two helpers in `services_helpers.py` support the email content flow:
 - **Outlook critical**: the Outlook client passes `Prefer: IdType="ImmutableId"` when creating the draft so the message ID stays stable across state transitions (critical for the future send-draft endpoint, which would reuse the same ID).
 - **Service module**: lives in `api/services/drafts_service.py` with a local `_persist_refreshed_tokens` helper. The service is the only one that imports `draft_store` from `database`.
 
+### Draft listing endpoint
+
+`GET /mailboxes/{mailbox_id}/drafts` — list drafts stored locally for a mailbox. Query parameter `account_id` is optional:
+
+- **Provided** → returns drafts only for that account. The service verifies the account exists inside the mailbox first (404 `account_not_found` if not).
+- **Omitted / null** → unified view: returns drafts from all accounts inside the mailbox via a JOIN on `accounts.mailbox_id`.
+
+The endpoint is **pure DB read**: it does not call any provider API, does not perform silent auth, and does not touch `EmailManager`. Ownership is enforced by `ensure_mailbox_access` as for all other mailbox-scoped endpoints.
+
+- **Response**: `list[DraftOut]` — the same schema used by the create endpoint. No wrapper object.
+- **Ordering**: `created_at DESC` (most recent first). No pagination.
+- **Error**: `DraftListError` (code `"draft_list_error"`, HTTP 500) — raised on DB-side failures during listing. Note the status difference with `DraftCreationError` (502): creation failures are usually provider-side, while listing failures can only be DB-side.
+- **Router note**: both draft endpoints live in the same `drafts_routers.py` router with prefix `/mailboxes/{mailbox_id}`. The POST handler declares `/accounts/{account_id}/drafts` in its decorator path, and the GET handler declares `/drafts`.
+
 ## Behavioral Contracts — Traps to Avoid
 
 ### `connect_account` response includes `email_address`
@@ -263,6 +277,7 @@ Complete, authoritative list of every `ApiError` subclass registered in `_STATUS
 | `DatabaseQueryError` | `database_query_error` | 503 | SQL execution failure reaching the client. |
 | `DatabaseMigrationError` | `database_migration_error` | 500 | Schema migration failure at startup. |
 | `EmailListError` | `email_list_error` | 500 | Database-level failure when listing email metadata (not translated to `DatabaseQueryError` because it is the only place the list operation can fail). |
+| `DraftListError` | `draft_list_error` | 500 | Database-level failure when listing drafts (same rationale as `EmailListError`). |
 | `TrashOperationError` | `trash_operation_error` | 500 | Internal bookkeeping failure inside `manage_trash` (not a provider error). |
 
 ### Token / credential security (500)

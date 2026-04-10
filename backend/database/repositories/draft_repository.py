@@ -44,5 +44,43 @@ class PgDraftStore(DraftStore):
             ) from exc
         return _row_to_dict(row)
 
+    def list_by_account(self, account_id: str) -> list[dict[str, Any]]:
+        try:
+            with connection.get_connection() as conn:
+                with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                    cur.execute(
+                        queries.LIST_DRAFTS_BY_ACCOUNT,
+                        {"account_id": account_id},
+                    )
+                    rows = cur.fetchall()
+        except psycopg2.errors.InvalidTextRepresentation:
+            return []
+        except psycopg2.Error as exc:
+            raise QueryError("Failed to list drafts by account.") from exc
+        except Exception as exc:
+            raise QueryError(
+                f"Unexpected drafts list by account error ({type(exc).__name__}): {exc}"
+            ) from exc
+        return [_row_to_dict(row) for row in rows]
+
+    def list_by_mailbox(self, mailbox_id: str) -> list[dict[str, Any]]:
+        try:
+            with connection.get_connection() as conn:
+                with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                    cur.execute(
+                        queries.LIST_DRAFTS_BY_MAILBOX,
+                        {"mailbox_id": mailbox_id},
+                    )
+                    rows = cur.fetchall()
+        except psycopg2.errors.InvalidTextRepresentation:
+            return []
+        except psycopg2.Error as exc:
+            raise QueryError("Failed to list drafts by mailbox.") from exc
+        except Exception as exc:
+            raise QueryError(
+                f"Unexpected drafts list by mailbox error ({type(exc).__name__}): {exc}"
+            ) from exc
+        return [_row_to_dict(row) for row in rows]
+
 
 draft_store = PgDraftStore()

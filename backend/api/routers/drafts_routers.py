@@ -1,10 +1,10 @@
 """
-Drafts router — draft creation under a mailbox/account.
+Drafts router — draft creation and listing under a mailbox.
 """
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 
 from api.routers.routers_helpers import require_session
 from api.schemas.draft import DraftCreate, DraftOut
@@ -12,12 +12,12 @@ from api.services import drafts_service
 
 
 router = APIRouter(
-    prefix="/mailboxes/{mailbox_id}/accounts/{account_id}/drafts",
+    prefix="/mailboxes/{mailbox_id}",
     tags=["drafts"],
 )
 
 
-@router.post("", response_model=DraftOut)
+@router.post("/accounts/{account_id}/drafts", response_model=DraftOut)
 def create_draft(
     mailbox_id: str,
     account_id: str,
@@ -28,3 +28,19 @@ def create_draft(
     Create a new draft at the provider and persist it locally.
     """
     return drafts_service.create_draft(mailbox_id, account_id, payload, user_id)
+
+
+@router.get("/drafts", response_model=list[DraftOut])
+def list_drafts(
+    mailbox_id: str,
+    account_id: str | None = Query(default=None),
+    user_id: str = Depends(require_session),
+) -> list[DraftOut]:
+    """
+    List drafts for a mailbox.
+
+    Query parameters:
+    - account_id: optional. If provided, returns only drafts of that account.
+      If omitted or None, returns drafts from all accounts in the mailbox.
+    """
+    return drafts_service.list_drafts(mailbox_id, user_id, account_id)

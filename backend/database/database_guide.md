@@ -113,7 +113,17 @@ Inserts a new draft row using `INSERT_DRAFT` (defined in `queries/drafts.py`). T
 
 **Return contract**: always a populated dict. The method does NOT return an empty dict when `RETURNING` yields no row — that is a programming error and will surface as `TypeError` from `_row_to_dict(None)`, which the service layer's outer `except Exception` converts to `DraftCreationError`. This matches the pattern used by peer `create` methods (`PgMailboxStore.create`, `PgSessionStore.create`).
 
-The contract intentionally exposes only `create` for now — list, update, send, and delete methods will be added incrementally as the corresponding drafts endpoints are implemented.
+### `DraftStore.list_by_account(account_id) → list[dict]`
+
+Returns all draft rows for a single account, ordered by `created_at DESC`. Uses `LIST_DRAFTS_BY_ACCOUNT` (filter on `drafts.account_id`, index-backed by `idx_drafts_account_id`). Returns `[]` if the UUID is malformed (`InvalidTextRepresentation`) so the service can treat "unknown account" as an empty result rather than a 500. Raises `QueryError` on other SQL failures or unexpected exceptions.
+
+Each row is mapped through `_row_to_dict`, which casts `account_id` UUID → `str` and ensures `to_recipients`/`cc_recipients`/`bcc_recipients` are never `None` (coalesced to `[]`).
+
+### `DraftStore.list_by_mailbox(mailbox_id) → list[dict]`
+
+Returns all draft rows across every account that belongs to the mailbox, ordered by `created_at DESC`. Uses `LIST_DRAFTS_BY_MAILBOX` which JOINs `drafts` with `accounts` on `account_id` and filters by `accounts.mailbox_id` (there is no `mailbox_id` column on `drafts`). Same error semantics and row-mapping as `list_by_account`.
+
+The contract intentionally exposes only `create`, `list_by_account`, and `list_by_mailbox` for now — update, send, and delete methods will be added incrementally as the corresponding drafts endpoints are implemented.
 
 ## Project-Specific Error Hierarchy
 

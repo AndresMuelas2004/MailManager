@@ -240,6 +240,7 @@ Emails:
 
 Drafts:
 
+- `GET /mailboxes/{mailbox_id}/drafts` — List drafts for the mailbox (DB-only, no provider calls). Optional query param `account_id`: when provided, returns drafts of that account; when omitted, returns the unified view across all accounts in the mailbox. Ordered by `created_at DESC`.
 - `POST /mailboxes/{mailbox_id}/accounts/{account_id}/drafts` — Create a draft at the provider and persist it locally (Provider-First; Outlook uses `Prefer: IdType="ImmutableId"`)
 
 Auth:
@@ -290,6 +291,7 @@ Each API error code maps to a fixed HTTP status. The list below shows every code
 - `token_integrity_error` — 500
 - `trash_operation_error` — 500
 - `email_list_error` — 500
+- `draft_list_error` — 500
 - `email_fetch_error` — 502
 - `email_send_error` — 502
 - `external_api_error` — 502

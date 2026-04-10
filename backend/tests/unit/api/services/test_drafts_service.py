@@ -1,5 +1,5 @@
 """
-Unit tests for drafts_service.create_draft.
+Unit tests for drafts_service (create_draft + list_drafts).
 
 All external dependencies are monkeypatched so tests run without DB or provider APIs.
 """
@@ -15,6 +15,7 @@ from api.errors.exceptions import (
     AccountNotFound,
     DatabaseQueryError,
     DraftCreationError,
+    DraftListError,
     ExternalAPIError,
     Forbidden,
 )
@@ -396,3 +397,182 @@ class TestCreateDraft:
         assert result.bcc_recipients == []
         assert result.subject == ""
         assert result.body_html == ""
+
+
+def _patch_list_common(monkeypatch):
+    """Common monkeypatches for list_drafts tests."""
+    monkeypatch.setattr(
+        drafts_service, "ensure_mailbox_access",
+        lambda _mb, _uid: {"mailbox_id": _MAILBOX_ID, "owner_user_id": _USER_ID},
+    )
+    monkeypatch.setattr(
+        drafts_service.account_store, "get",
+        lambda _mb, _aid: _fake_account() if _aid == _ACCOUNT_ID else None,
+    )
+    # Default: list_by_account and list_by_mailbox return a single row.
+    monkeypatch.setattr(
+        drafts_service.draft_store, "list_by_account",
+        lambda _aid: [_persisted_row(provider_draft_id="draft_a")],
+    )
+    monkeypatch.setattr(
+        drafts_service.draft_store, "list_by_mailbox",
+        lambda _mid: [
+            _persisted_row(provider_draft_id="draft_a"),
+            _persisted_row(provider_draft_id="draft_b"),
+        ],
+    )
+
+
+class TestListDrafts:
+
+    def test_list_single_account_happy_path(self, monkeypatch):
+        _patch_list_common(monkeypatch)
+        monkeypatch.setattr(
+            drafts_service.draft_store, "list_by_account",
+            lambda _aid: [
+                _persisted_row(provider_draft_id="d1", subject="first"),
+                _persisted_row(provider_draft_id="d2", subject="second"),
+            ],
+        )
+        result = drafts_service.list_drafts(_MAILBOX_ID, _USER_ID, _ACCOUNT_ID)
+        assert len(result) == 2
+        assert result[0].provider_draft_id == "d1"
+        assert result[0].subject == "first"
+        assert result[0].account_id == _ACCOUNT_ID
+        assert result[1].provider_draft_id == "d2"
+        assert result[1].subject == "second"
+
+    def test_list_unified_view_happy_path(self, monkeypatch):
+        _patch_list_common(monkeypatch)
+        monkeypatch.setattr(
+            drafts_service.draft_store, "list_by_mailbox",
+            lambda _mid: [
+                _persisted_row(provider_draft_id="d1"),
+                _persisted_row(provider_draft_id="d2"),
+                _persisted_row(provider_draft_id="d3"),
+            ],
+        )
+        result = drafts_service.list_drafts(_MAILBOX_ID, _USER_ID, None)
+        assert len(result) == 3
+        ids = [r.provider_draft_id for r in result]
+        assert ids == ["d1", "d2", "d3"]
+
+    def test_list_account_not_found_raises(self, monkeypatch):
+        _patch_list_common(monkeypatch)
+        monkeypatch.setattr(
+            drafts_service.account_store, "get",
+            lambda _mb, _aid: None,
+        )
+        with pytest.raises(AccountNotFound):
+            drafts_service.list_drafts(_MAILBOX_ID, _USER_ID, _ACCOUNT_ID)
+
+    def test_list_mailbox_access_denied_raises(self, monkeypatch):
+        _patch_list_common(monkeypatch)
+
+        def _raise(*_a, **_kw):
+            raise Forbidden("You do not have access to this mailbox.")
+
+        monkeypatch.setattr(drafts_service, "ensure_mailbox_access", _raise)
+        with pytest.raises(Forbidden):
+            drafts_service.list_drafts(_MAILBOX_ID, _USER_ID, None)
+
+    def test_list_db_error_on_account_lookup_raises(self, monkeypatch):
+        _patch_list_common(monkeypatch)
+
+        def _raise_db(*_a, **_kw):
+            raise DbQueryError("lookup failed")
+
+        monkeypatch.setattr(drafts_service.account_store, "get", _raise_db)
+        with pytest.raises(DatabaseQueryError):
+            drafts_service.list_drafts(_MAILBOX_ID, _USER_ID, _ACCOUNT_ID)
+
+    def test_list_db_error_on_list_by_account_raises(self, monkeypatch):
+        _patch_list_common(monkeypatch)
+
+        def _raise_db(*_a, **_kw):
+            raise DbQueryError("query failed")
+
+        monkeypatch.setattr(drafts_service.draft_store, "list_by_account", _raise_db)
+        with pytest.raises(DatabaseQueryError):
+            drafts_service.list_drafts(_MAILBOX_ID, _USER_ID, _ACCOUNT_ID)
+
+    def test_list_db_error_on_list_by_mailbox_raises(self, monkeypatch):
+        _patch_list_common(monkeypatch)
+
+        def _raise_db(*_a, **_kw):
+            raise DbQueryError("query failed")
+
+        monkeypatch.setattr(drafts_service.draft_store, "list_by_mailbox", _raise_db)
+        with pytest.raises(DatabaseQueryError):
+            drafts_service.list_drafts(_MAILBOX_ID, _USER_ID, None)
+
+    def test_list_unexpected_error_on_list_by_account_raises_draft_list_error(
+        self, monkeypatch,
+    ):
+        _patch_list_common(monkeypatch)
+
+        def _raise(*_a, **_kw):
+            raise RuntimeError("boom")
+
+        monkeypatch.setattr(drafts_service.draft_store, "list_by_account", _raise)
+        with pytest.raises(DraftListError):
+            drafts_service.list_drafts(_MAILBOX_ID, _USER_ID, _ACCOUNT_ID)
+
+    def test_list_unexpected_error_on_list_by_mailbox_raises_draft_list_error(
+        self, monkeypatch,
+    ):
+        _patch_list_common(monkeypatch)
+
+        def _raise(*_a, **_kw):
+            raise RuntimeError("boom")
+
+        monkeypatch.setattr(drafts_service.draft_store, "list_by_mailbox", _raise)
+        with pytest.raises(DraftListError):
+            drafts_service.list_drafts(_MAILBOX_ID, _USER_ID, None)
+
+    def test_list_unexpected_error_on_account_lookup_raises_draft_list_error(
+        self, monkeypatch,
+    ):
+        _patch_list_common(monkeypatch)
+
+        def _raise(*_a, **_kw):
+            raise RuntimeError("boom")
+
+        monkeypatch.setattr(drafts_service.account_store, "get", _raise)
+        with pytest.raises(DraftListError):
+            drafts_service.list_drafts(_MAILBOX_ID, _USER_ID, _ACCOUNT_ID)
+
+    def test_list_empty_result_returns_empty_list(self, monkeypatch):
+        _patch_list_common(monkeypatch)
+        monkeypatch.setattr(
+            drafts_service.draft_store, "list_by_mailbox",
+            lambda _mid: [],
+        )
+        result = drafts_service.list_drafts(_MAILBOX_ID, _USER_ID, None)
+        assert result == []
+
+    def test_list_none_fields_coalesced_to_defaults(self, monkeypatch):
+        _patch_list_common(monkeypatch)
+        monkeypatch.setattr(
+            drafts_service.draft_store, "list_by_mailbox",
+            lambda _mid: [
+                {
+                    "provider_draft_id": "d1",
+                    "account_id": _ACCOUNT_ID,
+                    "to_recipients": None,
+                    "cc_recipients": None,
+                    "bcc_recipients": None,
+                    "subject": None,
+                    "body_html": None,
+                    "created_at": datetime(2024, 1, 1, 12, 0, 0),
+                    "updated_at": datetime(2024, 1, 1, 12, 0, 0),
+                },
+            ],
+        )
+        result = drafts_service.list_drafts(_MAILBOX_ID, _USER_ID, None)
+        assert len(result) == 1
+        assert result[0].to_recipients == []
+        assert result[0].cc_recipients == []
+        assert result[0].bcc_recipients == []
+        assert result[0].subject == ""
+        assert result[0].body_html == ""

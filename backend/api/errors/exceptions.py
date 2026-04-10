@@ -145,3 +145,7 @@ class EmailListError(ApiError):
 
 class DraftCreationError(ApiError):
     code = "draft_creation_error"
+
+
+class DraftListError(ApiError):
+    code = "draft_list_error"

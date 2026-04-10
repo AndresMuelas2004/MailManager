@@ -105,7 +105,9 @@ Trash management integration tests first sync emails via the normal sync endpoin
 
 ### Drafts integration coverage
 
-`test_drafts.py`: 5 tests for `POST /mailboxes/{mid}/accounts/{aid}/drafts`:
+`test_drafts.py` covers both draft endpoints (POST create + GET list).
+
+**POST `/mailboxes/{mid}/accounts/{aid}/drafts`** — 5 tests:
 
 - Happy path returns `DraftOut` with all payload fields round-tripped and provider-assigned `provider_draft_id`.
 - Persisted to the `drafts` table (verified via `isolated_db.cursor()` reading the `to_recipients`, `cc_recipients`, `bcc_recipients`, `subject`, and `body_html` columns).
@@ -113,9 +115,21 @@ Trash management integration tests first sync emails via the normal sync endpoin
 - Nonexistent account returns 404 `account_not_found`.
 - Nonexistent mailbox returns 404 `mailbox_not_found` (ownership check runs first).
 
-**Trap reminder**: this test file required two updates to `conftest.py` to comply with the integration traps documented above:
-1. The new `draft_repository` module must be added to the `isolated_db` fixture so it shares the per-test transaction connection (otherwise the `INSERT_DRAFT` query bypasses the rollback and leaks data between tests).
-2. The new `drafts_service` module must be added to `_apply_test_monkeypatches` for `build_manager_for_accounts`, `load_wrapped_app_credentials`, `load_wrapped_account_tokens`, and `account_store.upsert_tokens` (otherwise the service hits the real provider APIs).
+**GET `/mailboxes/{mid}/drafts`** — 7 tests (helper: `_list_drafts_url(mailbox_id, account_id=None)`):
+
+- Empty mailbox returns `[]`.
+- Single-account view: POSTs 3 drafts and verifies the GET with `?account_id=...` returns them in `created_at DESC` order.
+- Unified view: creates 2 accounts in the same mailbox, POSTs 2 drafts in each (4 total), GET without `account_id` returns all 4.
+- Cross-mailbox isolation: creates 2 mailboxes with 1 draft each, verifies GETs do not cross mailbox boundaries.
+- Nonexistent mailbox returns 404 `mailbox_not_found`.
+- Nonexistent account returns 404 `account_not_found`.
+- Foreign mailbox returns 403 `forbidden`. Uses a local `_create_foreign_mailbox` helper (replicated from `test_auth_endpoints.py` to keep the draft test file self-contained).
+
+Core-error translation tests for drafts live in `test_core_error_translation.py` (3 parametrized cases: `create_draft_exc: EmailExternalAPIError → 502`, `auth_silent_exc: EmailAuthError → 409`, `create_draft_exc: RuntimeError → 502`). Note that only the POST has error translation coverage there — the GET is DB-only and has no provider call path to translate.
+
+**Trap reminder**: when the drafts feature was first added, `conftest.py` needed two updates that any future draft-related endpoint must also respect:
+1. The new `draft_repository` module must be added to the `isolated_db` fixture so it shares the per-test transaction connection (otherwise the `INSERT_DRAFT`, `LIST_DRAFTS_BY_ACCOUNT`, and `LIST_DRAFTS_BY_MAILBOX` queries bypass the rollback and leak data between tests).
+2. The new `drafts_service` module must be added to `_apply_test_monkeypatches` for `build_manager_for_accounts`, `load_wrapped_app_credentials`, `load_wrapped_account_tokens`, and `account_store.upsert_tokens` (otherwise the service hits the real provider APIs — **only relevant for the POST**; the GET does not use any of these helpers).
 
 ### Email listing integration coverage
 

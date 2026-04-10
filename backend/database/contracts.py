@@ -153,6 +153,21 @@ class DraftStore(ABC):
         """
         raise NotImplementedError
 
+    @abstractmethod
+    def list_by_account(self, account_id: str) -> list[dict[str, Any]]:
+        """
+        Return all draft rows for a single account, ordered by created_at DESC.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def list_by_mailbox(self, mailbox_id: str) -> list[dict[str, Any]]:
+        """
+        Return all draft rows across every account that belongs to the
+        mailbox, ordered by created_at DESC.
+        """
+        raise NotImplementedError
+
 
 class UserStore(ABC):
     """
