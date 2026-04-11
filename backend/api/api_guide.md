@@ -51,7 +51,7 @@ Load credentials with `load_wrapped_app_credentials(provider)` / `load_wrapped_a
 
 `POST /mailboxes/{mailbox_id}/emails/sync-metadata?account_id=<optional>` — fetch and persist email metadata.
 
-- **Query params**: `account_id` (optional UUID). When provided, syncs only the specified account; when omitted, syncs all accounts in the mailbox.
+- **Query params**: `account_id` (optional string, validated at the DB layer via `psycopg2.errors.InvalidTextRepresentation` handling — invalid UUIDs become a soft 404/empty result instead of a 500). When provided, syncs only the specified account; when omitted, syncs all accounts in the mailbox.
 - **Response**: `SyncResultOut` with `total_synced` and per-account `AccountSyncDetail` entries.
 - **Error**: `EmailFetchError` (code `"email_fetch_error"`, HTTP 502) — raised on provider-level or unexpected failures during sync.
 - **Flow**: validate ownership via `ensure_mailbox_access` → if `account_id` provided, validate it belongs to the mailbox via `account_store.get`; if omitted, load all accounts via `account_store.list_by_mailbox` → build manager → authenticate silently → fetch metadata → persist results.
@@ -112,7 +112,7 @@ One helper in `services_helpers.py` supports the move-to-trash flow:
 
 `GET /mailboxes/{mailbox_id}/emails?box=<BOX>&account_id=<optional>` — list email metadata filtered by box.
 
-- **Query params**: `box` (required, one of `ALL_MAIL`, `SENT`, `SPAM`, `TRASH`), `account_id` (optional UUID).
+- **Query params**: `box` (required, one of `ALL_MAIL`, `SENT`, `SPAM`, `TRASH`), `account_id` (optional string, validated at the DB layer via `psycopg2.errors.InvalidTextRepresentation` handling).
 - **Response**: `list[EmailMetadataOut]` — flat list of email metadata objects sorted by `received_at DESC`.
 - **Error**: `EmailListError` (code `"email_list_error"`, HTTP 500) — raised on database-level failures during listing.
 - **Flow**: validate ownership via `ensure_mailbox_access` → if `account_id` provided, validate it belongs to the mailbox via `account_store.get`, then query `list_by_account_and_box`; if omitted, query `list_by_mailbox_and_box` (JOINs with `accounts` table).
@@ -131,7 +131,7 @@ GET endpoints that read exclusively from the database (no provider API calls) ca
 - **Query params**: `account_id` (required, `min_length=1`).
 - **Response**: `EmailContentOut` with `html_body: str | None` and `text_body: str | None`.
 - **Error**: `EmailContentFetchError` (code `"email_content_fetch_error"`, HTTP 502) — raised on provider-level or unexpected failures when fetching content.
-- **Flow**: validate ownership via `ensure_mailbox_access` → validate account exists → check DB cache via `get_email_content` helper → if cached, return immediately → if not cached, build manager → authenticate silently → fetch from provider via `manager.fetch_email_content` → sanitize HTML via `sanitize_email_html` → best-effort persist via `persist_email_content` → return content.
+- **Flow**: validate ownership via `ensure_mailbox_access` → validate account exists → verify metadata row exists via `email_metadata_store.exists` (raises `EmailNotFound` 404 otherwise — required because `email_content` has a composite FK to `email_metadata` since migration 0013) → check DB cache via `get_email_content` helper → if cached, return immediately → if not cached, build manager → authenticate silently → fetch from provider via `manager.fetch_email_content` → sanitize HTML via `sanitize_email_html` → best-effort persist via `persist_email_content` → return content.
 - **Best-effort persist**: if the DB write fails after content is fetched, the error is logged but swallowed — the content is still returned to the user. Same pattern as `send_email` metadata persistence.
 - **HTML sanitization**: `sanitize_email_html` strips dangerous tags (`<script>`, `<iframe>`, etc.), blocks `javascript:`/`data:` protocols in `href` and `src`, and preserves safe email formatting tags. Applied before persisting to DB.
 
@@ -141,6 +141,51 @@ Two helpers in `services_helpers.py` support the email content flow:
 
 - `get_email_content(account_id, provider_message_id)` — reads cached content from the `email_content` table. Returns dict or `None`.
 - `persist_email_content(account_id, provider_message_id, html_body, text_body)` — upserts content to DB. CAN raise — the caller wraps it in `try/except` for best-effort.
+
+### Draft creation endpoint
+
+`POST /mailboxes/{mailbox_id}/accounts/{account_id}/drafts` — create a draft at the provider and persist it locally.
+
+- **Path params**: `mailbox_id`, `account_id` (both in the URL path; this differs from the email send endpoint which carries `account_id` in the request body).
+- **Request**: `DraftCreate` with all fields optional and defaulted: `to_recipients: list[str] = []`, `cc_recipients: list[str] = []`, `bcc_recipients: list[str] = []`, `subject: str = ""`, `body_html: str = ""`. Empty drafts are accepted (matches Gmail/Outlook native behavior).
+- **Response**: `DraftOut` with `provider_draft_id`, `account_id`, recipients, `subject`, `body_html`, `created_at`, `updated_at`. Timestamps are database-generated via the `RETURNING` clause of `INSERT_DRAFT`, not set by the caller or the provider.
+- **Error**: `DraftCreationError` (code `"draft_creation_error"`, HTTP 502) — raised on provider-side or unexpected failures during draft creation.
+- **Flow**: validate ownership via `ensure_mailbox_access` → fetch the account via `account_store.get` (404 if missing) → build manager via `build_manager_for_accounts` → silent auth + token refresh persistence → **Provider-First**: call `manager.create_draft(...)` (translated `CoreError` via `translate_core_error(fallback=DraftCreationError)`) → only on success, build the row dict and call `draft_store.create(...)` → return `DraftOut` from the persisted row.
+- **Outlook critical**: the Outlook client passes `Prefer: IdType="ImmutableId"` when creating the draft so the message ID stays stable across state transitions (critical for the future send-draft endpoint, which would reuse the same ID).
+- **Service module**: lives in `api/services/drafts_service.py` with a local `_persist_refreshed_tokens` helper. The service is the only one that imports `draft_store` from `database`.
+
+### Draft listing endpoint
+
+`GET /mailboxes/{mailbox_id}/drafts` — list drafts stored locally for a mailbox. Query parameter `account_id` is optional:
+
+- **Provided** → returns drafts only for that account. The service verifies the account exists inside the mailbox first (404 `account_not_found` if not).
+- **Omitted / null** → unified view: returns drafts from all accounts inside the mailbox via a JOIN on `accounts.mailbox_id`.
+
+The endpoint is **pure DB read**: it does not call any provider API, does not perform silent auth, and does not touch `EmailManager`. Ownership is enforced by `ensure_mailbox_access` as for all other mailbox-scoped endpoints.
+
+- **Response**: `list[DraftOut]` — the same schema used by the create endpoint. No wrapper object.
+- **Ordering**: `created_at DESC` (most recent first). No pagination.
+- **Error**: `DraftListError` (code `"draft_list_error"`, HTTP 500) — raised on DB-side failures during listing. Note the status difference with `DraftCreationError` (502): creation failures are usually provider-side, while listing failures can only be DB-side.
+- **Router note**: all draft endpoints live in the same `drafts_routers.py` router with prefix `/mailboxes/{mailbox_id}`. The create POST handler declares `/accounts/{account_id}/drafts`; the list GET and sync POST handlers declare `/drafts` and `/drafts/sync` respectively.
+
+### Draft sync endpoint
+
+`POST /mailboxes/{mailbox_id}/drafts/sync` — load drafts from the provider(s) into the local database. Query parameter `account_id` is optional:
+
+- **Provided** → syncs only that account.
+- **Omitted / null** → syncs every account in the mailbox.
+
+**Flow**: `ensure_mailbox_access` → load account(s) (`account_store.get` or `account_store.list_by_mailbox`) → `build_manager_for_accounts` → silent auth + token refresh persist → `raise_on_silent_auth_errors` → `manager.fetch_all_drafts()` → per account: `draft_store.replace_all_for_account(account_id, drafts)` (atomic upsert + delete-missing).
+
+**Cap per account**: `_DRAFTS_MAX_TOTAL = 100` drafts most recent by date. Both providers enforce this cap in the client layer:
+- **Gmail**: `_list_all_draft_ids` stops paginating once it has collected `_DRAFTS_MAX_TOTAL` IDs, then `_execute_batch_get` (`resource="drafts"`) fetches them in parallel batches. The parallel-worker count is controlled by the `GMAIL_BATCH_MAX_WORKERS` env var (default 5; configurable). Each batch chunk holds up to 100 items and is retried up to 4 times on transient failures. With the current cap this degrades to a single batch chunk, but the skeleton scales transparently if the cap is raised.
+- **Outlook**: single request to `/me/mailFolders/drafts/messages` with `$top={_DRAFTS_PAGE_SIZE}` (constant set to 100), `$orderby=lastModifiedDateTime desc` and `Prefer: IdType="ImmutableId"`. Each page is retried up to 4 times on transient `EmailExternalAPIError`. The pagination loop stops as soon as `_DRAFTS_MAX_TOTAL` drafts are collected.
+
+**Response**: `DraftsSyncResultOut(total_synced, accounts: list[DraftsAccountSyncDetail])` with per-account details `(account_id, provider, drafts_synced)`. There is no `truncated` flag — if a user has more than 100 drafts, the 100 most recent win silently.
+
+**Error**: `DraftSyncError` (code `"draft_sync_error"`, HTTP 502) — raised on provider-side failures or unexpected errors during sync. Silent auth failures surface as `AccountNotConnected` (409), core errors via `translate_core_error` (usually `ExternalAPIError` 502), DB errors via `translate_database_error`.
+
+**Atomic replace**: `DraftStore.replace_all_for_account` runs UPSERT + DELETE-missing inside a single transaction. After sync, the local `drafts` rows for the account are exactly what the provider returned — stale drafts are removed, matching drafts are updated, new drafts are inserted.
 
 ## Behavioral Contracts — Traps to Avoid
 
@@ -178,7 +223,7 @@ Each step is wrapped in its own `except Exception` block — if any step fails, 
 Handles permanent delete and restore of emails from trash. Key behavioral contracts:
 
 1. **TRASH verification gate**: before any provider call, all referenced emails are verified to be in TRASH via `get_trash_emails_by_ids`. If any email is missing from trash, raises `EmailNotInTrash` (409 Conflict) — not 404, because the email exists but is not in the expected state.
-2. **Provider-first rule**: provider delete/restore executes before any DB update. Only messages where the provider call succeeded are persisted locally (see root CLAUDE.md § 2.9).
+2. **Provider-first rule**: provider delete/restore executes before any DB update. Only messages where the provider call succeeded are persisted locally (see repository_guide.md § "Provider-First Rule").
 3. **Per-account grouping**: items are grouped by `account_id`. Auth context is built only for referenced accounts.
 4. **Delete branch**: calls `manager.delete_messages`, then `mark_as_deleted_batch` for succeeded IDs.
 5. **Restore branch**: calls `manager.restore_from_trash` (passing `None` for items with unknown `previous_box`), then splits the result by `previous_box` state:
@@ -191,7 +236,7 @@ Error classes: `EmailNotInTrash` (409) and `TrashOperationError` (500 — catch-
 
 Moves emails to trash at the provider and updates the database. Key behavioral contracts:
 
-1. **Provider-first rule**: calls `manager.move_to_trash` at the provider before any DB update. Only messages where the provider call succeeded are persisted locally (see root CLAUDE.md § 2.9).
+1. **Provider-first rule**: calls `manager.move_to_trash` at the provider before any DB update. Only messages where the provider call succeeded are persisted locally (see repository_guide.md § "Provider-First Rule").
 2. **Per-account grouping**: items are grouped by `account_id`. Auth context is built only for referenced accounts.
 3. **ID mapping**: `move_to_trash` returns `{old_id: new_id}` — Outlook assigns new IDs on move, Gmail keeps the same ID. The service builds tuples `(old_id, new_id, account_id)` from the mapping.
 4. **DB update**: calls `move_to_trash_batch` with tuples, which updates `provider_message_id`, copies the current `box` into `previous_box`, and sets `box = 'TRASH'`.
@@ -205,16 +250,85 @@ Request/response schemas: `MoveToTrashRequest`, `MoveToTrashResult`.
 
 After a successful send, the service persists the sent email's metadata. If persistence fails, the error is logged but swallowed — the send is still reported as successful. This is deliberate: the user cares that the email was sent, not that we tracked it internally.
 
-## Additional Error Classes
+## Service-Layer Error Classes
+
+Complete, authoritative list of every `ApiError` subclass registered in `_STATUS_MAP` (see `backend/api/errors/handlers.py`). Services should reuse these classes rather than invent new ones. When a new subclass is added to `exceptions.py`, register it in `_STATUS_MAP` **and** add a row here.
+
+### Resource / ownership (404–409)
+
+| Class | Code | HTTP | Usage |
+|---|---|---|---|
+| `MailboxNotFound` | `mailbox_not_found` | 404 | Mailbox not found or ownership check failed mid-query. |
+| `AccountNotFound` | `account_not_found` | 404 | Account not found inside its mailbox during an operation. |
+| `EmailNotFound` | `email_not_found` | 404 | The requested email has no row in `email_metadata` for the target account. Raised by `get_email_full_content` before the cache read, because `email_content` has a composite FK to `email_metadata` (migration 0013) and unknown messages would otherwise surface as a 500 from the FK violation at upsert time. |
+| `UserNotFound` | `user_not_found` | 404 | Authenticated user does not exist in the database (e.g. during `DELETE /auth/me` or `GET /auth/me`). |
+| `EmailNotInTrash` | `email_not_in_trash` | 409 | A `manage_trash` pre-check rejected an email that was not currently in the `TRASH` box. |
+| `AccountNotConnected` | `account_not_connected` | 409 | Silent auth failed or tokens are missing — the user must reconnect the account. Raised by `raise_on_silent_auth_errors`. |
+
+### Auth / access control (400–403)
+
+| Class | Code | HTTP | Usage |
+|---|---|---|---|
+| `Unauthorized` | `unauthorized` | 401 | Missing or invalid session cookie. |
+| `AccountConnectAuthError` | `account_connect_auth_error` | 401 | `EmailAuthError` translated specifically during the interactive `POST .../connect` flow. |
+| `Forbidden` | `forbidden` | 403 | Authenticated user does not own the requested mailbox. Raised by `ensure_mailbox_access`. |
+| `AccountMisconfigured` | `account_misconfigured` | 400 | `EmailConfigError` family (bad provider name, malformed tokens, invalid expiry). Usually translated from `build_manager_for_accounts`. |
+| `RecipientsMissing` | `recipients_missing` | 400 | Send or draft call rejected because no recipients were supplied. |
+
+### Provider-side / external API (502)
 
 | Class | Code | HTTP | Usage |
 |---|---|---|---|
 | `EmailFetchError` | `email_fetch_error` | 502 | Provider-side failure when fetching/syncing email metadata. |
 | `EmailSendError` | `email_send_error` | 502 | Provider-side failure when sending an email. |
-| `UserNotFound` | `user_not_found` | 404 | Authenticated user does not exist in the database (e.g. during `DELETE /auth/me` or `GET /auth/me`). |
-| `TokenEncryptionError` | `token_encryption_error` | 500 | Failure while encrypting account tokens before storage. Translated from the database layer's `TokenEncryptError`. |
 | `EmailContentFetchError` | `email_content_fetch_error` | 502 | Provider-side or unexpected failure when fetching full email content. |
-| `EmailListError` | `email_list_error` | 500 | Database-level failure when listing email metadata. |
+| `DraftCreationError` | `draft_creation_error` | 502 | Provider-side or unexpected failure during draft creation. |
+| `ExternalAPIError` | `external_api_error` | 502 | Generic catch-all for translated `EmailExternalAPIError`. Use more specific subclasses where possible. |
+| `MoveToTrashError` | `move_to_trash_error` | 502 | Provider-side failure during `move_to_trash`. |
+| `ReadStatusUpdateError` | `read_status_update_error` | 502 | Provider-side failure during `update_read_status`. |
+| `SpamMoveError` | `spam_move_error` | 502 | Provider-side failure during `move_to_spam`. |
+| `SpamRestoreError` | `spam_restore_error` | 502 | Provider-side failure during `restore_from_spam`. |
+| `DraftSyncError` | `draft_sync_error` | 502 | Provider-side or unexpected failure during drafts sync. |
+
+### Database / persistence (500–503)
+
+| Class | Code | HTTP | Usage |
+|---|---|---|---|
+| `DatabaseConnectionError` | `database_connection_error` | 503 | Pool exhausted or unable to acquire a connection. |
+| `DatabaseQueryError` | `database_query_error` | 503 | SQL execution failure reaching the client. Mapped to 503 because a query failure usually signals transient DB unavailability from the caller's perspective — not a bug in the query logic — and the client should be told to retry. |
+| `DatabaseMigrationError` | `database_migration_error` | 500 | Schema migration failure at startup. |
+| `EmailListError` | `email_list_error` | 500 | Database-level failure when listing email metadata (not translated to `DatabaseQueryError` because it is the only place the list operation can fail). |
+| `DraftListError` | `draft_list_error` | 500 | Database-level failure when listing drafts (same rationale as `EmailListError`). |
+| `TrashOperationError` | `trash_operation_error` | 500 | Internal bookkeeping failure inside `manage_trash` (not a provider error). |
+| `MailboxOperationError` | `mailbox_operation_error` | 500 | Unexpected non-DatabaseError failure inside a mailbox CRUD operation. Replaces bare `ApiError` usage. |
+| `AccountOperationError` | `account_operation_error` | 500 | Unexpected non-DatabaseError failure inside an account CRUD/connect operation. Replaces bare `ApiError` usage. |
+| `SessionOperationError` | `session_operation_error` | 500 | Unexpected non-DatabaseError failure inside a session lifecycle operation (create, validate, delete). Replaces bare `ApiError` usage. |
+| `UserOperationError` | `user_operation_error` | 500 | Unexpected non-DatabaseError failure inside a user CRUD operation (upsert, lookup, delete). Replaces bare `ApiError` usage. |
+
+### Token / credential security (500)
+
+| Class | Code | HTTP | Usage |
+|---|---|---|---|
+| `TokenEncryptionError` | `token_encryption_error` | 500 | Failure while encrypting account tokens before storage. |
+| `TokenDecryptionError` | `token_decryption_error` | 500 | Failure while decrypting stored tokens. |
+| `TokenIntegrityError` | `token_integrity_error` | 500 | Stored token record is malformed/inconsistent. |
+| `AppCredentialsInvalid` | `app_credentials_invalid` | 500 | Developer-provided app credentials are structurally invalid. |
+| `AppCredentialsMissing` | `app_credentials_missing` | 500 | Developer-provided app credentials are absent entirely. |
+| `CredentialFileError` | `credential_file_error` | 500 | Failure reading/parsing a credential file on disk. |
+| `EnvVarError` | `env_var_error` | 500 | Missing or invalid environment variable detected at boot. |
+
+## Auth Context Sequence
+
+When an endpoint must authenticate against a provider and then perform a provider call, the service function **must** follow this exact sequence. Skipping or reordering any step leads to silent token staleness, missing error surfacing, or unauthenticated provider calls.
+
+1. **Build the manager.** `manager = build_manager_for_accounts([account])` — wraps `EmailConfigError` translation into `AccountMisconfigured`.
+2. **Load wrapped credentials and tokens.** `load_wrapped_app_credentials(provider)` and `load_wrapped_account_tokens(mailbox_id, account_id, provider)`. Tokens are unwrapped only at the provider boundary.
+3. **Silent auth.** `updated_tokens = manager.authenticate_all_silent(auth_payloads)`. This may refresh tokens in place.
+4. **Persist refreshed tokens.** If `updated_tokens` is non-empty, call `account_store.upsert_tokens` for each updated account. Any failure here must surface as the endpoint's primary error class (e.g. `DraftCreationError` for drafts, `EmailFetchError` for sync).
+5. **Raise on silent auth errors.** `raise_on_silent_auth_errors(manager.get_last_errors(), fallback=<endpoint-specific class>)` — this is what turns per-client `EmailAuthError` into `AccountNotConnected` (409).
+6. **Provider call.** Only now call `manager.send_email_from_account`, `manager.create_draft`, `manager.fetch_all_email_metadata`, etc. Wrap in `try / except CoreError / except Exception` per CLAUDE.md §9.
+
+The `drafts_service.create_draft` function is the canonical reference implementation of this sequence.
 
 ## Extension
 
@@ -226,3 +340,13 @@ Beyond the general rules checklist:
 - Add `<provider>_login` in `auth_service.py` (catch `AuthError`, translate via `translate_auth_error`).
 - Add request/response schemas in `api/schemas/auth.py`.
 - The existing `AuthTokenError` subclasses are provider-agnostic and reusable. See `auth_guide.md` for the auth-layer side of the checklist.
+
+### New draft operation
+
+When adding a new draft endpoint (`send-draft`, `update-draft`, `delete-draft`, etc.):
+
+- Add the endpoint schema in `api/schemas/draft.py`.
+- Add the service function in `api/services/drafts_service.py`. Follow the canonical sequence from `create_draft`: `ensure_mailbox_access` → account lookup → wrap in outer `try: / except ApiError: raise / except Exception: → <DraftXxxError>`.
+- Provider interaction goes through `EmailManager`. Extend `EmailManager` and each `*Client` with the new method. Provider-First: the provider call runs first; only persist to `drafts` if the call succeeds.
+- Add a new `DraftXxxError` subclass in `api/errors/exceptions.py` and register its HTTP status in `api/errors/handlers.py`.
+- Add unit tests under `tests/unit/api/services/test_drafts_service.py`, integration tests under `tests/integration/test_drafts.py`, and E2E tests in `tests/e2e/test_full_flow.py` Section 5b/5c.

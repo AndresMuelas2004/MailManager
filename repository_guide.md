@@ -26,7 +26,10 @@ Routers (FastAPI)
 ```
 
 Note: the `GET /mailboxes/{mailbox_id}/emails` listing endpoint reads only from the local database (Services → Database, no provider API calls).
-Note: the `GET /mailboxes/{mailbox_id}/emails/{id}/content` endpoint uses a cache-aside pattern — checks the `email_content` table first (DB read), and on cache miss fetches from the provider API, sanitizes the HTML, persists in DB, then returns.
+Note: the `GET /mailboxes/{mailbox_id}/emails/{id}/content` endpoint uses a cache-aside pattern — first verifies the email exists in `email_metadata` (404 `email_not_found` otherwise), then checks the `email_content` table, and on cache miss fetches from the provider API, sanitizes the HTML, persists in DB, then returns. Content rows are tied to metadata via a composite foreign key `email_content.(provider_message_id, account_id) → email_metadata.(provider_message_id, account_id) ON DELETE CASCADE`, so metadata deletes and account deletes transitively cascade into content (migration 0013).
+Note: the `POST /mailboxes/{mailbox_id}/accounts/{account_id}/drafts` endpoint follows the Provider-First Rule — the draft is created at the provider first (Gmail `drafts.create` or Outlook `POST /me/messages` with `Prefer: IdType="ImmutableId"`), and only on success persisted to the local `drafts` table.
+Note: the `GET /mailboxes/{mailbox_id}/drafts` listing endpoint reads only from the local database (Services → Database, no provider API calls). Query param `account_id` is optional: when provided, returns drafts of that account; when omitted, returns the unified view across all accounts in the mailbox.
+Note: the `POST /mailboxes/{mailbox_id}/drafts/sync` endpoint fetches drafts from the provider(s) and replaces the local rows for each synced account atomically (UPSERT + delete-missing). Query param `account_id` is optional: when provided, syncs only that account; when omitted, syncs every account in the mailbox. Both providers cap the fetch at `_DRAFTS_MAX_TOTAL = 100` drafts per account (most recent). Gmail uses the existing parallel-batch-of-100 skeleton (5 workers × 4 retries); Outlook paginates with `$top=100` + `$orderby=lastModifiedDateTime desc` + 4 retries per page.
 
 ## Key Identifiers
 
@@ -37,6 +40,7 @@ Note: the `GET /mailboxes/{mailbox_id}/emails/{id}/content` endpoint uses a cach
 - `user_id` — UUID identifying an authenticated user (from `users` table).
 - `owner_user_id` — FK on `mailboxes` linking to the owning user (NOT NULL, CASCADE on user delete).
 - `email_address` — the email address of the connected account, fetched best-effort from the provider during `connect_account`. Stored as plain text (not encrypted) in the `accounts` table. May be `NULL` if the fetch failed.
+- `provider_draft_id` — the draft identifier returned by the provider (Gmail `drafts.create` or Outlook `POST /me/messages` with `Prefer: IdType="ImmutableId"`). Together with `account_id`, forms the composite PK of the `drafts` table.
 
 ## Testing
 

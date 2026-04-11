@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from core.email import EmailClient, EmailContent, EmailMetadata, LabelUpdate, SpamMoveResult, SyncResult
+from core.email import DraftMetadata, EmailClient, EmailContent, EmailMetadata, LabelUpdate, SpamMoveResult, SyncResult
 
 
 DEFAULT_RECEIVED_AT = datetime(2024, 1, 1, 12, 0, 0)
@@ -58,6 +58,8 @@ class FakeEmailClient(EmailClient):
         move_to_spam_exc: Exception | None = None,
         restore_from_spam_exc: Exception | None = None,
         fetch_content_exc: Exception | None = None,
+        create_draft_exc: Exception | None = None,
+        fetch_drafts_exc: Exception | None = None,
         metadata: list[EmailMetadata] | None = None,
         sync_cursor_return: str = DEFAULT_SYNC_CURSOR,
         auth_return: dict | None = None,
@@ -71,6 +73,8 @@ class FakeEmailClient(EmailClient):
         move_to_trash_return: dict[str, str] | None = None,
         fetch_messages_metadata_return: list[EmailMetadata] | None = None,
         email_content: EmailContent | None = None,
+        create_draft_return: DraftMetadata | None = None,
+        fetch_drafts_return: list[DraftMetadata] | None = None,
     ) -> None:
         self._account_label = account_label
         self._auth_exc = auth_exc
@@ -87,6 +91,10 @@ class FakeEmailClient(EmailClient):
         self._restore_from_spam_exc = restore_from_spam_exc
         self._fetch_content_exc = fetch_content_exc
         self._email_content = email_content or EmailContent(html_body=None, text_body=None)
+        self._create_draft_exc = create_draft_exc
+        self._create_draft_return = create_draft_return
+        self._fetch_drafts_exc = fetch_drafts_exc
+        self._fetch_drafts_return = list(fetch_drafts_return or [])
         self._metadata = list(metadata or [])
         self._sync_cursor_return = sync_cursor_return
         self._auth_return = auth_return
@@ -112,6 +120,8 @@ class FakeEmailClient(EmailClient):
         self.move_to_spam_calls: list[list[str]] = []
         self.restore_from_spam_calls: list[list[str]] = []
         self.sent_emails: list[tuple[str, str, list[str]]] = []
+        self.create_draft_calls: list[tuple[list[str], list[str], list[str], str, str]] = []
+        self.fetch_drafts_calls = 0
         self.deleted_message_ids: list[str] = []
         self.restored_items: list[dict] = []
         self.trashed_items: list[dict[str, str]] = []
@@ -223,6 +233,38 @@ class FakeEmailClient(EmailClient):
         if self._fetch_content_exc:
             raise self._fetch_content_exc
         return self._email_content
+
+    def create_draft(
+        self,
+        to_recipients: list[str],
+        cc_recipients: list[str],
+        bcc_recipients: list[str],
+        subject: str,
+        body_html: str,
+    ) -> DraftMetadata:
+        self.create_draft_calls.append(
+            (list(to_recipients), list(cc_recipients), list(bcc_recipients), subject, body_html)
+        )
+        if self._create_draft_exc:
+            raise self._create_draft_exc
+        if self._create_draft_return is not None:
+            return self._create_draft_return
+        return DraftMetadata(
+            provider_draft_id="fake_draft_1",
+            to_recipients=list(to_recipients),
+            cc_recipients=list(cc_recipients),
+            bcc_recipients=list(bcc_recipients),
+            subject=subject,
+            body_html=body_html,
+            created_at=DEFAULT_RECEIVED_AT,
+            updated_at=DEFAULT_RECEIVED_AT,
+        )
+
+    def fetch_drafts(self) -> list[DraftMetadata]:
+        self.fetch_drafts_calls += 1
+        if self._fetch_drafts_exc:
+            raise self._fetch_drafts_exc
+        return list(self._fetch_drafts_return)
 
     def get_account_label(self) -> str:
         return self._account_label

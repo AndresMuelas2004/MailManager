@@ -31,6 +31,10 @@ class AccountNotFound(ApiError):
     code = "account_not_found"
 
 
+class EmailNotFound(ApiError):
+    code = "email_not_found"
+
+
 class AccountConnectAuthError(ApiError):
     code = "account_connect_auth_error"
 
@@ -141,3 +145,31 @@ class EmailContentFetchError(ApiError):
 
 class EmailListError(ApiError):
     code = "email_list_error"
+
+
+class DraftCreationError(ApiError):
+    code = "draft_creation_error"
+
+
+class DraftListError(ApiError):
+    code = "draft_list_error"
+
+
+class DraftSyncError(ApiError):
+    code = "draft_sync_error"
+
+
+class MailboxOperationError(ApiError):
+    code = "mailbox_operation_error"
+
+
+class AccountOperationError(ApiError):
+    code = "account_operation_error"
+
+
+class SessionOperationError(ApiError):
+    code = "session_operation_error"
+
+
+class UserOperationError(ApiError):
+    code = "user_operation_error"

@@ -125,3 +125,10 @@ LIST_BY_MAILBOX_AND_BOX = """
     WHERE a.mailbox_id = %(mailbox_id)s AND em.box = %(box)s
     ORDER BY em.received_at DESC
 """
+
+EXISTS_BY_MESSAGE_ID = """
+    SELECT 1 FROM email_metadata
+    WHERE provider_message_id = %(provider_message_id)s
+      AND account_id = %(account_id)s
+    LIMIT 1
+"""

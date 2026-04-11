@@ -88,3 +88,18 @@ CREATE INDEX IF NOT EXISTS idx_email_metadata_account_id
 
 CREATE INDEX IF NOT EXISTS idx_email_metadata_received_at
     ON email_metadata(received_at DESC);
+
+-- ---------- EMAIL CONTENT ----------
+
+CREATE TABLE IF NOT EXISTS email_content (
+    provider_message_id  VARCHAR(255) NOT NULL,
+    account_id           UUID         NOT NULL,
+    html_body            TEXT,
+    text_body            TEXT,
+    fetched_at           TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    PRIMARY KEY (provider_message_id, account_id),
+    CONSTRAINT email_content_metadata_fkey
+        FOREIGN KEY (provider_message_id, account_id)
+        REFERENCES email_metadata(provider_message_id, account_id)
+        ON DELETE CASCADE
+);

@@ -59,11 +59,15 @@ Tests mutate `config` between API calls to simulate different provider responses
 
 ### Trap: new service module must be patched in `_apply_test_monkeypatches`
 
-`_apply_test_monkeypatches` patches `build_manager_for_accounts` in three modules: `services_helpers`, `accounts_service`, and `emails_service`. Each module imports this function at its own module level, so all three must be patched independently. If a new service module is added that also imports `build_manager_for_accounts`, it must be added to `_apply_test_monkeypatches` — otherwise, that module's tests will call the real builder and hit real provider APIs.
+`_apply_test_monkeypatches` patches `build_manager_for_accounts` in **four** modules today: `services_helpers`, `accounts_service`, `emails_service`, and `drafts_service`. Each module imports this function at its own module level, so all of them must be patched independently. **This list grows whenever a new service module imports `build_manager_for_accounts`** — when adding a fifth service, the module must be added here, otherwise its integration tests will call the real builder and hit real provider APIs. The same applies to `load_wrapped_app_credentials`, `load_wrapped_account_tokens`, and `account_store.upsert_tokens`.
 
-### Missing claims tests for Google login
+### `seeded_test_client` fixture
 
-`test_auth_endpoints.py` covers 26 tests across: Google login (happy path, missing claims, auth error types), session management (GET /auth/me, expired session, deleted user), logout (happy path, DB errors, no cookie), DELETE /auth/me (cascade delete, user gone), and ownership enforcement (foreign mailbox 403, NULL owner defense).
+`seeded_test_client` is a per-test fixture used by GET endpoint tests against the seeded data from migration `0010`. It overrides the auth dependency to return the seeded user ID (instead of the default test user), runs the body of the test, and then restores the previous override on teardown via a `try/finally` inside the fixture's yield. Because the override is global to the FastAPI app, any test that uses this fixture must not interleave with other auth overrides; the fixture is fully self-contained.
+
+### Auth endpoint integration coverage
+
+`test_auth_endpoints.py` covers tests (non-exhaustive list) across: Google login (happy path, missing claims, auth error types), session management (GET /auth/me, expired session, deleted user), logout (happy path, DB errors, no cookie), DELETE /auth/me (cascade delete, user gone), and ownership enforcement (foreign mailbox 403, NULL owner defense).
 
 ### Trash tests use manual DB UPDATE
 
@@ -94,10 +98,57 @@ Trash management integration tests first sync emails via the normal sync endpoin
 
 ### Email content integration coverage
 
-- `test_email_content.py`: 6 tests for `GET /mailboxes/{mid}/emails/{msg_id}/content?account_id=...`.
+- `test_email_content.py`: 7 tests for `GET /mailboxes/{mid}/emails/{msg_id}/content?account_id=...`.
 - Cache-aside pattern: DB hit path (returns cached content without calling core) and DB miss path (fetches from provider via FakeEmailClient, FakeEmailClient defaults return `html_body=None` and `text_body=None`).
-- Error paths: wrong user 403, missing account 404, missing mailbox 404, core error 502.
-- Additional error translation tests in `test_core_error_translation.py`: silent auth error (`EmailAuthError`) -> 409 `account_not_connected`, RuntimeError -> 502 `external_api_error` (RuntimeError is wrapped by EmailManager into EmailExternalAPIError before the service sees it).
+- Error paths: wrong user 403, missing account 404, missing mailbox 404, core error 502, and **missing metadata row 404 `email_not_found`** (`test_get_email_content_missing_metadata_returns_404` — verifies the pre-check added in migration 0013 rejects unknown message IDs before touching the provider or the FK).
+- Additional error translation tests in `test_core_error_translation.py`: silent auth error (`EmailAuthError`) -> 409 `account_not_connected`, RuntimeError -> 502 `external_api_error` (RuntimeError is wrapped by EmailManager into EmailExternalAPIError before the service sees it). Both tests were updated when the metadata pre-check was introduced: they now target `m1` (a message ID seeded by `sample_metadata` via sync-metadata, or inserted directly into `email_metadata` via `isolated_db` when the fake's `auth_silent_exc` would block sync-metadata). Without this adjustment the pre-check would return 404 before the path the tests want to exercise.
+
+### Drafts integration coverage
+
+`test_drafts.py` covers all three draft endpoints (POST create + GET list + POST sync).
+
+**POST `/mailboxes/{mid}/accounts/{aid}/drafts`** — 5 tests:
+
+- Happy path returns `DraftOut` with all payload fields round-tripped and provider-assigned `provider_draft_id`.
+- Persisted to the `drafts` table (verified via `isolated_db.cursor()` reading the `to_recipients`, `cc_recipients`, `bcc_recipients`, `subject`, and `body_html` columns).
+- Empty body (`{}`) is accepted — `subject`, `body_html`, and recipient arrays default to empty.
+- Nonexistent account returns 404 `account_not_found`.
+- Nonexistent mailbox returns 404 `mailbox_not_found` (ownership check runs first).
+
+**GET `/mailboxes/{mid}/drafts`** — 7 tests (helper: `_list_drafts_url(mailbox_id, account_id=None)`):
+
+- Empty mailbox returns `[]`.
+- Single-account view: POSTs 3 drafts and verifies the GET with `?account_id=...` returns them in `created_at DESC` order.
+- Unified view: creates 2 accounts in the same mailbox, POSTs 2 drafts in each (4 total), GET without `account_id` returns all 4.
+- Cross-mailbox isolation: creates 2 mailboxes with 1 draft each, verifies GETs do not cross mailbox boundaries.
+- Nonexistent mailbox returns 404 `mailbox_not_found`.
+- Nonexistent account returns 404 `account_not_found`.
+- Foreign mailbox returns 403 `forbidden`. Uses a local `_create_foreign_mailbox` helper (replicated from `test_auth_endpoints.py` to keep the draft test file self-contained).
+
+**`_insert_draft` helper and the `now()` invariance trap**: `test_drafts.py` uses a local `_insert_draft` helper to seed rows directly via SQL (bypassing `FakeEmailClient`'s default `provider_draft_id` collision across multiple POSTs). The helper accepts an optional `created_at` ISO string. This parameter is essential for ordering tests: PostgreSQL's `now()` returns the **same value for every statement inside a single transaction** — so when the isolated-db fixture wraps the whole test in one transaction, rows inserted back-to-back without explicit timestamps all share the exact same `created_at`, and `ORDER BY created_at DESC` produces a non-deterministic order. Tests that assert a specific ordering must pass distinct `created_at` values to `_insert_draft`.
+
+**POST `/mailboxes/{mid}/drafts/sync`** — 7 tests (helpers: `_sync_drafts_url`, `_make_draft`, `_patch_drafts_builder`):
+
+- Empty provider returns zero: `FakeEmailClient.fetch_drafts_return=[]` → response `total_synced == 0` and 0 rows in DB.
+- Single-account persists 3 drafts: provider returns 3 DraftMetadata → response `total_synced == 3` and DB contains exactly those 3 provider_draft_ids.
+- Mailbox-wide persists rows for all accounts: 2 accounts with 2 drafts each → response `total_synced == 4`, 2 `accounts` entries, 4 DB rows.
+- Replaces stale rows: pre-insert 2 stale drafts directly in DB, provider returns 1 new draft → after sync only the new draft remains (stale ones deleted).
+- Upserts existing rows: pre-insert a draft, provider returns the same provider_draft_id with a changed subject → subject is updated in place via `ON CONFLICT DO UPDATE`.
+- Nonexistent account returns 404 `account_not_found`.
+- Foreign mailbox returns 403 `forbidden` (reuses `_create_foreign_mailbox`).
+
+The `_patch_drafts_builder` helper overrides `drafts_service.build_manager_for_accounts` with a fresh builder that constructs a `FakeEmailClient` per account and configures its `fetch_drafts_return` from a `dict[account_id, list[DraftMetadata]]` map. This is how each sync test injects the exact drafts the "provider" should return without relying on real Gmail/Outlook APIs.
+
+Core-error translation tests for drafts live in `test_core_error_translation.py`:
+
+- **Create draft** (3 parametrized cases): `create_draft_exc: EmailExternalAPIError → 502`, `auth_silent_exc: EmailAuthError → 409`, `create_draft_exc: RuntimeError → 502`.
+- **Sync drafts** (3 parametrized cases): `fetch_drafts_exc: EmailExternalAPIError → 502 external_api_error`, `auth_silent_exc: EmailAuthError → 409 account_not_connected`, `fetch_drafts_exc: RuntimeError → 502 draft_sync_error`. Note: `RuntimeError` from sync is captured in `_last_errors` by `EmailManager.fetch_all_drafts` (not wrapped like `send_email` does) and surfaces as `draft_sync_error` (the fallback passed to `raise_on_silent_auth_errors`), not `external_api_error`.
+
+The GET `list_drafts` endpoint is DB-only and has no provider call path to translate.
+
+**Trap reminder**: when the drafts feature was first added, `conftest.py` needed two updates that any future draft-related endpoint must also respect:
+1. The new `draft_repository` module must be added to the `isolated_db` fixture so it shares the per-test transaction connection (otherwise the `INSERT_DRAFT`, `LIST_DRAFTS_BY_ACCOUNT`, and `LIST_DRAFTS_BY_MAILBOX` queries bypass the rollback and leak data between tests).
+2. The new `drafts_service` module must be added to `_apply_test_monkeypatches` for `build_manager_for_accounts`, `load_wrapped_app_credentials`, `load_wrapped_account_tokens`, and `account_store.upsert_tokens` (otherwise the service hits the real provider APIs — **only relevant for the POST**; the GET does not use any of these helpers).
 
 ### Email listing integration coverage
 

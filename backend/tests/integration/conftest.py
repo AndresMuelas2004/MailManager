@@ -12,16 +12,16 @@ from pydantic import SecretStr
 from database import connection as connection_module
 from database.migrations.runner import ensure_schema_at_head
 from database.repositories import account_repository as account_repo_module
+from database.repositories import draft_repository as draft_repo_module
 from database.repositories import email_content_repository as email_content_repo_module
 from database.repositories import email_metadata_repository as email_metadata_repo_module
 from database.repositories import mailbox_repository as mailbox_repo_module
 from database.repositories import session_repository as session_repo_module
 from database.repositories import user_repository as user_repo_module
 from api.routers.routers_helpers import require_session
-from api.services import accounts_service, emails_service, services_helpers
+from api.services import accounts_service, drafts_service, emails_service, services_helpers
 from core.email import EmailManager
-from core.email.email_client import LabelUpdate
-from tests.shared.email_fakes import FakeEmailClient, build_metadata
+from tests.shared.email_fakes import FakeEmailClient
 
 _ALEMBIC_INI_PATH = Path(__file__).resolve().parents[2] / "database" / "alembic.ini"
 
@@ -129,6 +129,7 @@ def isolated_db(monkeypatch):
     monkeypatch.setattr(session_repo_module.connection, "get_connection", _get_conn)
     monkeypatch.setattr(email_metadata_repo_module.connection, "get_connection", _get_conn)
     monkeypatch.setattr(email_content_repo_module.connection, "get_connection", _get_conn)
+    monkeypatch.setattr(draft_repo_module.connection, "get_connection", _get_conn)
 
     yield conn
 
@@ -174,6 +175,7 @@ def _apply_test_monkeypatches(monkeypatch, build_manager_fn):
     monkeypatch.setattr(services_helpers, "build_manager_for_accounts", build_manager_fn)
     monkeypatch.setattr(accounts_service, "build_manager_for_accounts", build_manager_fn)
     monkeypatch.setattr(emails_service, "build_manager_for_accounts", build_manager_fn)
+    monkeypatch.setattr(drafts_service, "build_manager_for_accounts", build_manager_fn)
 
     monkeypatch.setattr(
         services_helpers, "load_wrapped_app_credentials", lambda _provider: _fake_app_creds,
@@ -192,10 +194,18 @@ def _apply_test_monkeypatches(monkeypatch, build_manager_fn):
         emails_service, "load_wrapped_account_tokens",
         lambda _mb, _acc, _prov: _fake_account_tokens,
     )
+    monkeypatch.setattr(
+        drafts_service, "load_wrapped_app_credentials", lambda _provider: _fake_app_creds,
+    )
+    monkeypatch.setattr(
+        drafts_service, "load_wrapped_account_tokens",
+        lambda _mb, _acc, _prov: _fake_account_tokens,
+    )
 
     _noop_upsert = lambda *_args, **_kwargs: None
     monkeypatch.setattr(accounts_service.account_store, "upsert_tokens", _noop_upsert)
     monkeypatch.setattr(emails_service.account_store, "upsert_tokens", _noop_upsert)
+    monkeypatch.setattr(drafts_service.account_store, "upsert_tokens", _noop_upsert)
 
 
 @pytest.fixture

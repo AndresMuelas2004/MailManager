@@ -3,15 +3,15 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from .email_client import EmailClient, EmailContent, EmailMetadata, LabelUpdate, SpamMoveResult, SyncResult
+from .email_client import DraftMetadata, EmailClient, EmailContent, EmailMetadata, LabelUpdate, SpamMoveResult, SyncResult
 from .errors import (
-    CoreError,
     EmailExternalAPIError,
     EmailMissingAppCredentialsError,
     EmailMissingRefreshTokenError,
@@ -41,6 +41,11 @@ logger = logging.getLogger(__name__)
 
 _DELTA_SELECT_FIELDS = "id,conversationId,from,subject,receivedDateTime,isRead"
 _DELTA_PAGE_SIZE = 100
+
+_DRAFTS_PAGE_SIZE = 100
+_DRAFTS_MAX_RETRIES = 4
+_DRAFTS_RETRY_DELAY = 1.0  # seconds
+_DRAFTS_MAX_TOTAL = 100
 
 _BOOTSTRAP_SELECT_FIELDS = (
     "id,conversationId,from,subject,receivedDateTime,isRead,parentFolderId"
@@ -198,7 +203,8 @@ class OutlookClient(EmailClient):
                 opened = False
                 try:
                     opened = bool(webbrowser.open(auth_url))
-                except Exception:
+                except Exception as exc:
+                    logger.debug("Outlook failed to open browser for OAuth: %s", exc)
                     opened = False
                 if not opened:
                     print(f"Open this URL in your browser to authenticate Outlook:\n{auth_url}")
@@ -635,7 +641,12 @@ class OutlookClient(EmailClient):
             draft_response = self._graph_request(
                 "POST", f"{GRAPH_BASE_URL}/me/messages", body=draft_payload,
             )
-            metadata = self._parse_graph_message(draft_response, "SENT")
+            try:
+                metadata = self._parse_graph_message(draft_response, "SENT")
+            except Exception as exc:
+                raise EmailExternalAPIError(
+                    f"Outlook failed to parse sent message metadata ({type(exc).__name__}): {exc}"
+                ) from exc
 
             draft_id = draft_response.get("id", "")
             try:
@@ -643,10 +654,10 @@ class OutlookClient(EmailClient):
             except EmailExternalAPIError:
                 try:
                     self._graph_request("DELETE", f"{GRAPH_BASE_URL}/me/messages/{draft_id}")
-                except Exception:
+                except Exception as exc:
                     logger.warning(
-                        "Outlook failed to delete orphan draft %s after send failure.",
-                        draft_id,
+                        "Outlook failed to delete orphan draft %s after send failure: %s",
+                        draft_id, exc,
                     )
                 raise
 
@@ -660,12 +671,188 @@ class OutlookClient(EmailClient):
             return metadata
         except EmailExternalAPIError:
             raise
-        except CoreError:
-            raise
         except Exception as exc:
             raise EmailExternalAPIError(
                 f"Outlook unexpected send_email error ({type(exc).__name__}): {exc}"
             ) from exc
+
+    def create_draft(
+        self,
+        to_recipients: list[str],
+        cc_recipients: list[str],
+        bcc_recipients: list[str],
+        subject: str,
+        body_html: str,
+    ) -> DraftMetadata:
+        """
+        Create a draft in Outlook via POST /me/messages.
+
+        CRITICAL: uses the 'Prefer: IdType="ImmutableId"' header so the
+        message ID stays stable across state transitions (e.g. when the
+        draft is later sent). Without this header, Outlook may return a
+        mutable ID that changes on send, which would break any future
+        lookups by provider_draft_id.
+        """
+        if self._access_token is None:
+            raise EmailNotAuthenticatedError("Outlook create_draft requires authentication.")
+
+        payload: dict[str, Any] = {
+            "subject": subject or "",
+            "body": {"contentType": "HTML", "content": body_html or ""},
+            "toRecipients": [{"emailAddress": {"address": r}} for r in to_recipients],
+            "ccRecipients": [{"emailAddress": {"address": r}} for r in cc_recipients],
+            "bccRecipients": [{"emailAddress": {"address": r}} for r in bcc_recipients],
+        }
+
+        try:
+            response = self._graph_request(
+                "POST",
+                f"{GRAPH_BASE_URL}/me/messages",
+                body=payload,
+                extra_headers={"Prefer": 'IdType="ImmutableId"'},
+            )
+        except EmailExternalAPIError:
+            raise
+        except Exception as exc:
+            raise EmailExternalAPIError(
+                f"Outlook unexpected create_draft error ({type(exc).__name__}): {exc}"
+            ) from exc
+
+        provider_draft_id = str(response.get("id", ""))
+
+        def _parse_graph_datetime(value: Any) -> datetime:
+            if isinstance(value, str) and value:
+                try:
+                    raw = value[:-1] + "+00:00" if value.endswith("Z") else value
+                    return datetime.fromisoformat(raw)
+                except ValueError:
+                    pass
+            return datetime.now(timezone.utc)
+
+        created_at = _parse_graph_datetime(response.get("createdDateTime"))
+        updated_at = _parse_graph_datetime(response.get("lastModifiedDateTime"))
+
+        return DraftMetadata(
+            provider_draft_id=provider_draft_id,
+            to_recipients=list(to_recipients),
+            cc_recipients=list(cc_recipients),
+            bcc_recipients=list(bcc_recipients),
+            subject=subject,
+            body_html=body_html,
+            created_at=created_at,
+            updated_at=updated_at,
+        )
+
+    def fetch_drafts(self) -> list[DraftMetadata]:
+        """Fetch the most recent Outlook drafts (capped at _DRAFTS_MAX_TOTAL).
+
+        Unlike Gmail, a single paginated endpoint returns the complete
+        Message object per draft (subject, body, recipients, timestamps)
+        so there is no need for a second round of per-draft get calls.
+        The cost of parallelism doesn't apply here because OData pagination
+        is sequential by design (each page yields the URL of the next one).
+
+        Uses $orderby=lastModifiedDateTime desc so the most recently edited
+        drafts come first — with a cap of 100, this means the caller always
+        receives the 100 most recently modified drafts.
+
+        Each page fetch is retried up to _DRAFTS_MAX_RETRIES times on
+        transient EmailExternalAPIError before giving up.
+        """
+        if self._access_token is None:
+            raise EmailNotAuthenticatedError("Outlook fetch_drafts requires authentication.")
+
+        select_fields = (
+            "id,subject,body,toRecipients,ccRecipients,bccRecipients,"
+            "from,createdDateTime,lastModifiedDateTime"
+        )
+        url: str | None = (
+            f"{GRAPH_BASE_URL}/me/mailFolders/drafts/messages"
+            f"?$select={select_fields}"
+            f"&$top={_DRAFTS_PAGE_SIZE}"
+            f"&$orderby=lastModifiedDateTime%20desc"
+        )
+
+        drafts: list[DraftMetadata] = []
+        while url and len(drafts) < _DRAFTS_MAX_TOTAL:
+            response = self._fetch_drafts_page_with_retries(url)
+            for msg in response.get("value") or []:
+                drafts.append(self._parse_outlook_draft(msg))
+                if len(drafts) >= _DRAFTS_MAX_TOTAL:
+                    break
+            url = response.get("@odata.nextLink")
+        return drafts
+
+    def _fetch_drafts_page_with_retries(self, url: str) -> dict[str, Any]:
+        """Fetch one drafts page, retrying up to _DRAFTS_MAX_RETRIES times.
+
+        Uses Prefer: IdType="ImmutableId" so the provider_draft_id is stable
+        across future folder moves (consistent with create_draft).
+        """
+        last_exc: Exception | None = None
+        for attempt in range(_DRAFTS_MAX_RETRIES + 1):
+            try:
+                return self._graph_request(
+                    "GET", url,
+                    extra_headers={"Prefer": 'IdType="ImmutableId"'},
+                )
+            except EmailExternalAPIError as exc:
+                last_exc = exc
+                if attempt < _DRAFTS_MAX_RETRIES:
+                    logger.warning(
+                        "Outlook drafts page fetch failed (attempt %d/%d), retrying: %s",
+                        attempt + 1, _DRAFTS_MAX_RETRIES + 1, exc,
+                    )
+                    time.sleep(_DRAFTS_RETRY_DELAY)
+                    continue
+                raise
+        # Unreachable in practice: the loop either returns or raises on the
+        # final attempt. Guard defensively to tolerate `python -O` (which
+        # strips asserts) and any unforeseen loop-exit path.
+        if last_exc is not None:
+            raise last_exc
+        raise EmailExternalAPIError(
+            "Outlook: unexpected exit from drafts retry loop without error."
+        )
+
+    def _parse_outlook_draft(self, msg: dict[str, Any]) -> DraftMetadata:
+        """Convert a Graph Message JSON into DraftMetadata.
+
+        Extracts address fields from the ``emailAddress.address`` sub-keys
+        and parses createdDateTime / lastModifiedDateTime ISO strings.
+        """
+        provider_draft_id = str(msg.get("id") or "")
+        subject = msg.get("subject") or ""
+        body_section = msg.get("body") or {}
+        body_html = body_section.get("content") or ""
+
+        def _addrs(key: str) -> list[str]:
+            out: list[str] = []
+            for recipient in msg.get(key) or []:
+                address = ((recipient or {}).get("emailAddress") or {}).get("address")
+                if address:
+                    out.append(str(address))
+            return out
+
+        def _parse_dt(value: Any) -> datetime:
+            if isinstance(value, str) and value:
+                try:
+                    raw = value[:-1] + "+00:00" if value.endswith("Z") else value
+                    return datetime.fromisoformat(raw)
+                except ValueError:
+                    pass
+            return datetime.now(timezone.utc)
+
+        return DraftMetadata(
+            provider_draft_id=provider_draft_id,
+            to_recipients=_addrs("toRecipients"),
+            cc_recipients=_addrs("ccRecipients"),
+            bcc_recipients=_addrs("bccRecipients"),
+            subject=subject,
+            body_html=body_html,
+            created_at=_parse_dt(msg.get("createdDateTime")),
+            updated_at=_parse_dt(msg.get("lastModifiedDateTime")),
+        )
 
     def delete_messages(self, message_ids: list[str]) -> list[str]:
         if self._access_token is None:
@@ -815,8 +1002,6 @@ class OutlookClient(EmailClient):
                 return EmailContent(html_body=content, text_body=None)
             return EmailContent(html_body=None, text_body=content)
         except EmailExternalAPIError:
-            raise
-        except CoreError:
             raise
         except Exception as exc:
             raise EmailExternalAPIError(
@@ -990,6 +1175,8 @@ class OutlookClient(EmailClient):
         method: str,
         url: str,
         body: dict[str, Any] | None = None,
+        *,
+        extra_headers: dict[str, str] | None = None,
     ) -> dict[str, Any]:
         """Make an authenticated request to Microsoft Graph API."""
         headers: dict[str, str] = {
@@ -999,6 +1186,8 @@ class OutlookClient(EmailClient):
         if body is not None:
             headers["Content-Type"] = "application/json"
             data = json.dumps(body).encode("utf-8")
+        if extra_headers:
+            headers.update(extra_headers)
         req = urllib.request.Request(url, data=data, headers=headers, method=method)
 
         try:

@@ -15,6 +15,7 @@ from api.errors.exceptions import (
     EmailContentFetchError,
     EmailFetchError,
     EmailListError,
+    EmailNotFound,
     EmailNotInTrash,
     EmailSendError,
     MoveToTrashError,
@@ -122,6 +123,8 @@ def _reconcile_ghost_emails(
 def _persist_refreshed_tokens(
     updated_tokens: dict[str, dict[str, Any]],
     label_lookup: dict[str, tuple[str, str, str]],
+    *,
+    fallback: type[ApiError] = ApiError,
 ) -> None:
     for account_label, token_payload in updated_tokens.items():
         ids = label_lookup.get(account_label)
@@ -137,7 +140,7 @@ def _persist_refreshed_tokens(
             raise translate_database_error(exc) from exc
         except Exception as exc:
             logger.warning("Unexpected token refresh persist error (%s): %s", type(exc).__name__, exc)
-            raise ApiError("Failed to persist refreshed tokens.") from exc
+            raise fallback("Failed to persist refreshed tokens.") from exc
 
 
 def _build_auth_context(
@@ -201,7 +204,7 @@ def sync_email_metadata(
             raise translate_database_error(exc) from exc
         except Exception as exc:
             logger.warning("Unexpected account listing error during sync (%s): %s", type(exc).__name__, exc)
-            raise ApiError("Failed to list accounts for sync.") from exc
+            raise EmailFetchError("Failed to list accounts for metadata sync.") from exc
 
     try:
         auth_payloads, label_lookup = _build_auth_context(accounts, mailbox_id)
@@ -210,10 +213,10 @@ def sync_email_metadata(
 
         updated_tokens = manager.authenticate_all_silent(auth_payloads)
         if updated_tokens:
-            _persist_refreshed_tokens(updated_tokens, label_lookup)
+            _persist_refreshed_tokens(updated_tokens, label_lookup, fallback=EmailFetchError)
         raise_on_silent_auth_errors(manager.get_last_errors(), fallback=EmailFetchError)
 
-        sync_cursors = load_sync_cursors(label_lookup)
+        sync_cursors = load_sync_cursors(label_lookup, fallback=EmailFetchError)
 
         try:
             results = manager.fetch_all_email_metadata(sync_cursors)
@@ -231,10 +234,10 @@ def sync_email_metadata(
                 continue
             mid, aid, provider = ids
 
-            upserted = persist_email_metadata_batch(aid, sync_result.upserts)
-            deleted = delete_email_metadata_batch(aid, sync_result.deletes)
-            label_updated = update_email_metadata_labels_batch(aid, sync_result.label_updates)
-            update_sync_cursor(mid, aid, sync_result.new_cursor)
+            upserted = persist_email_metadata_batch(aid, sync_result.upserts, fallback=EmailFetchError)
+            deleted = delete_email_metadata_batch(aid, sync_result.deletes, fallback=EmailFetchError)
+            label_updated = update_email_metadata_labels_batch(aid, sync_result.label_updates, fallback=EmailFetchError)
+            update_sync_cursor(mid, aid, sync_result.new_cursor, fallback=EmailFetchError)
 
             reconciled, ghost_ids = 0, []
             if sync_result.is_full_sync:
@@ -285,7 +288,7 @@ def send_email(mailbox_id: str, payload: EmailSendRequest, user_id: str) -> dict
         raise translate_database_error(exc) from exc
     except Exception as exc:
         logger.warning("Unexpected account lookup error (%s): %s", type(exc).__name__, exc)
-        raise ApiError("Failed to look up account for email send.") from exc
+        raise EmailSendError("Failed to look up account for email send.") from exc
     if account is None:
         raise AccountNotFound(f"Account '{payload.account_id}' not found.")
 
@@ -296,7 +299,7 @@ def send_email(mailbox_id: str, payload: EmailSendRequest, user_id: str) -> dict
 
         updated_tokens = manager.authenticate_all_silent(auth_payloads)
         if updated_tokens:
-            _persist_refreshed_tokens(updated_tokens, label_lookup)
+            _persist_refreshed_tokens(updated_tokens, label_lookup, fallback=EmailSendError)
         raise_on_silent_auth_errors(manager.get_last_errors(), fallback=EmailSendError)
 
         try:
@@ -315,7 +318,7 @@ def send_email(mailbox_id: str, payload: EmailSendRequest, user_id: str) -> dict
 
         # Best-effort: email already sent, don't fail the response on metadata persist failure
         try:
-            persist_email_metadata_batch(payload.account_id, [sent_metadata])
+            persist_email_metadata_batch(payload.account_id, [sent_metadata], fallback=EmailSendError)
         except Exception as exc:
             logger.warning(
                 "Email sent but metadata persistence failed for account '%s' (%s): %s",
@@ -356,7 +359,7 @@ def manage_trash(mailbox_id: str, payload: TrashActionRequest, user_id: str) -> 
     # Verify all emails are in TRASH and collect trash data
     trash_data_by_account: dict[str, dict[str, str | None]] = {}
     for account_id, msg_ids in msg_ids_by_account.items():
-        trash_rows = get_trash_emails_by_ids(account_id, msg_ids)
+        trash_rows = get_trash_emails_by_ids(account_id, msg_ids, fallback=TrashOperationError)
         found_ids = {str(r["provider_message_id"]) for r in trash_rows}
         missing = [mid for mid in msg_ids if mid not in found_ids]
         if missing:
@@ -378,7 +381,7 @@ def manage_trash(mailbox_id: str, payload: TrashActionRequest, user_id: str) -> 
 
         updated_tokens = manager.authenticate_all_silent(auth_payloads)
         if updated_tokens:
-            _persist_refreshed_tokens(updated_tokens, label_lookup)
+            _persist_refreshed_tokens(updated_tokens, label_lookup, fallback=TrashOperationError)
         raise_on_silent_auth_errors(manager.get_last_errors(), fallback=TrashOperationError)
 
         total_affected = 0
@@ -387,7 +390,7 @@ def manage_trash(mailbox_id: str, payload: TrashActionRequest, user_id: str) -> 
 
             if payload.action == "delete":
                 succeeded = manager.delete_messages(account_label, msg_ids)
-                mark_as_deleted_batch(account_id, succeeded)
+                mark_as_deleted_batch(account_id, succeeded, fallback=TrashOperationError)
                 total_affected += len(succeeded)
             else:  # restore
                 trash_data = trash_data_by_account[account_id]
@@ -405,7 +408,7 @@ def manage_trash(mailbox_id: str, payload: TrashActionRequest, user_id: str) -> 
                         null_old_to_new[old] = new
 
                 if known_rows:
-                    restore_from_trash_batch(account_id, known_rows)
+                    restore_from_trash_batch(account_id, known_rows, fallback=TrashOperationError)
 
                 if null_old_to_new:
                     new_ids = list(null_old_to_new.values())
@@ -415,7 +418,7 @@ def manage_trash(mailbox_id: str, payload: TrashActionRequest, user_id: str) -> 
                         (old, new, account_id, box_map.get(new, "ALL_MAIL"))
                         for old, new in null_old_to_new.items()
                     ]
-                    restore_from_trash_discovered_batch(account_id, discovered_rows)
+                    restore_from_trash_discovered_batch(account_id, discovered_rows, fallback=TrashOperationError)
 
                 total_affected += len(id_mapping)
 
@@ -459,7 +462,7 @@ def move_to_trash(mailbox_id: str, payload: MoveToTrashRequest, user_id: str) ->
 
         updated_tokens = manager.authenticate_all_silent(auth_payloads)
         if updated_tokens:
-            _persist_refreshed_tokens(updated_tokens, label_lookup)
+            _persist_refreshed_tokens(updated_tokens, label_lookup, fallback=MoveToTrashError)
         raise_on_silent_auth_errors(manager.get_last_errors(), fallback=MoveToTrashError)
 
         total_affected = 0
@@ -468,7 +471,7 @@ def move_to_trash(mailbox_id: str, payload: MoveToTrashRequest, user_id: str) ->
             id_mapping = manager.move_to_trash(account_label, msg_ids)
             if id_mapping:
                 rows = [(old, new, account_id) for old, new in id_mapping.items()]
-                affected = move_to_trash_batch(account_id, rows)
+                affected = move_to_trash_batch(account_id, rows, fallback=MoveToTrashError)
                 total_affected += affected
 
         return MoveToTrashResult(affected=total_affected)
@@ -502,7 +505,9 @@ def update_read_status(
             "Unexpected account listing error (%s): %s",
             type(exc).__name__, exc,
         )
-        raise ApiError("Failed to list accounts for read status update.") from exc
+        raise ReadStatusUpdateError(
+            "Failed to list accounts for read status update."
+        ) from exc
 
     account_map = {str(a["account_id"]): a for a in accounts}
     for aid in items_by_account:
@@ -522,7 +527,7 @@ def update_read_status(
 
         updated_tokens = manager.authenticate_all_silent(auth_payloads)
         if updated_tokens:
-            _persist_refreshed_tokens(updated_tokens, label_lookup)
+            _persist_refreshed_tokens(updated_tokens, label_lookup, fallback=ReadStatusUpdateError)
         raise_on_silent_auth_errors(
             manager.get_last_errors(), fallback=ReadStatusUpdateError,
         )
@@ -544,7 +549,7 @@ def update_read_status(
                 ) from exc
 
             if updated_ids:
-                update_email_read_status_batch(aid, updated_ids, payload.is_read)
+                update_email_read_status_batch(aid, updated_ids, payload.is_read, fallback=ReadStatusUpdateError)
 
             account_details.append(AccountReadStatusDetail(
                 account_id=aid,
@@ -624,7 +629,7 @@ def _execute_spam_operation(
             "Unexpected account listing error (%s): %s",
             type(exc).__name__, exc,
         )
-        raise ApiError(f"Failed to list accounts for {operation_label}.") from exc
+        raise fallback_error("Failed to list accounts during spam operation.") from exc
 
     account_map = {str(a["account_id"]): a for a in accounts}
     for aid in items_by_account:
@@ -644,7 +649,7 @@ def _execute_spam_operation(
 
         updated_tokens = manager.authenticate_all_silent(auth_payloads)
         if updated_tokens:
-            _persist_refreshed_tokens(updated_tokens, label_lookup)
+            _persist_refreshed_tokens(updated_tokens, label_lookup, fallback=fallback_error)
         raise_on_silent_auth_errors(
             manager.get_last_errors(), fallback=fallback_error,
         )
@@ -664,7 +669,7 @@ def _execute_spam_operation(
                 ) from exc
 
             if results:
-                update_email_spam_status_batch(aid, results, target_box)
+                update_email_spam_status_batch(aid, results, target_box, fallback=fallback_error)
 
             account_details.append(AccountSpamDetail(
                 account_id=aid,
@@ -783,7 +788,28 @@ def get_email_full_content(
             "during email content fetch."
         )
 
-    row = get_email_content(account_id, provider_message_id)
+    # Defensive metadata existence check. Required since email_content now
+    # has a composite FK to email_metadata; a missing metadata row would
+    # otherwise surface as a 500 from the FK violation at upsert time.
+    try:
+        metadata_exists = email_metadata_store.exists(account_id, provider_message_id)
+    except DatabaseError as exc:
+        raise translate_database_error(exc) from exc
+    except Exception as exc:
+        logger.warning(
+            "Unexpected metadata existence check error during content fetch (%s): %s",
+            type(exc).__name__, exc,
+        )
+        raise EmailContentFetchError(
+            "Failed to verify email existence for content fetch."
+        ) from exc
+    if not metadata_exists:
+        raise EmailNotFound(
+            f"Email '{provider_message_id}' not found for account '{account_id}' "
+            f"in mailbox '{mailbox_id}' during email content fetch."
+        )
+
+    row = get_email_content(account_id, provider_message_id, fallback=EmailContentFetchError)
     if row is not None:
         return EmailContentOut(html_body=row["html_body"], text_body=row["text_body"])
 
@@ -794,7 +820,7 @@ def get_email_full_content(
 
         updated_tokens = manager.authenticate_all_silent(auth_payloads)
         if updated_tokens:
-            _persist_refreshed_tokens(updated_tokens, label_lookup)
+            _persist_refreshed_tokens(updated_tokens, label_lookup, fallback=EmailContentFetchError)
         raise_on_silent_auth_errors(manager.get_last_errors(), fallback=EmailContentFetchError)
 
         try:
@@ -805,7 +831,7 @@ def get_email_full_content(
         sanitized_html = sanitize_email_html(content.html_body) if content.html_body else None
 
         try:
-            persist_email_content(account_id, provider_message_id, sanitized_html, content.text_body)
+            persist_email_content(account_id, provider_message_id, sanitized_html, content.text_body, fallback=EmailContentFetchError)
         except Exception as exc:
             logger.warning(
                 "Content fetched but DB persist failed for account '%s' (%s): %s",

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from typing import Any
-from .email_client import EmailClient, EmailContent, EmailMetadata, SpamMoveResult, SyncResult
+from .email_client import DraftMetadata, EmailClient, EmailContent, EmailMetadata, SpamMoveResult, SyncResult
 from .errors import (
     CoreError,
     EmailAccountNotFoundError,
@@ -116,7 +116,6 @@ class EmailManager:
         except CoreError:
             raise
         except Exception as exc:
-            self._last_errors[account_label] = exc
             raise EmailExternalAPIError(
                 f"Unexpected connect_account error ({type(exc).__name__}): {exc}"
             ) from exc
@@ -221,6 +220,47 @@ class EmailManager:
             raise EmailExternalAPIError(
                 f"Unexpected send_email error ({type(exc).__name__}): {exc}"
             ) from exc
+
+    def create_draft(
+        self,
+        account_label: str,
+        to_recipients: list[str],
+        cc_recipients: list[str],
+        bcc_recipients: list[str],
+        subject: str,
+        body_html: str,
+    ) -> DraftMetadata:
+        """
+        Create a draft using the client that matches the requested account label.
+        """
+        client = self._get_client_or_raise(account_label)
+        try:
+            return client.create_draft(
+                to_recipients, cc_recipients, bcc_recipients, subject, body_html,
+            )
+        except CoreError:
+            raise
+        except Exception as exc:
+            raise EmailExternalAPIError(
+                f"Unexpected create_draft error ({type(exc).__name__}): {exc}"
+            ) from exc
+
+    def fetch_all_drafts(self) -> dict[str, list[DraftMetadata]]:
+        """
+        Fetch drafts from every registered client. Returns
+        ``{account_label: list[DraftMetadata]}``. Per-account failures
+        are captured in ``self._last_errors`` (mirroring the error
+        aggregation behavior of ``fetch_all_email_metadata``).
+        """
+        self._last_errors = {}
+        results: dict[str, list[DraftMetadata]] = {}
+        for client in self._clients:
+            label = client.get_account_label()
+            try:
+                results[label] = client.fetch_drafts()
+            except Exception as exc:
+                self._last_errors[label] = exc
+        return results
 
     def update_read_status(
         self,

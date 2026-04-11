@@ -509,3 +509,76 @@ def test_move_to_trash_empty_items_returns_422(test_client, setup_mailbox_and_ac
         json={"items": []},
     )
     assert resp.status_code == 422
+
+
+# ==================================================================
+# Drafts — DB error translation
+# ==================================================================
+
+
+def test_create_draft_database_query_error_returns_503(
+    test_client, setup_mailbox_and_account, monkeypatch,
+):
+    from api.services import drafts_service
+
+    mid, aid = setup_mailbox_and_account(test_client)
+
+    def _raise(row):
+        raise QueryError("draft persist fail")
+
+    monkeypatch.setattr(drafts_service.draft_store, "create", _raise)
+    resp = test_client.post(
+        f"{_MAILBOX_URL}/{mid}/accounts/{aid}/drafts",
+        json={"subject": "S", "body_html": "<p>b</p>"},
+    )
+    assert resp.status_code == 503
+    assert resp.json()["error"]["code"] == "database_query_error"
+
+
+def test_create_draft_database_connection_error_returns_503(
+    test_client, setup_mailbox_and_account, monkeypatch,
+):
+    from api.services import drafts_service
+
+    mid, aid = setup_mailbox_and_account(test_client)
+
+    def _raise(row):
+        raise ConnectionPoolError("pool down")
+
+    monkeypatch.setattr(drafts_service.draft_store, "create", _raise)
+    resp = test_client.post(
+        f"{_MAILBOX_URL}/{mid}/accounts/{aid}/drafts",
+        json={"subject": "S"},
+    )
+    assert resp.status_code == 503
+    assert resp.json()["error"]["code"] == "database_connection_error"
+
+
+def test_list_drafts_database_query_error_returns_503(
+    test_client, setup_mailbox_and_account, monkeypatch,
+):
+    from api.services import drafts_service
+
+    mid, _ = setup_mailbox_and_account(test_client)
+
+    def _raise(mailbox_id):
+        raise QueryError("list drafts fail")
+
+    monkeypatch.setattr(drafts_service.draft_store, "list_by_mailbox", _raise)
+    resp = test_client.get(f"{_MAILBOX_URL}/{mid}/drafts")
+    assert resp.status_code == 503
+    assert resp.json()["error"]["code"] == "database_query_error"
+
+
+def test_sync_drafts_database_query_error_on_account_lookup_returns_503(
+    test_client, setup_mailbox_and_account, monkeypatch,
+):
+    mid, aid = setup_mailbox_and_account(test_client)
+
+    def _raise(mailbox_id, account_id):
+        raise QueryError("account lookup fail")
+
+    monkeypatch.setattr(account_store, "get", _raise)
+    resp = test_client.post(f"{_MAILBOX_URL}/{mid}/drafts/sync?account_id={aid}")
+    assert resp.status_code == 503
+    assert resp.json()["error"]["code"] == "database_query_error"

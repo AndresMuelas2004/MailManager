@@ -61,6 +61,21 @@ class EmailContent:
     text_body: str | None
 
 
+@dataclass
+class DraftMetadata:
+    """
+    Normalized draft metadata returned by provider clients after creating a draft.
+    """
+    provider_draft_id: str
+    to_recipients: list[str]
+    cc_recipients: list[str]
+    bcc_recipients: list[str]
+    subject: str
+    body_html: str
+    created_at: datetime
+    updated_at: datetime
+
+
 class EmailClient(ABC):
     """
     Abstract base class that defines the contract for any email provider
@@ -116,6 +131,36 @@ class EmailClient(ABC):
         :param body: Plain text body of the email.
         :param recipients: List of recipient email addresses.
         :return: Metadata of the sent email.
+        """
+
+    @abstractmethod
+    def create_draft(
+        self,
+        to_recipients: list[str],
+        cc_recipients: list[str],
+        bcc_recipients: list[str],
+        subject: str,
+        body_html: str,
+    ) -> DraftMetadata:
+        """
+        Create a draft message at the provider. All fields may be empty
+        (empty drafts are allowed). Returns normalized draft metadata.
+        """
+
+    @abstractmethod
+    def fetch_drafts(self) -> list[DraftMetadata]:
+        """
+        Fetch the most recent drafts from the provider as a flat list.
+
+        Implementations MUST respect a hard cap of ``_DRAFTS_MAX_TOTAL``
+        drafts per account (currently 100) and return the most recent
+        ones. The exact ordering semantics depend on the provider:
+        Outlook uses ``$orderby=lastModifiedDateTime desc`` explicitly;
+        Gmail relies on the native API order (reverse-chronological by
+        convention). Returns an empty list when the mailbox has no drafts.
+
+        Implementations must raise CoreError subclasses on failure — never
+        return a partial list silently.
         """
 
     @abstractmethod

@@ -2,7 +2,7 @@
 Core email package public surface.
 """
 
-from core.email.email_client import EmailClient, EmailContent, EmailMetadata, LabelUpdate, SpamMoveResult, SyncResult
+from core.email.email_client import DraftMetadata, EmailClient, EmailContent, EmailMetadata, LabelUpdate, SpamMoveResult, SyncResult
 from core.email.email_manager import EmailManager
 from core.email.errors import (
     CoreError,
@@ -27,6 +27,7 @@ from core.email.errors import (
 
 __all__ = [
     "CoreError",
+    "DraftMetadata",
     "EmailAccountNotFoundError",
     "EmailAccountRecordError",
     "EmailAuthError",
