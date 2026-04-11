@@ -2,6 +2,7 @@
 Integration tests for the drafts endpoints:
     - POST /mailboxes/{mid}/accounts/{aid}/drafts (create_draft)
     - GET  /mailboxes/{mid}/drafts                (list_drafts)
+    - POST /mailboxes/{mid}/drafts/sync           (sync_drafts)
 
 Exercises the real FastAPI app + real PostgreSQL (transaction-rolled-back)
 with FakeEmailClient replacing provider calls.
@@ -9,11 +10,15 @@ with FakeEmailClient replacing provider calls.
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from uuid import uuid4
 
 import psycopg2.extras
 
+from api.services import drafts_service
+from core.email import DraftMetadata, EmailManager
 from tests.integration.conftest import MAILBOX_URL as _MAILBOX_URL
+from tests.shared.email_fakes import FakeEmailClient
 
 
 def _create_draft_url(mailbox_id: str, account_id: str) -> str:
@@ -25,6 +30,52 @@ def _list_drafts_url(mailbox_id: str, account_id: str | None = None) -> str:
     if account_id is not None:
         url += f"?account_id={account_id}"
     return url
+
+
+def _sync_drafts_url(mailbox_id: str, account_id: str | None = None) -> str:
+    url = f"{_MAILBOX_URL}/{mailbox_id}/drafts/sync"
+    if account_id is not None:
+        url += f"?account_id={account_id}"
+    return url
+
+
+_SYNC_TS = datetime(2024, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+
+
+def _make_draft(provider_draft_id: str, *, subject: str = "S") -> DraftMetadata:
+    return DraftMetadata(
+        provider_draft_id=provider_draft_id,
+        to_recipients=["to@example.com"],
+        cc_recipients=[],
+        bcc_recipients=[],
+        subject=subject,
+        body_html=f"<p>{provider_draft_id}</p>",
+        created_at=_SYNC_TS,
+        updated_at=_SYNC_TS,
+    )
+
+
+def _patch_drafts_builder(
+    monkeypatch,
+    drafts_by_account: dict[str, list[DraftMetadata]],
+) -> None:
+    """Override build_manager_for_accounts so sync_drafts uses FakeEmailClients
+    whose fetch_drafts returns the drafts for the matching account_id."""
+
+    def _build(accounts):
+        manager = EmailManager()
+        for acc in accounts:
+            mid = str(acc.get("mailbox_id", ""))
+            aid = str(acc.get("account_id", ""))
+            label = f"{mid}__{aid}"
+            manager.add_client(FakeEmailClient(
+                label,
+                auth_return={"access_token": "tok", "refresh_token": "ref"},
+                fetch_drafts_return=list(drafts_by_account.get(aid, [])),
+            ))
+        return manager
+
+    monkeypatch.setattr(drafts_service, "build_manager_for_accounts", _build)
 
 
 def _create_foreign_mailbox(isolated_db) -> str:
@@ -353,3 +404,236 @@ def test_list_drafts_on_foreign_mailbox_forbidden(test_client, isolated_db):
     resp = test_client.get(_list_drafts_url(mid))
     assert resp.status_code == 403
     assert resp.json()["error"]["code"] == "forbidden"
+
+
+# ------------------------------------------------------------------
+# POST /mailboxes/{mid}/drafts/sync — sync_drafts
+# ------------------------------------------------------------------
+
+
+def test_sync_drafts_empty_provider_returns_zero(
+    test_client, setup_mailbox_and_account, monkeypatch, isolated_db,
+):
+    """Provider returns 0 drafts → response total_synced == 0, 0 rows in DB."""
+    mid, aid = setup_mailbox_and_account(test_client)
+    _patch_drafts_builder(monkeypatch, {aid: []})
+
+    resp = test_client.post(_sync_drafts_url(mid, aid))
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert data["total_synced"] == 0
+    assert len(data["accounts"]) == 1
+    assert data["accounts"][0]["account_id"] == aid
+    assert data["accounts"][0]["drafts_synced"] == 0
+
+    with isolated_db.cursor() as cur:
+        cur.execute(
+            "SELECT COUNT(*) FROM drafts WHERE account_id = %s::uuid", (aid,),
+        )
+        assert cur.fetchone()[0] == 0
+
+
+def test_sync_drafts_single_account_persists_rows(
+    test_client, setup_mailbox_and_account, monkeypatch, isolated_db,
+):
+    """A 3-draft provider response is persisted to the drafts table."""
+    mid, aid = setup_mailbox_and_account(test_client)
+    drafts = [_make_draft(f"d{i}", subject=f"s{i}") for i in range(3)]
+    _patch_drafts_builder(monkeypatch, {aid: drafts})
+
+    resp = test_client.post(_sync_drafts_url(mid, aid))
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert data["total_synced"] == 3
+    assert data["accounts"][0]["drafts_synced"] == 3
+
+    with isolated_db.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(
+            "SELECT provider_draft_id, subject FROM drafts "
+            "WHERE account_id = %s::uuid ORDER BY provider_draft_id",
+            (aid,),
+        )
+        rows = cur.fetchall()
+    assert len(rows) == 3
+    assert [r["provider_draft_id"] for r in rows] == ["d0", "d1", "d2"]
+
+
+def test_sync_drafts_mailbox_view_persists_rows_for_all_accounts(
+    test_client, setup_mailbox_and_account, monkeypatch, isolated_db,
+):
+    """Without account_id the sync runs for every account in the mailbox."""
+    mid, aid_gmail = setup_mailbox_and_account(test_client, provider="gmail")
+    acc_resp = test_client.post(
+        f"{_MAILBOX_URL}/{mid}/accounts",
+        json={"provider": "outlook", "display_label": "test-outlook"},
+    )
+    assert acc_resp.status_code == 200, acc_resp.text
+    aid_outlook = acc_resp.json()["account_id"]
+
+    drafts_by_account = {
+        aid_gmail: [_make_draft("g1"), _make_draft("g2")],
+        aid_outlook: [_make_draft("o1"), _make_draft("o2")],
+    }
+    _patch_drafts_builder(monkeypatch, drafts_by_account)
+
+    resp = test_client.post(_sync_drafts_url(mid))
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert data["total_synced"] == 4
+    assert len(data["accounts"]) == 2
+    account_ids = {a["account_id"] for a in data["accounts"]}
+    assert account_ids == {aid_gmail, aid_outlook}
+    # Each account must report its own drafts_synced count (not aggregated).
+    assert all(a["drafts_synced"] == 2 for a in data["accounts"])
+
+    with isolated_db.cursor() as cur:
+        cur.execute(
+            "SELECT COUNT(*) FROM drafts WHERE account_id = ANY(%s::uuid[])",
+            ([aid_gmail, aid_outlook],),
+        )
+        assert cur.fetchone()[0] == 4
+
+
+def test_sync_drafts_replaces_stale_rows(
+    test_client, setup_mailbox_and_account, monkeypatch, isolated_db,
+):
+    """Local drafts not returned by the provider are deleted on sync."""
+    mid, aid = setup_mailbox_and_account(test_client)
+
+    # Pre-insert 2 stale drafts directly into the DB.
+    with isolated_db.cursor() as cur:
+        for stale_id in ("old1", "old2"):
+            cur.execute(
+                """
+                INSERT INTO drafts (
+                    provider_draft_id, account_id, to_recipients,
+                    cc_recipients, bcc_recipients, subject, body_html
+                ) VALUES (%s, %s::uuid, %s, %s, %s, %s, %s)
+                """,
+                (stale_id, aid, [], [], [], "stale", ""),
+            )
+
+    # Provider returns only one new draft.
+    _patch_drafts_builder(monkeypatch, {aid: [_make_draft("newA")]})
+
+    resp = test_client.post(_sync_drafts_url(mid, aid))
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert data["total_synced"] == 1
+
+    with isolated_db.cursor() as cur:
+        cur.execute(
+            "SELECT provider_draft_id FROM drafts WHERE account_id = %s::uuid",
+            (aid,),
+        )
+        rows = [r[0] for r in cur.fetchall()]
+    assert rows == ["newA"]
+
+
+def test_sync_drafts_upserts_existing_rows(
+    test_client, setup_mailbox_and_account, monkeypatch, isolated_db,
+):
+    """Existing draft rows are updated in place (UPSERT)."""
+    mid, aid = setup_mailbox_and_account(test_client)
+
+    with isolated_db.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO drafts (
+                provider_draft_id, account_id, to_recipients,
+                cc_recipients, bcc_recipients, subject, body_html
+            ) VALUES (%s, %s::uuid, %s, %s, %s, %s, %s)
+            """,
+            ("existing1", aid, [], [], [], "old subject", "old body"),
+        )
+
+    _patch_drafts_builder(monkeypatch, {
+        aid: [_make_draft("existing1", subject="new subject")],
+    })
+
+    resp = test_client.post(_sync_drafts_url(mid, aid))
+    assert resp.status_code == 200, resp.text
+
+    with isolated_db.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(
+            "SELECT subject, body_html FROM drafts WHERE account_id = %s::uuid",
+            (aid,),
+        )
+        rows = cur.fetchall()
+    assert len(rows) == 1
+    assert rows[0]["subject"] == "new subject"
+    assert rows[0]["body_html"] == "<p>existing1</p>"
+
+
+def test_sync_drafts_account_not_found_returns_404(
+    test_client, setup_mailbox_and_account, monkeypatch,
+):
+    mid, _ = setup_mailbox_and_account(test_client)
+    _patch_drafts_builder(monkeypatch, {})
+    fake_aid = "00000000-0000-4000-a000-000000000099"
+    resp = test_client.post(_sync_drafts_url(mid, fake_aid))
+    assert resp.status_code == 404
+    assert resp.json()["error"]["code"] == "account_not_found"
+
+
+def test_sync_drafts_on_foreign_mailbox_forbidden(
+    test_client, isolated_db, monkeypatch,
+):
+    mid = _create_foreign_mailbox(isolated_db)
+    _patch_drafts_builder(monkeypatch, {})
+    resp = test_client.post(_sync_drafts_url(mid))
+    assert resp.status_code == 403
+    assert resp.json()["error"]["code"] == "forbidden"
+
+
+def test_sync_drafts_empty_mailbox_returns_zero(
+    test_client, monkeypatch,
+):
+    """A mailbox with no accounts returns total_synced=0 and accounts=[] (early return)."""
+    # Create a mailbox with NO accounts.
+    resp_create = test_client.post(_MAILBOX_URL, json={"display_name": "Empty MB"})
+    assert resp_create.status_code == 200, resp_create.text
+    mid = resp_create.json()["mailbox_id"]
+
+    _patch_drafts_builder(monkeypatch, {})
+    resp = test_client.post(_sync_drafts_url(mid))
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert data["total_synced"] == 0
+    assert data["accounts"] == []
+
+
+def test_sync_drafts_empty_provider_unified_view(
+    test_client, setup_mailbox_and_account, monkeypatch, isolated_db,
+):
+    """Unified view: provider returns empty → total_synced=0, one account detail entry."""
+    mid, aid = setup_mailbox_and_account(test_client)
+    _patch_drafts_builder(monkeypatch, {aid: []})
+
+    resp = test_client.post(_sync_drafts_url(mid))
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert data["total_synced"] == 0
+    assert len(data["accounts"]) == 1
+    assert data["accounts"][0]["account_id"] == aid
+    assert data["accounts"][0]["drafts_synced"] == 0
+
+
+def test_sync_drafts_db_error_on_replace_returns_503(
+    test_client, setup_mailbox_and_account, monkeypatch,
+):
+    """A DbQueryError from draft_store.replace_all_for_account surfaces as 503."""
+    from database.errors import QueryError as DbQueryError
+
+    mid, aid = setup_mailbox_and_account(test_client)
+    _patch_drafts_builder(monkeypatch, {aid: [_make_draft("d1")]})
+
+    def _raise_db(*_a, **_kw):
+        raise DbQueryError("persist failed")
+
+    monkeypatch.setattr(
+        drafts_service.draft_store, "replace_all_for_account", _raise_db,
+    )
+    resp = test_client.post(_sync_drafts_url(mid, aid))
+    assert resp.status_code == 503
+    assert resp.json()["error"]["code"] == "database_query_error"

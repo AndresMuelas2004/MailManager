@@ -34,9 +34,6 @@ from core.email import (
 
 from tests.integration.conftest import (
     MAILBOX_URL as _MAILBOX_URL,
-    SEEDED_GMAIL_ACCOUNT_ID as _GMAIL_ACCOUNT_ID,
-    SEEDED_GMAIL_MAILBOX_ID as _GMAIL_MAILBOX_ID,
-    SEEDED_USER_ID as _SEEDED_USER_ID,
     _setup_mailbox_and_account,
 )
 
@@ -720,3 +717,63 @@ def test_create_draft_runtime_error_returns_502(
     )
     assert resp.status_code == 502
     assert resp.json()["error"]["code"] == "external_api_error"
+
+
+# ==================================================================
+# sync_drafts — CoreError translations
+# ==================================================================
+
+
+@pytest.mark.parametrize(
+    "failing_test_client",
+    [{"fetch_drafts_exc": EmailExternalAPIError("Provider fail")}],
+    indirect=True,
+)
+def test_sync_drafts_external_api_error_returns_502(
+    failing_test_client, setup_mailbox_and_account,
+):
+    """EmailExternalAPIError during fetch_drafts -> ExternalAPIError (502)."""
+    mid, aid = setup_mailbox_and_account(failing_test_client)
+    resp = failing_test_client.post(
+        f"{_MAILBOX_URL}/{mid}/drafts/sync?account_id={aid}",
+    )
+    assert resp.status_code == 502
+    assert resp.json()["error"]["code"] == "external_api_error"
+
+
+@pytest.mark.parametrize(
+    "failing_test_client",
+    [{"auth_silent_exc": EmailAuthError("Refresh token expired.")}],
+    indirect=True,
+)
+def test_sync_drafts_silent_auth_failure_returns_409(
+    failing_test_client, setup_mailbox_and_account,
+):
+    """Silent auth failure before sync_drafts -> AccountNotConnected (409)."""
+    mid, aid = setup_mailbox_and_account(failing_test_client)
+    resp = failing_test_client.post(
+        f"{_MAILBOX_URL}/{mid}/drafts/sync?account_id={aid}",
+    )
+    assert resp.status_code == 409
+    assert resp.json()["error"]["code"] == "account_not_connected"
+
+
+@pytest.mark.parametrize(
+    "failing_test_client",
+    [{"fetch_drafts_exc": RuntimeError("crash")}],
+    indirect=True,
+)
+def test_sync_drafts_runtime_error_returns_502(
+    failing_test_client, setup_mailbox_and_account,
+):
+    """RuntimeError during fetch_drafts is captured in _last_errors and
+    surfaced as a 502 via the draft_sync_error fallback (DraftSyncError
+    is the fallback passed to raise_on_silent_auth_errors)."""
+    mid, aid = setup_mailbox_and_account(failing_test_client)
+    resp = failing_test_client.post(
+        f"{_MAILBOX_URL}/{mid}/drafts/sync?account_id={aid}",
+    )
+    assert resp.status_code == 502
+    # The RuntimeError is wrapped in the fallback DraftSyncError by
+    # raise_on_silent_auth_errors because it is not a known CoreError subtype.
+    assert resp.json()["error"]["code"] == "draft_sync_error"

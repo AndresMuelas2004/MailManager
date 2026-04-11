@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 from api.errors.exceptions import (
     AccountConnectAuthError,
     AccountNotFound,
-    ApiError,
+    AccountOperationError,
 )
 from core.email import CoreError
 from api.schemas.account import (
@@ -55,7 +55,7 @@ def list_accounts(mailbox_id: str, user_id: str) -> list[AccountOut]:
         raise translate_database_error(exc) from exc
     except Exception as exc:
         logger.warning("Unexpected list accounts error (%s): %s", type(exc).__name__, exc)
-        raise ApiError("Failed to list accounts.") from exc
+        raise AccountOperationError("Failed to list accounts.") from exc
     return [_build_response(account) for account in accounts]
 
 
@@ -75,7 +75,7 @@ def create_account(mailbox_id: str, payload: AccountCreate, user_id: str) -> Acc
         raise translate_database_error(exc) from exc
     except Exception as exc:
         logger.warning("Unexpected account creation error (%s): %s", type(exc).__name__, exc)
-        raise ApiError("Failed to create account.") from exc
+        raise AccountOperationError("Failed to create account.") from exc
     return _build_response(created)
 
 
@@ -87,7 +87,7 @@ def get_account(mailbox_id: str, account_id: str, user_id: str) -> AccountOut:
         raise translate_database_error(exc) from exc
     except Exception as exc:
         logger.warning("Unexpected account lookup error (%s): %s", type(exc).__name__, exc)
-        raise ApiError("Failed to look up account for get.") from exc
+        raise AccountOperationError("Failed to look up account for get.") from exc
     if record is None:
         raise AccountNotFound(f"Account '{account_id}' not found for get.")
     return _build_response(record)
@@ -101,7 +101,7 @@ def update_account(mailbox_id: str, account_id: str, payload: AccountUpdate, use
         raise translate_database_error(exc) from exc
     except Exception as exc:
         logger.warning("Unexpected account lookup error during update (%s): %s", type(exc).__name__, exc)
-        raise ApiError("Failed to look up account for update.") from exc
+        raise AccountOperationError("Failed to look up account for update.") from exc
     if record is None:
         raise AccountNotFound(f"Account '{account_id}' not found for update.")
 
@@ -116,7 +116,7 @@ def update_account(mailbox_id: str, account_id: str, payload: AccountUpdate, use
         raise translate_database_error(exc) from exc
     except Exception as exc:
         logger.warning("Unexpected account update error (%s): %s", type(exc).__name__, exc)
-        raise ApiError("Failed to update account.") from exc
+        raise AccountOperationError("Failed to update account.") from exc
     return _build_response(updated)
 
 
@@ -128,7 +128,7 @@ def delete_account(mailbox_id: str, account_id: str, user_id: str) -> dict[str, 
         raise translate_database_error(exc) from exc
     except Exception as exc:
         logger.warning("Unexpected account lookup error during delete (%s): %s", type(exc).__name__, exc)
-        raise ApiError("Failed to look up account for delete.") from exc
+        raise AccountOperationError("Failed to look up account for delete.") from exc
     if record is None:
         raise AccountNotFound(f"Account '{account_id}' not found for delete.")
     # ON DELETE CASCADE removes associated tokens automatically.
@@ -138,7 +138,7 @@ def delete_account(mailbox_id: str, account_id: str, user_id: str) -> dict[str, 
         raise translate_database_error(exc) from exc
     except Exception as exc:
         logger.warning("Unexpected account deletion error (%s): %s", type(exc).__name__, exc)
-        raise ApiError("Failed to delete account.") from exc
+        raise AccountOperationError("Failed to delete account.") from exc
     return {"status": "deleted"}
 
 
@@ -150,7 +150,7 @@ def connect_account(mailbox_id: str, account_id: str, user_id: str) -> AccountCo
         raise translate_database_error(exc) from exc
     except Exception as exc:
         logger.warning("Unexpected account lookup error during connect (%s): %s", type(exc).__name__, exc)
-        raise ApiError("Failed to look up account for connect.") from exc
+        raise AccountOperationError("Failed to look up account for connect.") from exc
     if record is None:
         raise AccountNotFound(f"Account '{account_id}' not found for connect.")
 
@@ -182,7 +182,7 @@ def connect_account(mailbox_id: str, account_id: str, user_id: str) -> AccountCo
         raise translate_database_error(exc) from exc
     except Exception as exc:
         logger.warning("Unexpected token persist error (%s): %s", type(exc).__name__, exc)
-        raise ApiError("Failed to persist tokens.") from exc
+        raise AccountOperationError("Failed to persist tokens after connect.") from exc
 
     return AccountConnectResponse(
         connected=True,

@@ -18,6 +18,7 @@ from api.errors.exceptions import (
     AccountMisconfigured,
     AccountNotConnected,
     AccountNotFound,
+    AccountOperationError,
     ApiError,
     AppCredentialsInvalid,
     AppCredentialsMissing,
@@ -27,6 +28,7 @@ from api.errors.exceptions import (
     DatabaseQueryError,
     DraftCreationError,
     DraftListError,
+    DraftSyncError,
     EmailContentFetchError,
     EmailFetchError,
     EmailNotInTrash,
@@ -35,10 +37,12 @@ from api.errors.exceptions import (
     ExternalAPIError,
     Forbidden,
     MailboxNotFound,
+    MailboxOperationError,
     MoveToTrashError,
     RecipientsMissing,
     ReadStatusUpdateError,
     EmailListError,
+    SessionOperationError,
     SpamMoveError,
     SpamRestoreError,
     TokenDecryptionError,
@@ -47,6 +51,7 @@ from api.errors.exceptions import (
     TrashOperationError,
     Unauthorized,
     UserNotFound,
+    UserOperationError,
 )
 from api.schemas.error import ErrorResponse
 
@@ -84,6 +89,11 @@ _STATUS_MAP: dict[type[ApiError], int] = {
     EmailListError: status.HTTP_500_INTERNAL_SERVER_ERROR,
     DraftCreationError: status.HTTP_502_BAD_GATEWAY,
     DraftListError: status.HTTP_500_INTERNAL_SERVER_ERROR,
+    DraftSyncError: status.HTTP_502_BAD_GATEWAY,
+    MailboxOperationError: status.HTTP_500_INTERNAL_SERVER_ERROR,
+    AccountOperationError: status.HTTP_500_INTERNAL_SERVER_ERROR,
+    SessionOperationError: status.HTTP_500_INTERNAL_SERVER_ERROR,
+    UserOperationError: status.HTTP_500_INTERNAL_SERVER_ERROR,
 }
 
 

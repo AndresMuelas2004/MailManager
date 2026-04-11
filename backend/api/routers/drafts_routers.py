@@ -1,5 +1,5 @@
 """
-Drafts router — draft creation and listing under a mailbox.
+Drafts router — draft creation, listing and provider sync under a mailbox.
 """
 
 from __future__ import annotations
@@ -7,7 +7,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, Query
 
 from api.routers.routers_helpers import require_session
-from api.schemas.draft import DraftCreate, DraftOut
+from api.schemas.draft import DraftCreate, DraftOut, DraftsSyncResultOut
 from api.services import drafts_service
 
 
@@ -44,3 +44,21 @@ def list_drafts(
       If omitted or None, returns drafts from all accounts in the mailbox.
     """
     return drafts_service.list_drafts(mailbox_id, user_id, account_id)
+
+
+@router.post("/drafts/sync", response_model=DraftsSyncResultOut)
+def sync_drafts(
+    mailbox_id: str,
+    account_id: str | None = Query(default=None),
+    user_id: str = Depends(require_session),
+) -> DraftsSyncResultOut:
+    """
+    Load drafts from the provider(s) into the local database.
+
+    Query parameters:
+    - account_id: optional. If provided, syncs only that account. If
+      omitted or None, syncs every account in the mailbox.
+
+    Both providers cap the fetch at 100 drafts per account (most recent).
+    """
+    return drafts_service.sync_drafts(mailbox_id, user_id, account_id)

@@ -11,7 +11,7 @@ from unittest.mock import MagicMock, call, patch
 
 import pytest
 
-from core.email.email_client import SpamMoveResult, SyncResult
+from core.email.email_client import DraftMetadata, SpamMoveResult, SyncResult
 from core.email.errors import (
     EmailExternalAPIError,
     EmailInvalidCredentialsDataError,
@@ -21,7 +21,7 @@ from core.email.errors import (
     EmailNotAuthenticatedError,
     EmailRecipientsMissingError,
 )
-from core.email.gmail_client import GmailClient, _is_retryable, _INCREMENTAL_EVENT_THRESHOLD
+from core.email.gmail_client import GmailClient, _DRAFTS_MAX_TOTAL, _is_retryable, _INCREMENTAL_EVENT_THRESHOLD
 
 
 @pytest.fixture
@@ -1634,3 +1634,160 @@ class TestRestoreFromSpam:
             ["m1"], remove_labels=["SPAM"], add_labels=["INBOX"],
         )
         assert result == [SpamMoveResult(old_id="m1", new_id="m1")]
+
+
+# ── fetch_drafts ────────────────────────────────────────────────────
+
+
+def _encode_body(text: str) -> str:
+    raw = base64.urlsafe_b64encode(text.encode("utf-8")).decode("ascii")
+    return raw.rstrip("=")
+
+
+def _gmail_draft_response(draft_id: str, subject: str = "Hello") -> dict:
+    """Build a fake Gmail drafts.get response with format=full."""
+    return {
+        "id": draft_id,
+        "message": {
+            "id": f"msg-{draft_id}",
+            "payload": {
+                "headers": [
+                    {"name": "Subject", "value": subject},
+                    {"name": "To", "value": "Alice <a@b.com>, c@d.com"},
+                    {"name": "Cc", "value": "e@f.com"},
+                    {"name": "Bcc", "value": ""},
+                ],
+                "mimeType": "text/html",
+                "body": {"data": _encode_body(f"<p>body-{draft_id}</p>")},
+            },
+        },
+    }
+
+
+class TestFetchDrafts:
+    def test_not_authenticated_raises(self, client: GmailClient):
+        client.service = None
+        with pytest.raises(EmailNotAuthenticatedError):
+            client.fetch_drafts()
+
+    def test_empty_mailbox_returns_empty(self, client: GmailClient):
+        client.service = MagicMock()
+        (
+            client.service.users.return_value
+            .drafts.return_value.list.return_value.execute
+            .return_value
+        ) = {"drafts": []}
+
+        with patch.object(client, "_execute_batch_get") as mock_batch:
+            result = client.fetch_drafts()
+
+        assert result == []
+        mock_batch.assert_not_called()
+
+    def test_under_cap_fetches_all(self, client: GmailClient):
+        client.service = MagicMock()
+        draft_ids = [f"d{i}" for i in range(5)]
+        (
+            client.service.users.return_value
+            .drafts.return_value.list.return_value.execute
+            .return_value
+        ) = {"drafts": [{"id": i} for i in draft_ids]}
+
+        fake_responses = {i: _gmail_draft_response(i) for i in draft_ids}
+        with patch.object(
+            client, "_execute_batch_get", return_value=fake_responses,
+        ) as mock_batch:
+            result = client.fetch_drafts()
+
+        assert len(result) == 5
+        assert {r.provider_draft_id for r in result} == set(draft_ids)
+        mock_batch.assert_called_once()
+        _, kwargs = mock_batch.call_args
+        # Verify the batch was called with resource="drafts"
+        assert kwargs.get("resource") == "drafts"
+        # Verify the passed IDs are exactly the 5 we listed
+        passed_ids = mock_batch.call_args[0][0]
+        assert passed_ids == draft_ids
+
+    def test_caps_at_max_total_single_page(self, client: GmailClient):
+        """If a single page returns > _DRAFTS_MAX_TOTAL IDs, the cap is enforced."""
+        client.service = MagicMock()
+        # Simulate Gmail returning 150 IDs in the first page.
+        big_page = [{"id": f"d{i}"} for i in range(150)]
+        (
+            client.service.users.return_value
+            .drafts.return_value.list.return_value.execute
+            .return_value
+        ) = {"drafts": big_page}
+
+        with patch.object(
+            client, "_execute_batch_get",
+            side_effect=lambda ids, **kw: {i: _gmail_draft_response(i) for i in ids},
+        ) as mock_batch:
+            result = client.fetch_drafts()
+
+        assert len(result) == _DRAFTS_MAX_TOTAL
+        passed_ids = mock_batch.call_args[0][0]
+        assert len(passed_ids) == _DRAFTS_MAX_TOTAL
+
+    def test_caps_across_pages(self, client: GmailClient):
+        """If pagination is needed, the cap stops collection across pages."""
+        client.service = MagicMock()
+        page_one = {"drafts": [{"id": f"d{i}"} for i in range(80)], "nextPageToken": "abc"}
+        page_two = {"drafts": [{"id": f"d{i}"} for i in range(80, 160)]}
+        page_three_should_not_happen = {"drafts": [{"id": "should-never-see"}]}
+
+        call_count = {"n": 0}
+
+        def _execute_side_effect():
+            call_count["n"] += 1
+            if call_count["n"] == 1:
+                return page_one
+            if call_count["n"] == 2:
+                return page_two
+            return page_three_should_not_happen
+
+        (
+            client.service.users.return_value
+            .drafts.return_value.list.return_value.execute
+            .side_effect
+        ) = _execute_side_effect
+
+        with patch.object(
+            client, "_execute_batch_get",
+            side_effect=lambda ids, **kw: {i: _gmail_draft_response(i) for i in ids},
+        ) as mock_batch:
+            result = client.fetch_drafts()
+
+        assert len(result) == _DRAFTS_MAX_TOTAL
+        # Exactly 2 list calls were made (page 1 = 80, page 2 adds 20 more to reach 100).
+        assert call_count["n"] == 2
+        passed_ids = mock_batch.call_args[0][0]
+        assert len(passed_ids) == _DRAFTS_MAX_TOTAL
+
+    def test_list_httperror_translated(self, client: GmailClient):
+        from googleapiclient.errors import HttpError as GHttpError
+
+        class _FakeResp:
+            status = 500
+            reason = "Internal Server Error"
+
+        client.service = MagicMock()
+        (
+            client.service.users.return_value
+            .drafts.return_value.list.return_value.execute
+            .side_effect
+        ) = GHttpError(resp=_FakeResp(), content=b"boom")
+
+        with pytest.raises(EmailExternalAPIError, match="failed to list drafts"):
+            client.fetch_drafts()
+
+    def test_parse_gmail_draft_extracts_headers_and_body(self, client: GmailClient):
+        response = _gmail_draft_response("d1", subject="Test subject")
+        draft = client._parse_gmail_draft(response)
+        assert draft.provider_draft_id == "d1"
+        assert draft.subject == "Test subject"
+        assert draft.to_recipients == ["a@b.com", "c@d.com"]
+        assert draft.cc_recipients == ["e@f.com"]
+        assert draft.bcc_recipients == []
+        assert "body-d1" in draft.body_html

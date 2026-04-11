@@ -116,7 +116,6 @@ class EmailManager:
         except CoreError:
             raise
         except Exception as exc:
-            self._last_errors[account_label] = exc
             raise EmailExternalAPIError(
                 f"Unexpected connect_account error ({type(exc).__name__}): {exc}"
             ) from exc
@@ -245,6 +244,23 @@ class EmailManager:
             raise EmailExternalAPIError(
                 f"Unexpected create_draft error ({type(exc).__name__}): {exc}"
             ) from exc
+
+    def fetch_all_drafts(self) -> dict[str, list[DraftMetadata]]:
+        """
+        Fetch drafts from every registered client. Returns
+        ``{account_label: list[DraftMetadata]}``. Per-account failures
+        are captured in ``self._last_errors`` (mirroring the error
+        aggregation behavior of ``fetch_all_email_metadata``).
+        """
+        self._last_errors = {}
+        results: dict[str, list[DraftMetadata]] = {}
+        for client in self._clients:
+            label = client.get_account_label()
+            try:
+                results[label] = client.fetch_drafts()
+            except Exception as exc:
+                self._last_errors[label] = exc
+        return results
 
     def update_read_status(
         self,

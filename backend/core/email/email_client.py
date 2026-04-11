@@ -148,6 +148,22 @@ class EmailClient(ABC):
         """
 
     @abstractmethod
+    def fetch_drafts(self) -> list[DraftMetadata]:
+        """
+        Fetch the most recent drafts from the provider as a flat list.
+
+        Implementations MUST respect a hard cap of ``_DRAFTS_MAX_TOTAL``
+        drafts per account (currently 100) and return the most recent
+        ones. The exact ordering semantics depend on the provider:
+        Outlook uses ``$orderby=lastModifiedDateTime desc`` explicitly;
+        Gmail relies on the native API order (reverse-chronological by
+        convention). Returns an empty list when the mailbox has no drafts.
+
+        Implementations must raise CoreError subclasses on failure — never
+        return a partial list silently.
+        """
+
+    @abstractmethod
     def verify_message_existence(self, message_ids: list[str]) -> list[str]:
         """Return the subset of message_ids that still exist at the provider."""
 

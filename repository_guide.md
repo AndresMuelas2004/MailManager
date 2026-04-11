@@ -29,6 +29,7 @@ Note: the `GET /mailboxes/{mailbox_id}/emails` listing endpoint reads only from 
 Note: the `GET /mailboxes/{mailbox_id}/emails/{id}/content` endpoint uses a cache-aside pattern — checks the `email_content` table first (DB read), and on cache miss fetches from the provider API, sanitizes the HTML, persists in DB, then returns.
 Note: the `POST /mailboxes/{mailbox_id}/accounts/{account_id}/drafts` endpoint follows the Provider-First Rule — the draft is created at the provider first (Gmail `drafts.create` or Outlook `POST /me/messages` with `Prefer: IdType="ImmutableId"`), and only on success persisted to the local `drafts` table.
 Note: the `GET /mailboxes/{mailbox_id}/drafts` listing endpoint reads only from the local database (Services → Database, no provider API calls). Query param `account_id` is optional: when provided, returns drafts of that account; when omitted, returns the unified view across all accounts in the mailbox.
+Note: the `POST /mailboxes/{mailbox_id}/drafts/sync` endpoint fetches drafts from the provider(s) and replaces the local rows for each synced account atomically (UPSERT + delete-missing). Query param `account_id` is optional: when provided, syncs only that account; when omitted, syncs every account in the mailbox. Both providers cap the fetch at `_DRAFTS_MAX_TOTAL = 100` drafts per account (most recent). Gmail uses the existing parallel-batch-of-100 skeleton (5 workers × 4 retries); Outlook paginates with `$top=100` + `$orderby=lastModifiedDateTime desc` + 4 retries per page.
 
 ## Key Identifiers
 

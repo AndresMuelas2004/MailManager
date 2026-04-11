@@ -168,6 +168,21 @@ class DraftStore(ABC):
         """
         raise NotImplementedError
 
+    @abstractmethod
+    def replace_all_for_account(
+        self,
+        account_id: str,
+        drafts: list[dict[str, Any]],
+    ) -> int:
+        """
+        Replace the full set of drafts for an account atomically. Upserts
+        the provided list (keyed by provider_draft_id) and deletes any
+        existing rows not present in it. Returns the count of drafts that
+        exist for this account after the operation — equals ``len(drafts)``
+        on success.
+        """
+        raise NotImplementedError
+
 
 class UserStore(ABC):
     """

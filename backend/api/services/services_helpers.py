@@ -382,6 +382,8 @@ def load_wrapped_account_tokens(
 def persist_email_metadata_batch(
     account_id: str,
     metadata_list: list[EmailMetadata],
+    *,
+    fallback: type[ApiError] = ApiError,
 ) -> int:
     """Persist email metadata to DB via batch upsert. Returns rows affected."""
     if not metadata_list:
@@ -399,11 +401,13 @@ def persist_email_metadata_batch(
         raise translate_database_error(exc) from exc
     except Exception as exc:
         logger.warning("Unexpected metadata persist error (%s): %s", type(exc).__name__, exc)
-        raise ApiError("Failed to persist email metadata.") from exc
+        raise fallback("Failed to persist email metadata.") from exc
 
 
 def load_sync_cursors(
     label_lookup: dict[str, tuple[str, str, str]],
+    *,
+    fallback: type[ApiError] = ApiError,
 ) -> dict[str, str | None]:
     """Load the sync cursor for each account, keyed by account label."""
     cursors: dict[str, str | None] = {}
@@ -414,13 +418,15 @@ def load_sync_cursors(
             raise translate_database_error(exc) from exc
         except Exception as exc:
             logger.warning("Unexpected sync cursor load error (%s): %s", type(exc).__name__, exc)
-            raise ApiError("Failed to load sync cursor.") from exc
+            raise fallback("Failed to load sync cursor.") from exc
     return cursors
 
 
 def delete_email_metadata_batch(
     account_id: str,
     message_ids: list[str],
+    *,
+    fallback: type[ApiError] = ApiError,
 ) -> int:
     """Delete email metadata by provider_message_ids. Returns rows deleted."""
     if not message_ids:
@@ -431,12 +437,14 @@ def delete_email_metadata_batch(
         raise translate_database_error(exc) from exc
     except Exception as exc:
         logger.warning("Unexpected metadata delete error (%s): %s", type(exc).__name__, exc)
-        raise ApiError("Failed to delete email metadata.") from exc
+        raise fallback("Failed to delete email metadata.") from exc
 
 
 def update_email_metadata_labels_batch(
     account_id: str,
     label_updates: list[LabelUpdate],
+    *,
+    fallback: type[ApiError] = ApiError,
 ) -> int:
     """Update only is_read and box for specific messages. Returns rows updated."""
     if not label_updates:
@@ -451,13 +459,15 @@ def update_email_metadata_labels_batch(
         raise translate_database_error(exc) from exc
     except Exception as exc:
         logger.warning("Unexpected metadata labels update error (%s): %s", type(exc).__name__, exc)
-        raise ApiError("Failed to update email metadata labels.") from exc
+        raise fallback("Failed to update email metadata labels.") from exc
 
 
 def update_email_read_status_batch(
     account_id: str,
     message_ids: list[str],
     is_read: bool,
+    *,
+    fallback: type[ApiError] = ApiError,
 ) -> int:
     """Update only is_read for specific messages. Returns rows updated."""
     if not message_ids:
@@ -472,13 +482,15 @@ def update_email_read_status_batch(
             "Unexpected read status DB update error (%s): %s",
             type(exc).__name__, exc,
         )
-        raise ApiError("Failed to update email read status in database.") from exc
+        raise fallback("Failed to update email read status in database.") from exc
 
 
 def update_email_spam_status_batch(
     account_id: str,
     results: list[SpamMoveResult],
     new_box: str,
+    *,
+    fallback: type[ApiError] = ApiError,
 ) -> int:
     """Update provider_message_id and box for messages moved to/from spam. Returns rows updated."""
     if not results:
@@ -496,10 +508,14 @@ def update_email_spam_status_batch(
             "Unexpected spam status DB update error (%s): %s",
             type(exc).__name__, exc,
         )
-        raise ApiError("Failed to update email spam status in database.") from exc
+        raise fallback("Failed to update email spam status in database.") from exc
 
 
-def load_stored_message_ids(account_id: str) -> list[str]:
+def load_stored_message_ids(
+    account_id: str,
+    *,
+    fallback: type[ApiError] = ApiError,
+) -> list[str]:
     """Load all provider_message_ids stored for an account."""
     try:
         return email_metadata_store.list_provider_message_ids(account_id)
@@ -507,10 +523,15 @@ def load_stored_message_ids(account_id: str) -> list[str]:
         raise translate_database_error(exc) from exc
     except Exception as exc:
         logger.warning("Unexpected stored message IDs load error (%s): %s", type(exc).__name__, exc)
-        raise ApiError("Failed to load stored message IDs.") from exc
+        raise fallback("Failed to load stored message IDs.") from exc
 
 
-def get_trash_emails_by_ids(account_id: str, message_ids: list[str]) -> list[dict[str, Any]]:
+def get_trash_emails_by_ids(
+    account_id: str,
+    message_ids: list[str],
+    *,
+    fallback: type[ApiError] = ApiError,
+) -> list[dict[str, Any]]:
     """Get emails in TRASH by their provider_message_ids."""
     if not message_ids:
         return []
@@ -520,10 +541,15 @@ def get_trash_emails_by_ids(account_id: str, message_ids: list[str]) -> list[dic
         raise translate_database_error(exc) from exc
     except Exception as exc:
         logger.warning("Unexpected get trash emails error (%s): %s", type(exc).__name__, exc)
-        raise ApiError("Failed to get trash emails.") from exc
+        raise fallback("Failed to get trash emails.") from exc
 
 
-def mark_as_deleted_batch(account_id: str, message_ids: list[str]) -> int:
+def mark_as_deleted_batch(
+    account_id: str,
+    message_ids: list[str],
+    *,
+    fallback: type[ApiError] = ApiError,
+) -> int:
     """Mark emails as DELETED in the database."""
     if not message_ids:
         return 0
@@ -533,10 +559,15 @@ def mark_as_deleted_batch(account_id: str, message_ids: list[str]) -> int:
         raise translate_database_error(exc) from exc
     except Exception as exc:
         logger.warning("Unexpected mark as deleted error (%s): %s", type(exc).__name__, exc)
-        raise ApiError("Failed to mark emails as deleted.") from exc
+        raise fallback("Failed to mark emails as deleted.") from exc
 
 
-def restore_from_trash_batch(account_id: str, rows: list[tuple]) -> int:
+def restore_from_trash_batch(
+    account_id: str,
+    rows: list[tuple],
+    *,
+    fallback: type[ApiError] = ApiError,
+) -> int:
     """Restore emails from trash in the database."""
     if not rows:
         return 0
@@ -546,10 +577,15 @@ def restore_from_trash_batch(account_id: str, rows: list[tuple]) -> int:
         raise translate_database_error(exc) from exc
     except Exception as exc:
         logger.warning("Unexpected restore from trash error (%s): %s", type(exc).__name__, exc)
-        raise ApiError("Failed to restore emails from trash.") from exc
+        raise fallback("Failed to restore emails from trash.") from exc
 
 
-def restore_from_trash_discovered_batch(account_id: str, rows: list[tuple]) -> int:
+def restore_from_trash_discovered_batch(
+    account_id: str,
+    rows: list[tuple],
+    *,
+    fallback: type[ApiError] = ApiError,
+) -> int:
     """Restore emails from trash with a discovered box in the database."""
     if not rows:
         return 0
@@ -559,10 +595,15 @@ def restore_from_trash_discovered_batch(account_id: str, rows: list[tuple]) -> i
         raise translate_database_error(exc) from exc
     except Exception as exc:
         logger.warning("Unexpected restore discovered box error (%s): %s", type(exc).__name__, exc)
-        raise ApiError("Failed to restore emails with discovered box.") from exc
+        raise fallback("Failed to restore emails with discovered box.") from exc
 
 
-def move_to_trash_batch(account_id: str, rows: list[tuple]) -> int:
+def move_to_trash_batch(
+    account_id: str,
+    rows: list[tuple],
+    *,
+    fallback: type[ApiError] = ApiError,
+) -> int:
     """Move emails to trash in the database."""
     if not rows:
         return 0
@@ -572,10 +613,16 @@ def move_to_trash_batch(account_id: str, rows: list[tuple]) -> int:
         raise translate_database_error(exc) from exc
     except Exception as exc:
         logger.warning("Unexpected move to trash error (%s): %s", type(exc).__name__, exc)
-        raise ApiError("Failed to move emails to trash.") from exc
+        raise fallback("Failed to move emails to trash.") from exc
 
 
-def update_sync_cursor(mailbox_id: str, account_id: str, cursor: str) -> None:
+def update_sync_cursor(
+    mailbox_id: str,
+    account_id: str,
+    cursor: str,
+    *,
+    fallback: type[ApiError] = ApiError,
+) -> None:
     """Persist the new sync_cursor for an account."""
     try:
         account_store.update_sync_cursor(mailbox_id, account_id, cursor)
@@ -583,7 +630,7 @@ def update_sync_cursor(mailbox_id: str, account_id: str, cursor: str) -> None:
         raise translate_database_error(exc) from exc
     except Exception as exc:
         logger.warning("Unexpected sync cursor update error (%s): %s", type(exc).__name__, exc)
-        raise ApiError("Failed to update sync cursor.") from exc
+        raise fallback("Failed to update sync cursor.") from exc
 
 
 # ---------------------------------------------------------------------------
@@ -638,7 +685,12 @@ def sanitize_email_html(html: str) -> str:
     )
 
 
-def get_email_content(account_id: str, provider_message_id: str) -> dict[str, Any] | None:
+def get_email_content(
+    account_id: str,
+    provider_message_id: str,
+    *,
+    fallback: type[ApiError] = ApiError,
+) -> dict[str, Any] | None:
     """Read cached email content from DB. Returns dict or None."""
     try:
         return email_content_store.get(account_id, provider_message_id)
@@ -646,7 +698,7 @@ def get_email_content(account_id: str, provider_message_id: str) -> dict[str, An
         raise translate_database_error(exc) from exc
     except Exception as exc:
         logger.warning("Unexpected email content read error (%s): %s", type(exc).__name__, exc)
-        raise ApiError("Failed to read email content from database.") from exc
+        raise fallback("Failed to read email content from database.") from exc
 
 
 def persist_email_content(
@@ -654,6 +706,8 @@ def persist_email_content(
     provider_message_id: str,
     html_body: str | None,
     text_body: str | None,
+    *,
+    fallback: type[ApiError] = ApiError,
 ) -> None:
     """Persist email content to DB. CAN raise — caller decides best-effort wrapping."""
     try:
@@ -662,4 +716,4 @@ def persist_email_content(
         raise translate_database_error(exc) from exc
     except Exception as exc:
         logger.warning("Unexpected email content persist error (%s): %s", type(exc).__name__, exc)
-        raise ApiError("Failed to persist email content.") from exc
+        raise fallback("Failed to persist email content.") from exc

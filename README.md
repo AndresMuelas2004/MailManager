@@ -10,6 +10,7 @@ It lets you group Gmail and Outlook accounts under mailbox entities, connect the
 - Unified inbox per mailbox across all connected accounts.
 - Send email from a specific account in a mailbox.
 - Draft creation that mirrors the draft at the provider (Gmail and Outlook).
+- Draft synchronization pulls the most recent drafts from every connected account into the local database (capped at 100 per account).
 - Batch read/unread status management across accounts.
 - Trash management: move emails to trash, permanently delete, or restore.
 - Spam operations: move to spam and restore from spam with cross-provider support.
@@ -230,18 +231,19 @@ Emails:
 
 - `POST /mailboxes/{mailbox_id}/emails/sync-metadata`
 - `POST /mailboxes/{mailbox_id}/emails/send`
-- `PATCH /mailboxes/{mailbox_id}/emails/read-status` — Batch-update read/unread status
+- `PATCH /mailboxes/{mailbox_id}/emails/read-status`
 - `POST /mailboxes/{mailbox_id}/emails/trash`
 - `POST /mailboxes/{mailbox_id}/emails/move-to-trash`
-- `POST /mailboxes/{mailbox_id}/emails/spam` — Move emails to spam
-- `GET /mailboxes/{mailbox_id}/emails` — List email metadata filtered by box. Required query param: `box=ALL_MAIL|SENT|SPAM|TRASH`. Optional query param: `account_id` (filter to one account).
-- `GET /mailboxes/{mailbox_id}/emails/{provider_message_id}/content` — Fetch full email body (cache-aside). Required query param: `account_id`.
-- `POST /mailboxes/{mailbox_id}/emails/restore-from-spam` — Restore emails from spam
+- `POST /mailboxes/{mailbox_id}/emails/spam`
+- `POST /mailboxes/{mailbox_id}/emails/restore-from-spam`
+- `GET /mailboxes/{mailbox_id}/emails` — Required query param: `box=ALL_MAIL|SENT|SPAM|TRASH`. Optional query param: `account_id`.
+- `GET /mailboxes/{mailbox_id}/emails/{provider_message_id}/content` — Required query param: `account_id`.
 
 Drafts:
 
+- `POST /mailboxes/{mailbox_id}/accounts/{account_id}/drafts` — Create a draft at the provider and persist it locally (Provider-First; Outlook uses `Prefer: IdType="ImmutableId"`).
+- `POST /mailboxes/{mailbox_id}/drafts/sync` — Fetch the most recent drafts from the provider(s) into the local database (full replace per account, capped at 100 drafts per account most recent by date). Optional query param `account_id`: when provided, syncs only that account; when omitted, syncs every account in the mailbox. Gmail uses parallel batched `drafts.get` calls (workers configurable via `GMAIL_BATCH_MAX_WORKERS`, default 5); Outlook uses `$top=100` + `$orderby=lastModifiedDateTime desc` paginated fetch with per-page retries.
 - `GET /mailboxes/{mailbox_id}/drafts` — List drafts for the mailbox (DB-only, no provider calls). Optional query param `account_id`: when provided, returns drafts of that account; when omitted, returns the unified view across all accounts in the mailbox. Ordered by `created_at DESC`.
-- `POST /mailboxes/{mailbox_id}/accounts/{account_id}/drafts` — Create a draft at the provider and persist it locally (Provider-First; Outlook uses `Prefer: IdType="ImmutableId"`)
 
 Auth:
 
@@ -301,6 +303,7 @@ Each API error code maps to a fixed HTTP status. The list below shows every code
 - `spam_restore_error` — 502
 - `email_content_fetch_error` — 502
 - `draft_creation_error` — 502
+- `draft_sync_error` — 502
 
 ## Testing
 

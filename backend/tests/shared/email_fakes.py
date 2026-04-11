@@ -59,6 +59,7 @@ class FakeEmailClient(EmailClient):
         restore_from_spam_exc: Exception | None = None,
         fetch_content_exc: Exception | None = None,
         create_draft_exc: Exception | None = None,
+        fetch_drafts_exc: Exception | None = None,
         metadata: list[EmailMetadata] | None = None,
         sync_cursor_return: str = DEFAULT_SYNC_CURSOR,
         auth_return: dict | None = None,
@@ -73,6 +74,7 @@ class FakeEmailClient(EmailClient):
         fetch_messages_metadata_return: list[EmailMetadata] | None = None,
         email_content: EmailContent | None = None,
         create_draft_return: DraftMetadata | None = None,
+        fetch_drafts_return: list[DraftMetadata] | None = None,
     ) -> None:
         self._account_label = account_label
         self._auth_exc = auth_exc
@@ -91,6 +93,8 @@ class FakeEmailClient(EmailClient):
         self._email_content = email_content or EmailContent(html_body=None, text_body=None)
         self._create_draft_exc = create_draft_exc
         self._create_draft_return = create_draft_return
+        self._fetch_drafts_exc = fetch_drafts_exc
+        self._fetch_drafts_return = list(fetch_drafts_return or [])
         self._metadata = list(metadata or [])
         self._sync_cursor_return = sync_cursor_return
         self._auth_return = auth_return
@@ -117,6 +121,7 @@ class FakeEmailClient(EmailClient):
         self.restore_from_spam_calls: list[list[str]] = []
         self.sent_emails: list[tuple[str, str, list[str]]] = []
         self.create_draft_calls: list[tuple[list[str], list[str], list[str], str, str]] = []
+        self.fetch_drafts_calls = 0
         self.deleted_message_ids: list[str] = []
         self.restored_items: list[dict] = []
         self.trashed_items: list[dict[str, str]] = []
@@ -254,6 +259,12 @@ class FakeEmailClient(EmailClient):
             created_at=DEFAULT_RECEIVED_AT,
             updated_at=DEFAULT_RECEIVED_AT,
         )
+
+    def fetch_drafts(self) -> list[DraftMetadata]:
+        self.fetch_drafts_calls += 1
+        if self._fetch_drafts_exc:
+            raise self._fetch_drafts_exc
+        return list(self._fetch_drafts_return)
 
     def get_account_label(self) -> str:
         return self._account_label

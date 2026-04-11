@@ -25,9 +25,20 @@ This policy applies to every modification — not only when adding a new provide
 
 ### `_last_errors` pattern
 
-`EmailManager` stores per-account errors in `_last_errors` (dict keyed by account label). Operations like `fetch_all_email_metadata()` and `authenticate_all_silent()` collect per-client errors without aborting other clients. The service layer inspects these via `get_last_errors()` after each operation.
+`EmailManager` stores per-account errors in `_last_errors` (dict keyed by account label). Operations like `fetch_all_email_metadata()`, `fetch_all_drafts()`, and `authenticate_all_silent()` collect per-client errors without aborting other clients. The service layer inspects these via `get_last_errors()` after each operation.
 
-**Gotcha**: `connect_account()` also resets `_last_errors` at entry. If a caller mixes `connect_account` with `get_last_errors` after a prior `fetch_all_email_metadata` / `authenticate_all_silent`, the earlier errors are lost. In practice this is not a problem because `connect_account` is only invoked from the interactive `POST .../connect` endpoint and never interleaved with batch operations, but it is worth noting when writing new service functions.
+**Gotcha**: `connect_account()` also resets `_last_errors` at entry. The earlier errors are lost. In practice this is not a problem because `connect_account` is only invoked from the interactive `POST .../connect` endpoint and never interleaved with batch operations, but it is worth noting when writing new service functions.
+
+**Note**: `connect_account()` re-raises the error directly (`raise EmailExternalAPIError(...) from exc`) without writing to `_last_errors` — the interactive flow has a single account, so there is nothing to aggregate, and the exception propagation is sufficient.
+
+### `_execute_batch_modify` single-pass vs `_execute_batch_get` retry loop
+
+The Gmail client uses two batch skeletons. Both split the work into chunks of `_BATCH_SIZE = 100` items and dispatch them to a `ThreadPoolExecutor` sized by `GMAIL_BATCH_MAX_WORKERS`. The asymmetry:
+
+- **`_execute_batch_get` (reads)** wraps each chunk in a retry loop (`_BATCH_MAX_RETRIES = 4` attempts with `_BATCH_RETRY_DELAY = 1.0s` between them). Reads are idempotent so retries are safe.
+- **`_execute_batch_modify` (writes: read-status, trash, spam)** is single-pass — a chunk that fails is reported as failed, no retry. Writes are not idempotent and accidentally doubling a label-mod operation is worse than a transient 503.
+
+Both clients reuse `_execute_batch_get` for `fetch_drafts` (with `resource="drafts"`), inheriting the retry loop.
 
 ### `connect_account` contract
 
@@ -244,6 +255,19 @@ Returned by `create_draft`. Carries the provider-assigned ID plus a round-trippe
 - `subject: str`, `body_html: str` — round-tripped subject and HTML body.
 - `created_at: datetime`, `updated_at: datetime` — provider-reported timestamps when available (Outlook returns `createdDateTime`/`lastModifiedDateTime`); otherwise `datetime.now(timezone.utc)` as a soft fallback. The service layer does not forward these to the database; the `drafts` table uses `DEFAULT now()` for both columns, so the provider-reported timestamps have no effect on persistence.
 
+### Draft fetch contract — `EmailClient.fetch_drafts() → list[DraftMetadata]`
+
+Both Gmail and Outlook expose `fetch_drafts()` with identical semantics at the service layer: fetch the most recent drafts for the authenticated account and return them as a flat `list[DraftMetadata]`. Both implementations **cap the result at `_DRAFTS_MAX_TOTAL = 100` drafts per call**.
+
+- **Gmail** (`drafts.list` + N × `drafts.get`): Gmail's `drafts.list` returns only `{id, message:{id, threadId}}`. A second round of per-draft `drafts.get` calls is required to get the full Message. `_list_all_draft_ids` paginates via `nextPageToken` and caps at `_DRAFTS_MAX_TOTAL`. The batch fetch reuses `_execute_batch_get` with `resource="drafts"` (parallel workers + retries). Gmail's `drafts.list` API does not support explicit `orderBy`; it returns drafts in reverse-chronological order by API convention (stable in practice, not guaranteed by the docs).
+- **Outlook** (`/me/mailFolders/drafts/messages`): a single paginated endpoint returns the complete `Message` object per draft in one call. Uses `$top={_DRAFTS_PAGE_SIZE}`, `$orderby=lastModifiedDateTime desc`, and `Prefer: IdType="ImmutableId"`. Each page is retried up to `_DRAFTS_MAX_RETRIES = 4` times on transient `EmailExternalAPIError`, with `_DRAFTS_RETRY_DELAY = 1.0s` between attempts. Pagination loop stops as soon as `_DRAFTS_MAX_TOTAL` drafts are collected, regardless of whether `@odata.nextLink` is present.
+
+`_parse_gmail_draft` extracts subject/to/cc/bcc from the Gmail `Message.payload.headers` and the HTML body via `_extract_html_body`. `_parse_outlook_draft` reads `subject`, `body.content`, `toRecipients[].emailAddress.address`, `ccRecipients`, `bccRecipients`, `createdDateTime`, `lastModifiedDateTime` from the Graph Message JSON.
+
+### Manager-level — `EmailManager.fetch_all_drafts() → dict[str, list[DraftMetadata]]`
+
+Iterates every registered client, calls `client.fetch_drafts()`, and returns `{account_label: list[DraftMetadata]}`. Per-account failures are **captured in `self._last_errors`** (never re-raised directly) — same error-aggregation pattern as `fetch_all_email_metadata`. It is the **caller's responsibility** to inspect `get_last_errors()` after calling `fetch_all_drafts()` and decide how to surface them (translate, log, ignore). The core layer only guarantees capture; translation into API-layer errors is not part of this contract.
+
 ## Provider-Specific Behavior — Outlook Folder Moves
 
 When Outlook moves a message between folders (via `POST /me/messages/{id}/move`), the message receives a **new ID**. The response body contains the moved message object with the updated `id` field. Any code that moves messages between folders must capture this new ID and propagate it to upper layers for database persistence. This applies to spam operations and any future folder-move operations.
@@ -255,7 +279,8 @@ When Outlook moves a message between folders (via `POST /me/messages/{id}/move`)
 Core layer:
 
 - [ ] Implement `EmailClient` in `backend/core/email/<provider>_client.py`.
-- [ ] Implement all abstract methods: `authenticate`, `authenticate_silent`, `fetch_email_metadata`, `send_email`, `verify_message_existence`, `delete_messages`, `restore_from_trash`, `fetch_messages_metadata`, `move_to_trash`, `update_read_status`, `move_to_spam`, `restore_from_spam`, `fetch_email_content`, `create_draft`, `get_account_label`.
+- [ ] Implement all abstract methods: `authenticate`, `authenticate_silent`, `fetch_email_metadata`, `send_email`, `verify_message_existence`, `delete_messages`, `restore_from_trash`, `fetch_messages_metadata`, `move_to_trash`, `update_read_status`, `move_to_spam`, `restore_from_spam`, `fetch_email_content`, `create_draft`, `fetch_drafts`, `get_account_label`.
+- [ ] `fetch_drafts` MUST enforce `_DRAFTS_MAX_TOTAL` (100) — return the most recent drafts according to the provider's timestamp.
 - [ ] Reuse helper functions from `helpers.py`.
 - [ ] Add provider branch in `EmailManager._build_client`.
 - [ ] Raise typed `CoreError` subclasses for all failure paths.

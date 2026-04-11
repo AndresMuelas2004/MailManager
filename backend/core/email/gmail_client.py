@@ -46,6 +46,7 @@ _BATCH_SIZE = 100
 _BATCH_MAX_RETRIES = 4
 _BATCH_RETRY_DELAY = 1.0  # seconds
 _INCREMENTAL_EVENT_THRESHOLD = 100
+_DRAFTS_MAX_TOTAL = 100
 
 
 def _parse_max_workers() -> int:
@@ -306,12 +307,17 @@ class GmailClient(EmailClient):
         fmt: str,
         extra_kwargs: dict[str, Any] | None = None,
         credentials: Credentials,
+        resource: str = "messages",
     ) -> tuple[dict[str, dict[str, Any]], list[str], list[str], float]:
         """Execute a single batch.execute() for one chunk of IDs.
 
         Each call builds its own thread-local HTTP transport and service
         because httplib2 is not thread-safe. Never raises — chunk-level
         errors mark all IDs as failed.
+
+        The ``resource`` parameter selects between ``users().messages()``
+        (default) and ``users().drafts()`` so the same parallel batch
+        skeleton is reused for the drafts sync.
 
         Returns (successes, retryable_failed_ids, permanent_failed_ids, elapsed_seconds).
         """
@@ -346,10 +352,11 @@ class GmailClient(EmailClient):
                     "userId": "me", "id": msg_id, "format": fmt,
                     **(extra_kwargs or {}),
                 }
-                batch.add(
-                    thread_service.users().messages().get(**get_kwargs),
-                    request_id=msg_id,
-                )
+                if resource == "drafts":
+                    request = thread_service.users().drafts().get(**get_kwargs)
+                else:
+                    request = thread_service.users().messages().get(**get_kwargs)
+                batch.add(request, request_id=msg_id)
             batch.execute()
         except HttpError as exc:
             status, reason = http_error_detail(exc)
@@ -380,8 +387,13 @@ class GmailClient(EmailClient):
         fmt: str,
         error_context: str,
         extra_kwargs: dict[str, Any] | None = None,
+        resource: str = "messages",
     ) -> dict[str, dict[str, Any]]:
-        """Fallback: sequential batch execution using self.service directly."""
+        """Fallback: sequential batch execution using self.service directly.
+
+        ``resource`` selects between ``users().messages()`` (default) and
+        ``users().drafts()`` so drafts sync can reuse the same skeleton.
+        """
         all_results: dict[str, dict[str, Any]] = {}
 
         for chunk_start in range(0, len(message_ids), _BATCH_SIZE):
@@ -411,10 +423,11 @@ class GmailClient(EmailClient):
                             "userId": "me", "id": msg_id, "format": fmt,
                             **resolved_extra,
                         }
-                        batch.add(
-                            self.service.users().messages().get(**get_kwargs),
-                            request_id=msg_id,
-                        )
+                        if resource == "drafts":
+                            request = self.service.users().drafts().get(**get_kwargs)
+                        else:
+                            request = self.service.users().messages().get(**get_kwargs)
+                        batch.add(request, request_id=msg_id)
                     batch.execute()
                 except HttpError as exc:
                     status, reason = http_error_detail(exc)
@@ -455,11 +468,16 @@ class GmailClient(EmailClient):
         fmt: str,
         error_context: str,
         extra_kwargs: dict[str, Any] | None = None,
+        resource: str = "messages",
     ) -> dict[str, dict[str, Any]]:
         """Execute a batched messages.get call; returns {msg_id: response}.
 
         When credentials are available, chunks run in parallel via
         ThreadPoolExecutor. Falls back to sequential execution otherwise.
+
+        ``resource`` selects between ``users().messages()`` (default) and
+        ``users().drafts()`` — the drafts sync reuses this skeleton so
+        the same parallel-batches-of-100 + retries logic applies.
         """
         if not message_ids:
             return {}
@@ -467,7 +485,7 @@ class GmailClient(EmailClient):
         if self._credentials is None:
             return self._execute_batch_get_sequential(
                 message_ids, fmt=fmt, error_context=error_context,
-                extra_kwargs=extra_kwargs,
+                extra_kwargs=extra_kwargs, resource=resource,
             )
 
         all_results: dict[str, dict[str, Any]] = {}
@@ -511,6 +529,7 @@ class GmailClient(EmailClient):
                         ids, chunk_idx,
                         fmt=fmt,
                         extra_kwargs=extra_kwargs, credentials=creds,
+                        resource=resource,
                     ): chunk_idx
                     for chunk_idx, ids in active_chunks.items()
                 }
@@ -816,6 +835,11 @@ class GmailClient(EmailClient):
 
         message_id = response.get("id", "")
         if message_id:
+            # Best-effort post-send metadata enrichment — failures here must
+            # never abort the send, which already succeeded at the provider.
+            # The generic `except Exception` is intentional: any failure from
+            # the follow-up metadata fetch (network, parsing, partial data)
+            # falls through to the minimal-metadata fallback below.
             try:
                 fetched = self.fetch_messages_metadata([message_id])
                 if fetched:
@@ -905,6 +929,168 @@ class GmailClient(EmailClient):
             created_at=now,
             updated_at=now,
         )
+
+    def fetch_drafts(self) -> list[DraftMetadata]:
+        """Fetch the most recent Gmail drafts (capped at _DRAFTS_MAX_TOTAL).
+
+        Gmail requires two steps: (1) drafts.list (paginated) to collect up
+        to _DRAFTS_MAX_TOTAL (100) draft IDs; (2) drafts.get for each ID to
+        retrieve the full Message. Step (2) is executed via
+        _execute_batch_get with resource="drafts" — same parallel-batches-of-100
+        + 4-retries skeleton used by the email-metadata sync. With a cap of
+        100 drafts this degrades to a single batch chunk, but the skeleton
+        scales transparently if the cap is raised in the future.
+
+        Gmail's drafts.list API does not support explicit ordering, but
+        returns drafts in reverse chronological order by API convention
+        (stable in practice, not guaranteed by the official docs).
+        """
+        if self.service is None:
+            raise EmailNotAuthenticatedError("Gmail fetch_drafts requires authentication.")
+
+        try:
+            draft_ids = self._list_all_draft_ids()
+        except HttpError as exc:
+            status, reason = http_error_detail(exc)
+            raise EmailExternalAPIError(
+                f"Gmail failed to list drafts (HTTP {status}: {reason})."
+            ) from exc
+        except Exception as exc:
+            raise EmailExternalAPIError(
+                f"Gmail unexpected drafts.list error ({type(exc).__name__}): {exc}"
+            ) from exc
+
+        if not draft_ids:
+            return []
+
+        raw = self._execute_batch_get(
+            draft_ids,
+            fmt="full",
+            error_context="batch drafts fetch",
+            resource="drafts",
+        )
+        try:
+            return [self._parse_gmail_draft(item) for item in raw.values()]
+        except Exception as exc:
+            raise EmailExternalAPIError(
+                f"Gmail unexpected draft parse error ({type(exc).__name__}): {exc}"
+            ) from exc
+
+    def _list_all_draft_ids(self) -> list[str]:
+        """Paginated drafts.list — collects up to _DRAFTS_MAX_TOTAL draft IDs.
+
+        Uses maxResults per page capped at both 500 (Gmail's documented max)
+        and the remaining quota until _DRAFTS_MAX_TOTAL is reached. Stops
+        paginating as soon as the total is hit.
+
+        With the current cap (100), this resolves in a single drafts.list
+        call — Gmail returns at most 100 IDs in one page and never follows
+        nextPageToken.
+        """
+        ids: list[str] = []
+        page_token: str | None = None
+        while len(ids) < _DRAFTS_MAX_TOTAL:
+            remaining = _DRAFTS_MAX_TOTAL - len(ids)
+            page_size = min(500, remaining)
+            response = (
+                self.service.users().drafts()
+                .list(userId="me", maxResults=page_size, pageToken=page_token)
+                .execute()
+            )
+            for draft in response.get("drafts", []) or []:
+                draft_id = draft.get("id")
+                if draft_id:
+                    ids.append(draft_id)
+                    if len(ids) >= _DRAFTS_MAX_TOTAL:
+                        break
+            page_token = response.get("nextPageToken")
+            if not page_token:
+                break
+        return ids
+
+    def _parse_gmail_draft(self, draft_response: dict[str, Any]) -> DraftMetadata:
+        """Convert a Gmail drafts.get response (format=full) into DraftMetadata.
+
+        Extracts subject/to/cc/bcc from headers, body from the payload parts
+        (prefers text/html, falls back to text/plain). Uses datetime.now()
+        for created_at/updated_at because Gmail does not expose a stable
+        draft timestamp in the Message resource.
+        """
+        provider_draft_id = str(draft_response.get("id", ""))
+        message = draft_response.get("message") or {}
+        payload = message.get("payload") or {}
+        headers = payload.get("headers") or []
+
+        def _header(name: str) -> str:
+            for h in headers:
+                if (h.get("name") or "").lower() == name.lower():
+                    return h.get("value") or ""
+            return ""
+
+        def _parse_addrs(raw: str) -> list[str]:
+            # "Name <a@b.com>, Other <c@d.com>" → ["a@b.com", "c@d.com"]
+            result: list[str] = []
+            for part in raw.split(","):
+                part = part.strip()
+                if not part:
+                    continue
+                if "<" in part and ">" in part:
+                    start = part.find("<") + 1
+                    end = part.find(">")
+                    if start < end:
+                        result.append(part[start:end].strip())
+                        continue
+                result.append(part)
+            return result
+
+        subject = _header("Subject")
+        to_recipients = _parse_addrs(_header("To"))
+        cc_recipients = _parse_addrs(_header("Cc"))
+        bcc_recipients = _parse_addrs(_header("Bcc"))
+        body_html = self._extract_html_body(payload)
+
+        now = datetime.now(timezone.utc)
+        return DraftMetadata(
+            provider_draft_id=provider_draft_id,
+            to_recipients=to_recipients,
+            cc_recipients=cc_recipients,
+            bcc_recipients=bcc_recipients,
+            subject=subject,
+            body_html=body_html,
+            created_at=now,
+            updated_at=now,
+        )
+
+    def _extract_html_body(self, payload: dict[str, Any]) -> str:
+        """Walk message parts to find text/html (fallback to text/plain).
+
+        Gmail stores the body base64url-encoded inside payload.body.data
+        (leaf parts only) or nested inside payload.parts (multipart).
+        """
+        def _decode(part: dict[str, Any]) -> str:
+            data = (part.get("body") or {}).get("data") or ""
+            if not data:
+                return ""
+            padding = "=" * (-len(data) % 4)
+            try:
+                return base64.urlsafe_b64decode(data + padding).decode("utf-8", errors="replace")
+            except (binascii.Error, UnicodeDecodeError) as exc:
+                logger.debug("Gmail draft body decode failed: %s", exc)
+                return ""
+
+        def _walk(part: dict[str, Any], *, prefer_html: bool) -> str:
+            mime_type = (part.get("mimeType") or "").lower()
+            if prefer_html and mime_type == "text/html":
+                return _decode(part)
+            if not prefer_html and mime_type == "text/plain":
+                return _decode(part)
+            for sub in part.get("parts") or []:
+                found = _walk(sub, prefer_html=prefer_html)
+                if found:
+                    return found
+            return ""
+
+        return _walk(payload, prefer_html=True) or _walk(payload, prefer_html=False)
 
     def delete_messages(self, message_ids: list[str]) -> list[str]:
         if self.service is None:

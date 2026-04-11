@@ -923,17 +923,308 @@ def test_33_create_draft_outlook(e2e_client):
 
 
 # ===================================================================
+# Section 5c: Drafts sync (provider → local DB)
+#
+# Each test creates a draft first (to guarantee the provider has at
+# least one known draft with a unique subject), clears the local rows
+# for that account, runs the sync, verifies the created draft is now
+# in the local DB, and finally cleans up the local rows. Provider-side
+# drafts are not deleted (same pattern as tests 32 and 33).
+# ===================================================================
+
+def _clear_local_drafts(account_id: str) -> None:
+    conn = _db_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM drafts WHERE account_id = %s", (account_id,))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _find_local_draft(provider_draft_id: str, account_id: str) -> tuple | None:
+    conn = _db_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT subject, to_recipients, cc_recipients, bcc_recipients, body_html "
+                "FROM drafts "
+                "WHERE provider_draft_id = %s AND account_id = %s",
+                (provider_draft_id, account_id),
+            )
+            return cur.fetchone()
+    finally:
+        conn.close()
+
+
+def test_34_sync_drafts_gmail_single_account(e2e_client):
+    """Gmail + single account: create a draft, sync that account, verify the draft is in DB."""
+    ts = datetime.now(timezone.utc).isoformat()
+    subject = f"E2E sync — Gmail single {ts}"
+    create_resp = e2e_client.post(
+        f"/mailboxes/{GMAIL_MAILBOX_ID}/accounts/{GMAIL_ACCOUNT_ID}/drafts",
+        json={
+            "to_recipients": [SEND_RECIPIENT],
+            "subject": subject,
+            "body_html": "<p>sync test</p>",
+        },
+    )
+    _assert_ok(create_resp)
+    created_id = create_resp.json()["provider_draft_id"]
+
+    _clear_local_drafts(GMAIL_ACCOUNT_ID)
+
+    sync_resp = e2e_client.post(
+        f"/mailboxes/{GMAIL_MAILBOX_ID}/drafts/sync?account_id={GMAIL_ACCOUNT_ID}",
+    )
+    _assert_ok(sync_resp)
+    data = sync_resp.json()
+    assert data["total_synced"] >= 1
+    assert len(data["accounts"]) == 1
+    assert data["accounts"][0]["account_id"] == GMAIL_ACCOUNT_ID
+    assert data["accounts"][0]["provider"] == "gmail"
+    assert data["accounts"][0]["drafts_synced"] == data["total_synced"]
+
+    row = _find_local_draft(created_id, GMAIL_ACCOUNT_ID)
+    assert row is not None, "Created draft should be present in DB after sync"
+    db_subject, db_to, db_cc, _db_bcc, db_body = row
+    assert db_subject == subject
+    assert db_to == [SEND_RECIPIENT]
+    assert db_cc == []
+    assert db_body == "<p>sync test</p>"
+
+    _clear_local_drafts(GMAIL_ACCOUNT_ID)
+
+
+def test_35_sync_drafts_gmail_mailbox(e2e_client):
+    """Gmail + mailbox-wide: create a draft, sync the whole mailbox, verify the draft is in DB."""
+    ts = datetime.now(timezone.utc).isoformat()
+    subject = f"E2E sync — Gmail mailbox {ts}"
+    create_resp = e2e_client.post(
+        f"/mailboxes/{GMAIL_MAILBOX_ID}/accounts/{GMAIL_ACCOUNT_ID}/drafts",
+        json={
+            "to_recipients": [SEND_RECIPIENT],
+            "subject": subject,
+            "body_html": "<p>sync test</p>",
+        },
+    )
+    _assert_ok(create_resp)
+    created_id = create_resp.json()["provider_draft_id"]
+
+    _clear_local_drafts(GMAIL_ACCOUNT_ID)
+
+    sync_resp = e2e_client.post(f"/mailboxes/{GMAIL_MAILBOX_ID}/drafts/sync")
+    _assert_ok(sync_resp)
+    data = sync_resp.json()
+    assert data["total_synced"] >= 1
+    assert len(data["accounts"]) == 1
+    assert data["accounts"][0]["account_id"] == GMAIL_ACCOUNT_ID
+    assert data["accounts"][0]["provider"] == "gmail"
+    assert data["accounts"][0]["drafts_synced"] == data["total_synced"]
+
+    row = _find_local_draft(created_id, GMAIL_ACCOUNT_ID)
+    assert row is not None, "Created draft should be present in DB after mailbox sync"
+    db_subject, db_to, db_cc, _db_bcc, db_body = row
+    assert db_subject == subject
+    assert db_to == [SEND_RECIPIENT]
+    assert db_cc == []
+    assert db_body == "<p>sync test</p>"
+
+    _clear_local_drafts(GMAIL_ACCOUNT_ID)
+
+
+def test_36_sync_drafts_outlook_single_account(e2e_client):
+    """Outlook + single account: create a draft, sync that account, verify the draft is in DB."""
+    ts = datetime.now(timezone.utc).isoformat()
+    subject = f"E2E sync — Outlook single {ts}"
+    create_resp = e2e_client.post(
+        f"/mailboxes/{OUTLOOK_MAILBOX_ID}/accounts/{OUTLOOK_ACCOUNT_ID}/drafts",
+        json={
+            "to_recipients": [SEND_RECIPIENT],
+            "subject": subject,
+            "body_html": "<p>sync test</p>",
+        },
+    )
+    _assert_ok(create_resp)
+    created_id = create_resp.json()["provider_draft_id"]
+
+    _clear_local_drafts(OUTLOOK_ACCOUNT_ID)
+
+    sync_resp = e2e_client.post(
+        f"/mailboxes/{OUTLOOK_MAILBOX_ID}/drafts/sync?account_id={OUTLOOK_ACCOUNT_ID}",
+    )
+    _assert_ok(sync_resp)
+    data = sync_resp.json()
+    assert data["total_synced"] >= 1
+    assert len(data["accounts"]) == 1
+    assert data["accounts"][0]["account_id"] == OUTLOOK_ACCOUNT_ID
+    assert data["accounts"][0]["provider"] == "outlook"
+    assert data["accounts"][0]["drafts_synced"] == data["total_synced"]
+
+    row = _find_local_draft(created_id, OUTLOOK_ACCOUNT_ID)
+    assert row is not None, "Created draft should be present in DB after sync"
+    db_subject, db_to, db_cc, _db_bcc, _db_body = row
+    assert db_subject == subject
+    assert db_to == [SEND_RECIPIENT]
+    assert db_cc == []
+    # Outlook wraps plain HTML in a full <html>/<body> structure, so body_html
+    # is not asserted byte-for-byte; presence is enough.
+
+    _clear_local_drafts(OUTLOOK_ACCOUNT_ID)
+
+
+def test_37_sync_drafts_outlook_mailbox(e2e_client):
+    """Outlook + mailbox-wide: create a draft, sync the whole mailbox, verify the draft is in DB."""
+    ts = datetime.now(timezone.utc).isoformat()
+    subject = f"E2E sync — Outlook mailbox {ts}"
+    create_resp = e2e_client.post(
+        f"/mailboxes/{OUTLOOK_MAILBOX_ID}/accounts/{OUTLOOK_ACCOUNT_ID}/drafts",
+        json={
+            "to_recipients": [SEND_RECIPIENT],
+            "subject": subject,
+            "body_html": "<p>sync test</p>",
+        },
+    )
+    _assert_ok(create_resp)
+    created_id = create_resp.json()["provider_draft_id"]
+
+    _clear_local_drafts(OUTLOOK_ACCOUNT_ID)
+
+    sync_resp = e2e_client.post(f"/mailboxes/{OUTLOOK_MAILBOX_ID}/drafts/sync")
+    _assert_ok(sync_resp)
+    data = sync_resp.json()
+    assert data["total_synced"] >= 1
+    assert len(data["accounts"]) == 1
+    assert data["accounts"][0]["account_id"] == OUTLOOK_ACCOUNT_ID
+    assert data["accounts"][0]["provider"] == "outlook"
+    assert data["accounts"][0]["drafts_synced"] == data["total_synced"]
+
+    row = _find_local_draft(created_id, OUTLOOK_ACCOUNT_ID)
+    assert row is not None, "Created draft should be present in DB after mailbox sync"
+    db_subject, db_to, db_cc, _db_bcc, _db_body = row
+    assert db_subject == subject
+    assert db_to == [SEND_RECIPIENT]
+    assert db_cc == []
+
+    _clear_local_drafts(OUTLOOK_ACCOUNT_ID)
+
+
+# ===================================================================
+# Section 5d: DB-backed GET coverage — pre-existing accounts (tests 38–40)
+# ===================================================================
+# Tests 38–40 complement the automated suite with end-to-end coverage of
+# three GET endpoints that return database content:
+#   - GET /mailboxes/{mid}/emails      (list_emails, DB-only)
+#   - GET /mailboxes/{mid}/emails/{id}/content (cache-aside)
+#   - GET /mailboxes/{mid}/drafts      (list_drafts, DB-only)
+# ===================================================================
+
+
+def test_38_list_emails_gmail(e2e_client):
+    """Sync gmail metadata, then GET /emails?box=ALL_MAIL and verify
+    the response contains rows for the account."""
+    # Ensure there is fresh metadata for the account.
+    sync_resp = e2e_client.post(
+        f"/mailboxes/{GMAIL_MAILBOX_ID}/emails/sync-metadata?account_id={GMAIL_ACCOUNT_ID}",
+    )
+    _assert_ok(sync_resp)
+
+    resp = e2e_client.get(
+        f"/mailboxes/{GMAIL_MAILBOX_ID}/emails"
+        f"?box=ALL_MAIL&account_id={GMAIL_ACCOUNT_ID}",
+    )
+    _assert_ok(resp)
+    emails = resp.json()
+    assert isinstance(emails, list)
+    assert len(emails) >= 1, "Gmail account should have at least one email in ALL_MAIL after sync"
+    # Every returned row must belong to the requested account and box.
+    for e in emails:
+        assert e["account_id"] == GMAIL_ACCOUNT_ID
+        assert e["box"] == "ALL_MAIL"
+
+
+def test_39_get_email_content_gmail(e2e_client):
+    """Pick an email from the DB, GET /content (first call hits provider
+    and caches; second call is a cache hit)."""
+    # Sync to guarantee metadata exists.
+    sync_resp = e2e_client.post(
+        f"/mailboxes/{GMAIL_MAILBOX_ID}/emails/sync-metadata?account_id={GMAIL_ACCOUNT_ID}",
+    )
+    _assert_ok(sync_resp)
+
+    list_resp = e2e_client.get(
+        f"/mailboxes/{GMAIL_MAILBOX_ID}/emails"
+        f"?box=ALL_MAIL&account_id={GMAIL_ACCOUNT_ID}",
+    )
+    _assert_ok(list_resp)
+    emails = list_resp.json()
+    if not emails:
+        pytest.skip("No Gmail emails available for content fetch test.")
+
+    provider_message_id = emails[0]["provider_message_id"]
+    content_url = (
+        f"/mailboxes/{GMAIL_MAILBOX_ID}/emails/{provider_message_id}/content"
+        f"?account_id={GMAIL_ACCOUNT_ID}"
+    )
+
+    # First call: cache miss → provider fetch.
+    first = e2e_client.get(content_url)
+    _assert_ok(first)
+    body_1 = first.json()
+    assert "html_body" in body_1 or "text_body" in body_1
+
+    # Second call: cache hit → same response.
+    second = e2e_client.get(content_url)
+    _assert_ok(second)
+    body_2 = second.json()
+    assert body_2 == body_1
+
+
+def test_40_list_drafts_gmail(e2e_client):
+    """Create a gmail draft, verify GET /drafts?account_id returns it, cleanup."""
+    ts = datetime.now(timezone.utc).isoformat()
+    subject = f"E2E list — Gmail {ts}"
+    create_resp = e2e_client.post(
+        f"/mailboxes/{GMAIL_MAILBOX_ID}/accounts/{GMAIL_ACCOUNT_ID}/drafts",
+        json={
+            "to_recipients": [SEND_RECIPIENT],
+            "subject": subject,
+            "body_html": "<p>list test</p>",
+        },
+    )
+    _assert_ok(create_resp)
+    created_id = create_resp.json()["provider_draft_id"]
+    try:
+        resp = e2e_client.get(
+            f"/mailboxes/{GMAIL_MAILBOX_ID}/drafts?account_id={GMAIL_ACCOUNT_ID}",
+        )
+        _assert_ok(resp)
+        drafts = resp.json()
+        assert isinstance(drafts, list)
+        matched = [d for d in drafts if d["provider_draft_id"] == created_id]
+        assert matched, (
+            f"Created draft {created_id} should appear in GET /drafts result."
+        )
+        assert matched[0]["subject"] == subject
+        assert matched[0]["account_id"] == GMAIL_ACCOUNT_ID
+    finally:
+        # Cleanup the local row (draft remains at the provider, same pattern
+        # as tests 32–37).
+        _clear_local_drafts(GMAIL_ACCOUNT_ID)
+
+
+# ===================================================================
 # Section 6: Auth lifecycle (MUST BE LAST — invalidates session)
 # ===================================================================
 
-def test_34_post_auth_logout(e2e_client, flow_state):
+def test_41_post_auth_logout(e2e_client, flow_state):
     response = e2e_client.post("/auth/logout")
     _assert_ok(response)
     assert response.json() == {"status": "logged_out"}
     flow_state["logged_out"] = "true"
 
 
-def test_35_get_auth_me_after_logout_401(e2e_client, flow_state):
+def test_42_get_auth_me_after_logout_401(e2e_client, flow_state):
     _require(flow_state, "logged_out")
     response = e2e_client.get("/auth/me")
     _assert_ok(response, expected=401)

@@ -149,3 +149,23 @@ class DraftCreationError(ApiError):
 
 class DraftListError(ApiError):
     code = "draft_list_error"
+
+
+class DraftSyncError(ApiError):
+    code = "draft_sync_error"
+
+
+class MailboxOperationError(ApiError):
+    code = "mailbox_operation_error"
+
+
+class AccountOperationError(ApiError):
+    code = "account_operation_error"
+
+
+class SessionOperationError(ApiError):
+    code = "session_operation_error"
+
+
+class UserOperationError(ApiError):
+    code = "user_operation_error"

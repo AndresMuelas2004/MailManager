@@ -13,7 +13,7 @@ from unittest.mock import MagicMock, call, patch
 import pytest
 from pydantic import SecretStr
 
-from core.email.email_client import EmailMetadata, LabelUpdate, SpamMoveResult, SyncResult
+from core.email.email_client import DraftMetadata, EmailMetadata, LabelUpdate, SpamMoveResult, SyncResult
 from core.email.errors import (
     EmailExternalAPIError,
     EmailMissingAppCredentialsError,
@@ -32,6 +32,8 @@ from core.email.outlook_client import (
     _DELTA_FOLDERS,
     _DELTA_SELECT_FIELDS,
     _DELTA_PAGE_SIZE,
+    _DRAFTS_MAX_RETRIES,
+    _DRAFTS_MAX_TOTAL,
     _FOLDER_TO_BOX,
 )
 
@@ -1838,3 +1840,184 @@ class TestRestoreFromSpam:
         assert f"{GRAPH_BASE_URL}/me/messages/m1/move" == url
         assert body == {"destinationId": "inbox"}
         assert result == [SpamMoveResult(old_id="m1", new_id="new_m1")]
+
+
+# ── fetch_drafts ────────────────────────────────────────────────────
+
+
+def _outlook_draft_json(draft_id: str, subject: str = "Hello") -> dict:
+    """Build a fake Graph Message JSON for a draft."""
+    return {
+        "id": draft_id,
+        "subject": subject,
+        "body": {"contentType": "HTML", "content": f"<p>body-{draft_id}</p>"},
+        "toRecipients": [{"emailAddress": {"address": "a@b.com"}}],
+        "ccRecipients": [{"emailAddress": {"address": "c@d.com"}}],
+        "bccRecipients": [],
+        "createdDateTime": "2024-01-01T10:00:00Z",
+        "lastModifiedDateTime": "2024-01-02T11:00:00Z",
+    }
+
+
+class TestFetchDrafts:
+    def test_not_authenticated_raises(self, client: OutlookClient):
+        client._access_token = None
+        with pytest.raises(EmailNotAuthenticatedError):
+            client.fetch_drafts()
+
+    def test_empty_mailbox_returns_empty(self, client: OutlookClient):
+        client._access_token = "tok"
+        with patch.object(client, "_graph_request", return_value={"value": []}):
+            result = client.fetch_drafts()
+        assert result == []
+
+    def test_under_cap_single_page(self, client: OutlookClient):
+        client._access_token = "tok"
+        page = {"value": [_outlook_draft_json(f"d{i}") for i in range(5)]}
+        with patch.object(client, "_graph_request", return_value=page) as mock_graph:
+            result = client.fetch_drafts()
+        assert len(result) == 5
+        assert all(isinstance(d, DraftMetadata) for d in result)
+        # Only one page fetch (no nextLink)
+        assert mock_graph.call_count == 1
+
+    def test_caps_at_max_total_single_page(self, client: OutlookClient):
+        """Defensive cut when a page returns >100 items."""
+        client._access_token = "tok"
+        oversize = [_outlook_draft_json(f"d{i}") for i in range(150)]
+        with patch.object(client, "_graph_request", return_value={"value": oversize}):
+            result = client.fetch_drafts()
+        assert len(result) == _DRAFTS_MAX_TOTAL
+
+    def test_caps_single_page_exactly_at_max(self, client: OutlookClient):
+        """A single page returning exactly _DRAFTS_MAX_TOTAL items with a
+        stale nextLink is sufficient to reach the cap — the loop exits
+        before following nextLink because len(drafts) == max."""
+        client._access_token = "tok"
+        page_one = {
+            "value": [_outlook_draft_json(f"d{i}") for i in range(100)],
+            "@odata.nextLink": f"{GRAPH_BASE_URL}/me/mailFolders/drafts/messages?$skip=100",
+        }
+
+        call_count = {"n": 0}
+
+        def mock_graph(method, url, **kwargs):
+            call_count["n"] += 1
+            return page_one
+
+        with patch.object(client, "_graph_request", side_effect=mock_graph):
+            result = client.fetch_drafts()
+
+        assert len(result) == _DRAFTS_MAX_TOTAL
+        # Only the first page is fetched — once 100 drafts are collected,
+        # the while loop exits before following nextLink.
+        assert call_count["n"] == 1
+
+    def test_caps_across_pages(self, client: OutlookClient):
+        """Two pages of 60 items each: the second page is partially consumed
+        (40 items) until the cap is hit, then the loop exits. Total 100
+        drafts, exactly 2 _graph_request calls."""
+        client._access_token = "tok"
+
+        page_one = {
+            "value": [_outlook_draft_json(f"p1-d{i}") for i in range(60)],
+            "@odata.nextLink": f"{GRAPH_BASE_URL}/me/mailFolders/drafts/messages?$skip=60",
+        }
+        page_two = {
+            "value": [_outlook_draft_json(f"p2-d{i}") for i in range(60)],
+            # nextLink present but must never be followed — cap reached mid-page.
+            "@odata.nextLink": f"{GRAPH_BASE_URL}/me/mailFolders/drafts/messages?$skip=120",
+        }
+        pages = [page_one, page_two]
+        call_count = {"n": 0}
+
+        def mock_graph(method, url, **kwargs):
+            call_count["n"] += 1
+            return pages.pop(0)
+
+        with patch.object(client, "_graph_request", side_effect=mock_graph):
+            result = client.fetch_drafts()
+
+        assert len(result) == _DRAFTS_MAX_TOTAL
+        assert call_count["n"] == 2
+        # First 60 come from page 1; next 40 come from page 2 (truncated).
+        assert result[0].provider_draft_id == "p1-d0"
+        assert result[59].provider_draft_id == "p1-d59"
+        assert result[60].provider_draft_id == "p2-d0"
+        assert result[99].provider_draft_id == "p2-d39"
+
+    def test_request_url_contains_orderby_and_top(self, client: OutlookClient):
+        client._access_token = "tok"
+        captured_urls: list[str] = []
+
+        def mock_graph(method, url, **kwargs):
+            captured_urls.append(url)
+            return {"value": []}
+
+        with patch.object(client, "_graph_request", side_effect=mock_graph):
+            client.fetch_drafts()
+
+        assert len(captured_urls) == 1
+        url = captured_urls[0]
+        assert "$top=100" in url
+        assert "$orderby=lastModifiedDateTime%20desc" in url
+        assert "$select=" in url
+        assert "id,subject,body" in url
+
+    def test_request_uses_immutable_id_header(self, client: OutlookClient):
+        client._access_token = "tok"
+        captured_headers: list[dict | None] = []
+
+        def mock_graph(method, url, **kwargs):
+            captured_headers.append(kwargs.get("extra_headers"))
+            return {"value": []}
+
+        with patch.object(client, "_graph_request", side_effect=mock_graph):
+            client.fetch_drafts()
+
+        assert captured_headers == [{"Prefer": 'IdType="ImmutableId"'}]
+
+    def test_page_retry_on_transient_error(self, client: OutlookClient):
+        client._access_token = "tok"
+        call_count = {"n": 0}
+
+        def mock_graph(method, url, **kwargs):
+            call_count["n"] += 1
+            if call_count["n"] <= 2:
+                raise EmailExternalAPIError("Transient")
+            return {"value": [_outlook_draft_json("d1")]}
+
+        with patch.object(client, "_graph_request", side_effect=mock_graph):
+            with patch("core.email.outlook_client.time.sleep"):
+                result = client.fetch_drafts()
+
+        assert len(result) == 1
+        assert call_count["n"] == 3
+
+    def test_page_retry_gives_up_after_max(self, client: OutlookClient):
+        client._access_token = "tok"
+        call_count = {"n": 0}
+
+        def mock_graph(method, url, **kwargs):
+            call_count["n"] += 1
+            raise EmailExternalAPIError("Persistent failure")
+
+        with patch.object(client, "_graph_request", side_effect=mock_graph):
+            with patch("core.email.outlook_client.time.sleep"):
+                with pytest.raises(EmailExternalAPIError, match="Persistent failure"):
+                    client.fetch_drafts()
+
+        # 1 initial attempt + _DRAFTS_MAX_RETRIES (=4) retries = 5 calls total.
+        assert call_count["n"] == _DRAFTS_MAX_RETRIES + 1
+
+    def test_parse_outlook_draft_extracts_fields(self, client: OutlookClient):
+        msg = _outlook_draft_json("d1", subject="Parsed subject")
+        draft = client._parse_outlook_draft(msg)
+        assert draft.provider_draft_id == "d1"
+        assert draft.subject == "Parsed subject"
+        assert draft.body_html == "<p>body-d1</p>"
+        assert draft.to_recipients == ["a@b.com"]
+        assert draft.cc_recipients == ["c@d.com"]
+        assert draft.bcc_recipients == []
+        assert draft.created_at == datetime(2024, 1, 1, 10, 0, 0, tzinfo=timezone.utc)
+        assert draft.updated_at == datetime(2024, 1, 2, 11, 0, 0, tzinfo=timezone.utc)

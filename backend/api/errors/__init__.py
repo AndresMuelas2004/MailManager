@@ -1,5 +1,10 @@
 """
 Error package exports for the API layer.
+
+Re-exports all ApiError subclasses so consumers can import either from
+`api.errors` (this package) or `api.errors.exceptions` (the implementation
+module). Current consumers use the latter; the former is kept as a
+stable public surface.
 """
 
 from api.errors.exceptions import (
@@ -7,6 +12,7 @@ from api.errors.exceptions import (
     AccountMisconfigured,
     AccountNotConnected,
     AccountNotFound,
+    AccountOperationError,
     ApiError,
     AppCredentialsInvalid,
     AppCredentialsMissing,
@@ -16,6 +22,7 @@ from api.errors.exceptions import (
     DatabaseQueryError,
     DraftCreationError,
     DraftListError,
+    DraftSyncError,
     EmailContentFetchError,
     EmailFetchError,
     EmailListError,
@@ -25,9 +32,11 @@ from api.errors.exceptions import (
     ExternalAPIError,
     Forbidden,
     MailboxNotFound,
+    MailboxOperationError,
     MoveToTrashError,
     ReadStatusUpdateError,
     RecipientsMissing,
+    SessionOperationError,
     SpamMoveError,
     SpamRestoreError,
     TokenDecryptionError,
@@ -36,6 +45,7 @@ from api.errors.exceptions import (
     TrashOperationError,
     Unauthorized,
     UserNotFound,
+    UserOperationError,
 )
 
 __all__ = [
@@ -43,6 +53,7 @@ __all__ = [
     "AccountMisconfigured",
     "AccountNotConnected",
     "AccountNotFound",
+    "AccountOperationError",
     "ApiError",
     "AppCredentialsInvalid",
     "AppCredentialsMissing",
@@ -52,6 +63,7 @@ __all__ = [
     "DatabaseQueryError",
     "DraftCreationError",
     "DraftListError",
+    "DraftSyncError",
     "EmailContentFetchError",
     "EmailFetchError",
     "EmailListError",
@@ -61,9 +73,11 @@ __all__ = [
     "ExternalAPIError",
     "Forbidden",
     "MailboxNotFound",
+    "MailboxOperationError",
     "MoveToTrashError",
     "ReadStatusUpdateError",
     "RecipientsMissing",
+    "SessionOperationError",
     "SpamMoveError",
     "SpamRestoreError",
     "TokenDecryptionError",
@@ -72,4 +86,5 @@ __all__ = [
     "TrashOperationError",
     "Unauthorized",
     "UserNotFound",
+    "UserOperationError",
 ]

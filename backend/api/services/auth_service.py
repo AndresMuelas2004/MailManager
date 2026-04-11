@@ -18,7 +18,13 @@ from auth import (
 )
 
 from database import DatabaseError, session_store, user_store
-from api.errors.exceptions import ApiError, EnvVarError, Unauthorized, UserNotFound
+from api.errors.exceptions import (
+    EnvVarError,
+    SessionOperationError,
+    Unauthorized,
+    UserNotFound,
+    UserOperationError,
+)
 from api.schemas.auth import AuthResponse, UserOut
 from api.services.services_helpers import translate_auth_error, translate_database_error
 
@@ -97,7 +103,7 @@ def google_login(raw_id_token: str, response: Response) -> AuthResponse:
         raise translate_database_error(exc) from exc
     except Exception as exc:
         logger.warning("Unexpected user upsert error (%s): %s", type(exc).__name__, exc)
-        raise ApiError("Failed to upsert user.") from exc
+        raise UserOperationError("Failed to upsert user during Google login.") from exc
 
     session_id = str(uuid4())
     expires_at = datetime.now(timezone.utc) + timedelta(days=settings.session_lifetime_days)
@@ -111,7 +117,7 @@ def google_login(raw_id_token: str, response: Response) -> AuthResponse:
         raise translate_database_error(exc) from exc
     except Exception as exc:
         logger.warning("Unexpected session creation error (%s): %s", type(exc).__name__, exc)
-        raise ApiError("Failed to create session.") from exc
+        raise SessionOperationError("Failed to create session during Google login.") from exc
 
     _set_session_cookie(response, session_id, settings)
     _cleanup_expired_sessions()
@@ -132,7 +138,7 @@ def validate_session(session_id: str | None) -> str:
         raise translate_database_error(exc) from exc
     except Exception as exc:
         logger.warning("Unexpected session validation error (%s): %s", type(exc).__name__, exc)
-        raise ApiError("Failed to validate session.") from exc
+        raise SessionOperationError("Failed to validate session.") from exc
     if session is None:
         raise Unauthorized("Session expired or invalid.")
     return session["user_id"]
@@ -149,7 +155,7 @@ def logout(session_id: str | None, response: Response) -> dict[str, str]:
             raise translate_database_error(exc) from exc
         except Exception as exc:
             logger.warning("Unexpected session deletion error (%s): %s", type(exc).__name__, exc)
-            raise ApiError("Failed to delete session.") from exc
+            raise SessionOperationError("Failed to delete session during logout.") from exc
     settings = _load_auth_settings()
     _clear_session_cookie(response, settings)
     return {"status": "logged_out"}
@@ -168,7 +174,7 @@ def delete_account(user_id: str, response: Response) -> dict[str, str]:
         raise translate_database_error(exc) from exc
     except Exception as exc:
         logger.warning("Unexpected user deletion error (%s): %s", type(exc).__name__, exc)
-        raise ApiError("Failed to delete user.") from exc
+        raise UserOperationError("Failed to delete user account.") from exc
     if not deleted:
         raise UserNotFound("User not found while deleting account.", {"user_id": user_id})
     settings = _load_auth_settings()
@@ -196,7 +202,7 @@ def get_current_user(user_id: str) -> UserOut:
         raise translate_database_error(exc) from exc
     except Exception as exc:
         logger.warning("Unexpected user lookup error (%s): %s", type(exc).__name__, exc)
-        raise ApiError("Failed to look up user.") from exc
+        raise UserOperationError("Failed to look up current user.") from exc
     if user is None:
         raise UserNotFound("User not found while fetching current user.", {"user_id": user_id})
     return UserOut(**user)

@@ -36,3 +36,18 @@ class DraftOut(BaseModel):
     body_html: str
     created_at: datetime
     updated_at: datetime
+
+
+class DraftsAccountSyncDetail(BaseModel):
+    """Per-account detail inside a drafts sync response."""
+
+    account_id: str
+    provider: str
+    drafts_synced: int
+
+
+class DraftsSyncResultOut(BaseModel):
+    """Response model for POST /mailboxes/{mailbox_id}/drafts/sync."""
+
+    total_synced: int
+    accounts: list[DraftsAccountSyncDetail]

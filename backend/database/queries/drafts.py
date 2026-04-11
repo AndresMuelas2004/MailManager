@@ -50,3 +50,27 @@ LIST_DRAFTS_BY_MAILBOX = """
     WHERE a.mailbox_id = %(mailbox_id)s
     ORDER BY d.created_at DESC
 """
+
+UPSERT_DRAFTS_BATCH = """
+    INSERT INTO drafts (
+        provider_draft_id, account_id, to_recipients, cc_recipients,
+        bcc_recipients, subject, body_html, created_at, updated_at
+    )
+    -- %s is the execute_values template placeholder, not a direct parameter
+    VALUES %s
+    -- created_at intentionally excluded — preserves first-seen timestamp
+    ON CONFLICT (provider_draft_id, account_id) DO UPDATE SET
+        to_recipients = EXCLUDED.to_recipients,
+        cc_recipients = EXCLUDED.cc_recipients,
+        bcc_recipients = EXCLUDED.bcc_recipients,
+        subject       = EXCLUDED.subject,
+        body_html     = EXCLUDED.body_html,
+        updated_at    = now()
+"""
+
+DELETE_DRAFTS_MISSING_FOR_ACCOUNT = """
+    -- keep_ids may be empty, which intentionally deletes all drafts for the account
+    DELETE FROM drafts
+    WHERE account_id = %(account_id)s
+      AND NOT (provider_draft_id = ANY(%(keep_ids)s))
+"""
