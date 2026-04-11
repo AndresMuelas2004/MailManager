@@ -273,6 +273,7 @@ Each API error code maps to a fixed HTTP status. The list below shows every code
 - `api_error` — 500 (default for any unmapped class)
 - `mailbox_not_found` — 404
 - `account_not_found` — 404
+- `email_not_found` — 404
 - `user_not_found` — 404
 - `account_misconfigured` — 400
 - `recipients_missing` — 400

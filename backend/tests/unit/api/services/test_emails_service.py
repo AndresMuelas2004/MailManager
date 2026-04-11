@@ -18,6 +18,7 @@ from api.errors.exceptions import (
     EmailContentFetchError,
     EmailFetchError,
     EmailListError,
+    EmailNotFound,
     EmailNotInTrash,
     EmailSendError,
     ExternalAPIError,
@@ -1336,6 +1337,13 @@ def _patch_get_content_common(monkeypatch, *, fake_client_kwargs=None):
 
     monkeypatch.setattr(emails_service, "build_manager_for_accounts", _build)
 
+    # Default: metadata row exists — tests that need a missing metadata row
+    # override this patch explicitly.
+    monkeypatch.setattr(
+        emails_service.email_metadata_store, "exists",
+        lambda _aid, _mid: True,
+    )
+
     # Stub persist helper (best-effort, no-op by default)
     monkeypatch.setattr(emails_service, "persist_email_content", lambda *_a: None)
 
@@ -1347,7 +1355,7 @@ class TestGetEmailFullContent:
         _patch_get_content_common(monkeypatch)
         monkeypatch.setattr(
             emails_service, "get_email_content",
-            lambda _aid, _mid: {"html_body": "<p>cached</p>", "text_body": "cached"},
+            lambda _aid, _mid, **_kw: {"html_body": "<p>cached</p>", "text_body": "cached"},
         )
 
         result = emails_service.get_email_full_content(
@@ -1365,13 +1373,13 @@ class TestGetEmailFullContent:
         })
         monkeypatch.setattr(
             emails_service, "get_email_content",
-            lambda _aid, _mid: None,
+            lambda _aid, _mid, **_kw: None,
         )
 
         persist_calls = []
         monkeypatch.setattr(
             emails_service, "persist_email_content",
-            lambda aid, mid, html, txt: persist_calls.append((aid, mid, html, txt)),
+            lambda aid, mid, html, txt, **_kw: persist_calls.append((aid, mid, html, txt)),
         )
 
         result = emails_service.get_email_full_content(
@@ -1392,13 +1400,13 @@ class TestGetEmailFullContent:
         })
         monkeypatch.setattr(
             emails_service, "get_email_content",
-            lambda _aid, _mid: None,
+            lambda _aid, _mid, **_kw: None,
         )
 
         persist_calls = []
         monkeypatch.setattr(
             emails_service, "persist_email_content",
-            lambda aid, mid, html, txt: persist_calls.append((aid, mid, html, txt)),
+            lambda aid, mid, html, txt, **_kw: persist_calls.append((aid, mid, html, txt)),
         )
 
         result = emails_service.get_email_full_content(
@@ -1414,7 +1422,7 @@ class TestGetEmailFullContent:
         _patch_get_content_common(monkeypatch)
         monkeypatch.setattr(
             emails_service, "get_email_content",
-            lambda _aid, _mid: None,
+            lambda _aid, _mid, **_kw: None,
         )
 
         with pytest.raises(AccountNotFound):
@@ -1429,7 +1437,7 @@ class TestGetEmailFullContent:
         })
         monkeypatch.setattr(
             emails_service, "get_email_content",
-            lambda _aid, _mid: None,
+            lambda _aid, _mid, **_kw: None,
         )
 
         with pytest.raises(ExternalAPIError):
@@ -1446,7 +1454,7 @@ class TestGetEmailFullContent:
         })
         monkeypatch.setattr(
             emails_service, "get_email_content",
-            lambda _aid, _mid: None,
+            lambda _aid, _mid, **_kw: None,
         )
         monkeypatch.setattr(
             emails_service, "persist_email_content",
@@ -1458,3 +1466,41 @@ class TestGetEmailFullContent:
         )
         assert result.text_body == "ok"
         assert result.html_body is not None
+
+    def test_email_not_found_when_metadata_absent(self, monkeypatch):
+        """Missing metadata row raises EmailNotFound before touching cache."""
+        _patch_get_content_common(monkeypatch)
+        monkeypatch.setattr(
+            emails_service.email_metadata_store, "exists",
+            lambda _aid, _mid: False,
+        )
+
+        get_content_calls = []
+        monkeypatch.setattr(
+            emails_service, "get_email_content",
+            lambda _aid, _mid: get_content_calls.append((_aid, _mid)) or None,
+        )
+
+        with pytest.raises(EmailNotFound):
+            emails_service.get_email_full_content(
+                _MAILBOX_ID, "never-existed", _ACCOUNT_ID, _USER_ID,
+            )
+        # exists must short-circuit before cache read
+        assert get_content_calls == []
+
+    def test_metadata_exists_database_error_translated(self, monkeypatch):
+        """DatabaseError during exists() is translated via translate_database_error."""
+        from database.errors.exceptions import QueryError as DbQueryError
+        from api.errors.exceptions import DatabaseQueryError
+
+        _patch_get_content_common(monkeypatch)
+
+        def _raise(_aid, _mid):
+            raise DbQueryError("exists fail")
+
+        monkeypatch.setattr(emails_service.email_metadata_store, "exists", _raise)
+
+        with pytest.raises(DatabaseQueryError):
+            emails_service.get_email_full_content(
+                _MAILBOX_ID, "m1", _ACCOUNT_ID, _USER_ID,
+            )

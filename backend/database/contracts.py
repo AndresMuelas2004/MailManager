@@ -125,6 +125,10 @@ class EmailMetadataStore(ABC):
     def list_by_mailbox_and_box(self, mailbox_id: str, box: str) -> list[dict[str, Any]]:
         raise NotImplementedError
 
+    @abstractmethod
+    def exists(self, account_id: str, provider_message_id: str) -> bool:
+        raise NotImplementedError
+
 
 class EmailContentStore(ABC):
     """

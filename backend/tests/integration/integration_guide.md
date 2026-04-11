@@ -98,10 +98,10 @@ Trash management integration tests first sync emails via the normal sync endpoin
 
 ### Email content integration coverage
 
-- `test_email_content.py`: 6 tests for `GET /mailboxes/{mid}/emails/{msg_id}/content?account_id=...`.
+- `test_email_content.py`: 7 tests for `GET /mailboxes/{mid}/emails/{msg_id}/content?account_id=...`.
 - Cache-aside pattern: DB hit path (returns cached content without calling core) and DB miss path (fetches from provider via FakeEmailClient, FakeEmailClient defaults return `html_body=None` and `text_body=None`).
-- Error paths: wrong user 403, missing account 404, missing mailbox 404, core error 502.
-- Additional error translation tests in `test_core_error_translation.py`: silent auth error (`EmailAuthError`) -> 409 `account_not_connected`, RuntimeError -> 502 `external_api_error` (RuntimeError is wrapped by EmailManager into EmailExternalAPIError before the service sees it).
+- Error paths: wrong user 403, missing account 404, missing mailbox 404, core error 502, and **missing metadata row 404 `email_not_found`** (`test_get_email_content_missing_metadata_returns_404` — verifies the pre-check added in migration 0013 rejects unknown message IDs before touching the provider or the FK).
+- Additional error translation tests in `test_core_error_translation.py`: silent auth error (`EmailAuthError`) -> 409 `account_not_connected`, RuntimeError -> 502 `external_api_error` (RuntimeError is wrapped by EmailManager into EmailExternalAPIError before the service sees it). Both tests were updated when the metadata pre-check was introduced: they now target `m1` (a message ID seeded by `sample_metadata` via sync-metadata, or inserted directly into `email_metadata` via `isolated_db` when the fake's `auth_silent_exc` would block sync-metadata). Without this adjustment the pre-check would return 404 before the path the tests want to exercise.
 
 ### Drafts integration coverage
 

@@ -617,12 +617,27 @@ def test_move_to_trash_core_error_translations(
     indirect=True,
 )
 def test_get_email_content_silent_auth_error_returns_409(
-    failing_test_client, setup_mailbox_and_account,
+    failing_test_client, setup_mailbox_and_account, isolated_db,
 ):
     """Silent auth failure before fetch_email_content -> AccountNotConnected (409)."""
     mid, aid = setup_mailbox_and_account(failing_test_client)
+    # Seed metadata directly so the new exists() pre-check passes.
+    # sync-metadata cannot be used here because the same auth_silent_exc
+    # injected in failing_test_client would make it fail with 409 and
+    # never persist any rows.
+    with isolated_db.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO email_metadata (
+                provider_message_id, account_id, thread_id, from_email,
+                from_name, subject, received_at, is_read, box
+            )
+            VALUES (%s, %s::uuid, %s, %s, %s, %s, now(), %s, %s)
+            """,
+            ("m1", aid, "t1", "a@b.com", "A", "subj", False, "ALL_MAIL"),
+        )
     resp = failing_test_client.get(
-        f"{_MAILBOX_URL}/{mid}/emails/test-msg-001/content?account_id={aid}",
+        f"{_MAILBOX_URL}/{mid}/emails/m1/content?account_id={aid}",
     )
     assert resp.status_code == 409
     assert resp.json()["error"]["code"] == "account_not_connected"
@@ -642,10 +657,11 @@ def test_get_email_content_runtime_error_returns_502(
 ):
     """RuntimeError during fetch_email_content -> manager wraps -> 502 external_api_error."""
     mid, aid = setup_mailbox_and_account(failing_test_client)
-    # Sync metadata first so the account is connected
+    # Sync metadata first so the account is connected and `m1` exists,
+    # so the new exists() pre-check passes before reaching fetch_email_content.
     failing_test_client.post(f"{_MAILBOX_URL}/{mid}/emails/sync-metadata")
     resp = failing_test_client.get(
-        f"{_MAILBOX_URL}/{mid}/emails/test-msg-001/content?account_id={aid}",
+        f"{_MAILBOX_URL}/{mid}/emails/m1/content?account_id={aid}",
     )
     assert resp.status_code == 502
     assert resp.json()["error"]["code"] == "external_api_error"

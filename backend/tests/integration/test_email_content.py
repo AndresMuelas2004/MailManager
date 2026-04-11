@@ -164,3 +164,19 @@ def test_get_email_content_core_error_returns_502(
     resp = failing_test_client.get(_content_url(mid, "m1", aid))
     assert resp.status_code == 502
     assert resp.json()["error"]["code"] == "external_api_error"
+
+
+# ------------------------------------------------------------------
+# Missing metadata row → 404 email_not_found
+# ------------------------------------------------------------------
+
+
+def test_get_email_content_missing_metadata_returns_404(
+    test_client, setup_mailbox_and_account,
+):
+    """When the requested email has no metadata row, return 404 email_not_found."""
+    mid, aid = setup_mailbox_and_account(test_client)
+    # Intentionally skip sync-metadata so no metadata exists for this account.
+    resp = test_client.get(_content_url(mid, "never-existed", aid))
+    assert resp.status_code == 404
+    assert resp.json()["error"]["code"] == "email_not_found"

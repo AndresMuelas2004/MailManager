@@ -141,6 +141,30 @@ class PgEmailMetadataStore(EmailMetadataStore):
                 f"Unexpected list provider message IDs error ({type(exc).__name__}): {exc}"
             ) from exc
 
+    def exists(self, account_id: str, provider_message_id: str) -> bool:
+        try:
+            with connection.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        queries.EXISTS_BY_MESSAGE_ID,
+                        {
+                            "account_id": account_id,
+                            "provider_message_id": provider_message_id,
+                        },
+                    )
+                    row = cur.fetchone()
+        except psycopg2.errors.InvalidTextRepresentation:
+            return False
+        except DatabaseError:
+            raise
+        except psycopg2.Error as exc:
+            raise QueryError("Failed to check email metadata existence.") from exc
+        except Exception as exc:
+            raise QueryError(
+                f"Unexpected email metadata exists check error ({type(exc).__name__}): {exc}"
+            ) from exc
+        return row is not None
+
 
     def get_trash_emails_by_ids(self, account_id: str, message_ids: list[str]) -> list[dict[str, Any]]:
         if not message_ids:

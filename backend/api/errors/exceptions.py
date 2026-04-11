@@ -31,6 +31,10 @@ class AccountNotFound(ApiError):
     code = "account_not_found"
 
 
+class EmailNotFound(ApiError):
+    code = "email_not_found"
+
+
 class AccountConnectAuthError(ApiError):
     code = "account_connect_auth_error"
 

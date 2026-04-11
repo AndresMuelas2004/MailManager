@@ -15,6 +15,7 @@ from api.errors.exceptions import (
     EmailContentFetchError,
     EmailFetchError,
     EmailListError,
+    EmailNotFound,
     EmailNotInTrash,
     EmailSendError,
     MoveToTrashError,
@@ -785,6 +786,27 @@ def get_email_full_content(
         raise AccountNotFound(
             f"Account '{account_id}' not found in mailbox '{mailbox_id}' "
             "during email content fetch."
+        )
+
+    # Defensive metadata existence check. Required since email_content now
+    # has a composite FK to email_metadata; a missing metadata row would
+    # otherwise surface as a 500 from the FK violation at upsert time.
+    try:
+        metadata_exists = email_metadata_store.exists(account_id, provider_message_id)
+    except DatabaseError as exc:
+        raise translate_database_error(exc) from exc
+    except Exception as exc:
+        logger.warning(
+            "Unexpected metadata existence check error during content fetch (%s): %s",
+            type(exc).__name__, exc,
+        )
+        raise EmailContentFetchError(
+            "Failed to verify email existence for content fetch."
+        ) from exc
+    if not metadata_exists:
+        raise EmailNotFound(
+            f"Email '{provider_message_id}' not found for account '{account_id}' "
+            f"in mailbox '{mailbox_id}' during email content fetch."
         )
 
     row = get_email_content(account_id, provider_message_id, fallback=EmailContentFetchError)

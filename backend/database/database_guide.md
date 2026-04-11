@@ -89,9 +89,23 @@ Stores the full HTML/text body of individual emails in a separate `email_content
 - **`get(account_id, provider_message_id) → dict | None`** — returns `{html_body, text_body, fetched_at}` or `None` if not cached. Handles `InvalidTextRepresentation` gracefully (returns `None` for invalid UUIDs).
 - **`upsert(account_id, provider_message_id, html_body, text_body) → None`** — inserts or updates the cached content. Uses `ON CONFLICT ... DO UPDATE` to overwrite `html_body`, `text_body`, and set `fetched_at = now()`.
 
-No delete methods in the contract — deletion happens via `ON DELETE CASCADE` (when the parent account is deleted) or via inline SQL in cleanup scripts (`Scripts/cli_utilities/clear_email_content.py`).
+No delete methods in the contract — deletion happens transitively via `ON DELETE CASCADE` from `email_metadata` (and indirectly from `accounts`), or via inline SQL in cleanup scripts (`Scripts/cli_utilities/clear_email_content.py`).
 
-The `email_content` table has the same composite PK as `email_metadata` (`provider_message_id, account_id`) but no FK to `email_metadata` — content can exist independently (orphaned content is harmless).
+#### Shared primary key pattern (migration 0013)
+
+`email_content` uses the canonical SQL **shared primary key pattern** for optional 1:1 relationships:
+
+- Composite PK `(provider_message_id, account_id)` — same shape as `email_metadata`.
+- Composite FK `(provider_message_id, account_id) → email_metadata(provider_message_id, account_id) ON DELETE CASCADE` (constraint name `email_content_metadata_fkey`).
+- **No direct FK to `accounts`** — the cascade chain `accounts → email_metadata → email_content` is fully transitive, so account deletion still wipes both tables.
+
+This enforces referential integrity at the schema level: a content row cannot exist without a matching metadata row. Orphan content is no longer possible.
+
+**Service-layer contract:** because the FK target is `email_metadata`, `emails_service.get_email_full_content` must verify the metadata row exists **before** attempting to upsert content (otherwise the upsert would fail with a `ForeignKeyViolation → 500`). The service uses the `EmailMetadataStore.exists` contract method for that pre-check and raises `EmailNotFound` (404) if the metadata row is missing.
+
+### `EmailMetadataStore.exists(account_id, provider_message_id) → bool`
+
+Lightweight single-row probe backed by `SELECT 1 FROM email_metadata WHERE ... LIMIT 1`. Returns `True` if the metadata row exists for the given account, `False` otherwise. Handles `InvalidTextRepresentation` gracefully (returns `False` for malformed UUIDs) so the service layer can map a bad input to 404 instead of 500. Used exclusively by `get_email_full_content` as the pre-check described above.
 
 ## Behavioral Contracts — Drafts
 

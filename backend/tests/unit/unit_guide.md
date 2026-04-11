@@ -41,7 +41,7 @@ These helpers centralize the monkeypatching so individual test functions stay co
 
 ### `_patch_get_content_common`
 
-`_patch_get_content_common` in `test_emails_service.py` patches `ensure_mailbox_access`, `account_store.get`, `load_wrapped_app_credentials`, `load_wrapped_account_tokens`, `account_store.upsert_tokens`, `build_manager_for_accounts`, and **`persist_email_content`** (the cache-write helper). It does **not** patch `get_email_content` itself — each test inside `TestGetEmailFullContent` patches `get_email_content` independently to control whether the test exercises the cache-hit or cache-miss branch.
+`_patch_get_content_common` in `test_emails_service.py` patches `ensure_mailbox_access`, `account_store.get`, `load_wrapped_app_credentials`, `load_wrapped_account_tokens`, `account_store.upsert_tokens`, `build_manager_for_accounts`, **`email_metadata_store.exists → True`** (default: metadata row present, so the pre-check short-circuits; tests that need a missing metadata row override this patch explicitly), and **`persist_email_content`** (the cache-write helper). It does **not** patch `get_email_content` itself — each test inside `TestGetEmailFullContent` patches `get_email_content` independently to control whether the test exercises the cache-hit or cache-miss branch.
 
 ### Shared fakes
 
@@ -85,7 +85,8 @@ These helpers centralize the monkeypatching so individual test functions stay co
 
 ### Email content coverage
 
-- `TestGetEmailFullContent` in `test_emails_service.py`: 6 tests covering DB hit, DB miss with provider fetch, HTML sanitization, account not found, core error translation, best-effort persist failure. See the `_patch_get_content_common` description above for the patch set.
+- `TestGetEmailFullContent` in `test_emails_service.py`: 8 tests covering DB hit, DB miss with provider fetch, HTML sanitization, account not found, core error translation, best-effort persist failure, `EmailNotFound` when the metadata pre-check returns `False`, and `DatabaseError` during the pre-check translated via `translate_database_error`. See the `_patch_get_content_common` description above for the patch set (note that `email_metadata_store.exists` is monkeypatched to `True` by default).
+- `test_email_metadata_repository.py` also covers `PgEmailMetadataStore.exists` with 6 tests: row present → `True`, row absent → `False`, malformed UUID (`InvalidTextRepresentation`) → `False`, psycopg2 error → `QueryError`, generic exception → `QueryError`, and `ConnectionPoolError` propagation.
 - `test_sanitize.py`: tests for `sanitize_email_html` -- strips scripts, preserves safe tags, strips event handlers, blocks javascript href, allows mailto/cid protocols, handles empty/whitespace input, strips onerror on img, strips style tag.
 - `test_email_content_repository.py`: 10 tests for `PgEmailContentStore` (get/upsert with error wrapping, InvalidTextRepresentation handling).
 - `TestGetEmailContent` and `TestPersistEmailContent` in `test_services_helpers.py`: 3 tests each covering happy path, DatabaseError translation, and generic exception fallback.

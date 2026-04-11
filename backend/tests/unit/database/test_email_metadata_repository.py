@@ -626,3 +626,51 @@ def test_list_by_mailbox_and_box_propagates_connection_pool_error(monkeypatch):
 
     with pytest.raises(ConnectionPoolError, match="pool down"):
         em_module.email_metadata_store.list_by_mailbox_and_box("mbx1", "ALL_MAIL")
+
+
+# ===== exists =====
+
+
+def test_exists_returns_true_when_row_present(monkeypatch):
+    cursor = FakeCursor(fetchone_results=[(1,)])
+    patch_connection(monkeypatch, em_module, [cursor])
+
+    assert em_module.email_metadata_store.exists("acc1", "m1") is True
+    assert len(cursor.executed) == 1
+
+
+def test_exists_returns_false_when_row_absent(monkeypatch):
+    cursor = FakeCursor(fetchone_results=[None])
+    patch_connection(monkeypatch, em_module, [cursor])
+
+    assert em_module.email_metadata_store.exists("acc1", "m-missing") is False
+
+
+def test_exists_invalid_uuid_returns_false(monkeypatch):
+    cursor = FakeCursor(execute_side_effect=psycopg2.errors.InvalidTextRepresentation())
+    patch_connection(monkeypatch, em_module, [cursor])
+
+    assert em_module.email_metadata_store.exists("not-a-uuid", "m1") is False
+
+
+def test_exists_psycopg2_error_raises_query_error(monkeypatch):
+    cursor = FakeCursor(execute_side_effect=psycopg2.OperationalError("fail"))
+    patch_connection(monkeypatch, em_module, [cursor])
+
+    with pytest.raises(QueryError, match="Failed to check email metadata existence"):
+        em_module.email_metadata_store.exists("acc1", "m1")
+
+
+def test_exists_generic_exception_raises_query_error(monkeypatch):
+    cursor = FakeCursor(execute_side_effect=RuntimeError("boom"))
+    patch_connection(monkeypatch, em_module, [cursor])
+
+    with pytest.raises(QueryError, match="RuntimeError"):
+        em_module.email_metadata_store.exists("acc1", "m1")
+
+
+def test_exists_propagates_connection_pool_error(monkeypatch):
+    patch_connection_error(monkeypatch, em_module, ConnectionPoolError("pool down"))
+
+    with pytest.raises(ConnectionPoolError, match="pool down"):
+        em_module.email_metadata_store.exists("acc1", "m1")

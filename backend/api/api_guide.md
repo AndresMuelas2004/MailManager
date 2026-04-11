@@ -131,7 +131,7 @@ GET endpoints that read exclusively from the database (no provider API calls) ca
 - **Query params**: `account_id` (required, `min_length=1`).
 - **Response**: `EmailContentOut` with `html_body: str | None` and `text_body: str | None`.
 - **Error**: `EmailContentFetchError` (code `"email_content_fetch_error"`, HTTP 502) — raised on provider-level or unexpected failures when fetching content.
-- **Flow**: validate ownership via `ensure_mailbox_access` → validate account exists → check DB cache via `get_email_content` helper → if cached, return immediately → if not cached, build manager → authenticate silently → fetch from provider via `manager.fetch_email_content` → sanitize HTML via `sanitize_email_html` → best-effort persist via `persist_email_content` → return content.
+- **Flow**: validate ownership via `ensure_mailbox_access` → validate account exists → verify metadata row exists via `email_metadata_store.exists` (raises `EmailNotFound` 404 otherwise — required because `email_content` has a composite FK to `email_metadata` since migration 0013) → check DB cache via `get_email_content` helper → if cached, return immediately → if not cached, build manager → authenticate silently → fetch from provider via `manager.fetch_email_content` → sanitize HTML via `sanitize_email_html` → best-effort persist via `persist_email_content` → return content.
 - **Best-effort persist**: if the DB write fails after content is fetched, the error is logged but swallowed — the content is still returned to the user. Same pattern as `send_email` metadata persistence.
 - **HTML sanitization**: `sanitize_email_html` strips dangerous tags (`<script>`, `<iframe>`, etc.), blocks `javascript:`/`data:` protocols in `href` and `src`, and preserves safe email formatting tags. Applied before persisting to DB.
 
@@ -260,6 +260,7 @@ Complete, authoritative list of every `ApiError` subclass registered in `_STATUS
 |---|---|---|---|
 | `MailboxNotFound` | `mailbox_not_found` | 404 | Mailbox not found or ownership check failed mid-query. |
 | `AccountNotFound` | `account_not_found` | 404 | Account not found inside its mailbox during an operation. |
+| `EmailNotFound` | `email_not_found` | 404 | The requested email has no row in `email_metadata` for the target account. Raised by `get_email_full_content` before the cache read, because `email_content` has a composite FK to `email_metadata` (migration 0013) and unknown messages would otherwise surface as a 500 from the FK violation at upsert time. |
 | `UserNotFound` | `user_not_found` | 404 | Authenticated user does not exist in the database (e.g. during `DELETE /auth/me` or `GET /auth/me`). |
 | `EmailNotInTrash` | `email_not_in_trash` | 409 | A `manage_trash` pre-check rejected an email that was not currently in the `TRASH` box. |
 | `AccountNotConnected` | `account_not_connected` | 409 | Silent auth failed or tokens are missing — the user must reconnect the account. Raised by `raise_on_silent_auth_errors`. |
