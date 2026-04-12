@@ -44,7 +44,7 @@ Pre-existing test account identifiers are centralized in `e2e_config.py` with en
 | `OUTLOOK_ACCOUNT_ID` | `E2E_OUTLOOK_ACCOUNT_ID` | `3c55eb17-9d5e-4d31-a3b5-14c6c24279b9` |
 | `SEND_RECIPIENT` | `E2E_SEND_RECIPIENT` | `muelonmuelon12@gmail.com` |
 
-`SEND_RECIPIENT` is the destination address used by `test_19_send_email_gmail`, `test_20_send_email_outlook`, `test_32_create_draft_gmail`, `test_33_create_draft_outlook`, `test_34_sync_drafts_gmail_single_account`, `test_35_sync_drafts_gmail_mailbox`, `test_36_sync_drafts_outlook_single_account`, `test_37_sync_drafts_outlook_mailbox`, and `test_40_list_drafts_gmail`. Override it via `E2E_SEND_RECIPIENT` when running the suite against an environment where the default address is not available.
+`SEND_RECIPIENT` is the destination address used by `test_19_send_email_gmail`, `test_20_send_email_outlook`, `test_32_create_draft_gmail`, `test_33_create_draft_outlook`, `test_34_sync_drafts_gmail_single_account`, `test_35_sync_drafts_gmail_mailbox`, `test_36_sync_drafts_outlook_single_account`, `test_37_sync_drafts_outlook_mailbox`, `test_40_list_drafts_gmail`, `test_41_update_draft_gmail`, and `test_42_update_draft_outlook`. Override it via `E2E_SEND_RECIPIENT` when running the suite against an environment where the default address is not available.
 
 ### Pre-existing test accounts — one per provider
 
@@ -172,16 +172,33 @@ These tests rely on the global `_DRAFTS_MAX_TOTAL = 100` cap being high enough t
 |---|---|---|
 | 38 | `GET /mailboxes/{mid}/emails?box=ALL_MAIL&account_id=...` (gmail) | independent — syncs metadata first, then asserts the list response filters correctly |
 | 39 | `GET /mailboxes/{mid}/emails/{id}/content?account_id=...` (gmail) | independent — syncs, picks an id, fetches twice to exercise cache-miss + cache-hit |
-| 40 | `GET /mailboxes/{mid}/drafts?account_id=...` (gmail) | independent — creates a draft, asserts it appears in the listing, cleans up the local row |
+| 40 | `GET /mailboxes/{mid}/drafts?account_id=...` (gmail) | independent — creates a draft, asserts it appears in the listing, clears all local draft rows for the account |
 
 These tests exist because the three database-backed GET endpoints (`list_emails`, `get_email_full_content`, `list_drafts`) deserve at least one provider-real check. Integration tests already cover them exhaustively against seeded data, so the E2E layer only needs a smoke check that confirms the router is wired correctly and the real DB contains the expected rows after provider sync. Tests 38 and 39 rely on a successful `sync-metadata` call earlier in the session. Test 40 uses the Gmail account only (Outlook is not covered by a GET listing E2E today).
 
-### Section 6: Auth lifecycle — MUST BE LAST (tests 41–42)
+### Section 5e: Drafts update — pre-existing accounts (tests 41–42)
 
 | Test | Endpoint | Dependencies |
 |---|---|---|
-| 41 | `POST /auth/logout` | independent → produces `logged_out` |
-| 42 | `GET /auth/me` → 401 | requires `logged_out` |
+| 41 | `PATCH .../accounts/{aid}/drafts/{provider_draft_id}` (gmail) | independent — creates a draft, PATCHes it, verifies the new content, cleans up the local row |
+| 42 | `PATCH .../accounts/{aid}/drafts/{provider_draft_id}` (outlook) | independent — same as 41 for Outlook |
+
+**Common pattern** for these two tests:
+1. Create a draft at the provider via the POST endpoint with a unique subject (ISO timestamp) and a known initial body.
+2. Capture the returned `provider_draft_id` and `created_at`.
+3. Call the PATCH endpoint with new recipients, a new subject and a new body.
+4. Assert the response reflects the new content, `provider_draft_id` is unchanged, `created_at` is preserved, and `updated_at >= created_at`.
+5. Query the DB directly to confirm the local row reflects the new content.
+6. Cleanup local row via raw SQL in a `finally` block — the draft stays at the provider (same pattern as tests 32/33). Future `DELETE /drafts/{id}` will clean up both sides.
+
+**Outlook caveat**: the HTML body is wrapped in a full `<html>/<body>` structure by the Graph API, so `body_html` is asserted by containment (`assert "E2E updated body" in data["body_html"]`) rather than byte-for-byte equality — same pattern as tests 36/37.
+
+### Section 6: Auth lifecycle — MUST BE LAST (tests 43–44)
+
+| Test | Endpoint | Dependencies |
+|---|---|---|
+| 43 | `POST /auth/logout` | independent → produces `logged_out` |
+| 44 | `GET /auth/me` → 401 | requires `logged_out` |
 
 ## Behavioral Contracts — Traps to Avoid
 
@@ -195,9 +212,9 @@ The pre-existing user, mailboxes, and accounts (defined in `e2e_config.py`) must
 
 ### Auth lifecycle tests must be last
 
-`POST /auth/logout` (test 41) invalidates the session cookie. Any test running after it will get 401. This is why Section 6 is the final section.
+`POST /auth/logout` (test 43) invalidates the session cookie. Any test running after it will get 401. This is why Section 6 is the final section.
 
-### Schema migration — `create_test_schema` fixture
+### Schema migration — `create_e2e_schema` fixture
 
 The `create_e2e_schema` fixture (session-scoped, autouse) runs Alembic migrations against the real E2E database once per test session. It uses the Alembic config at `backend/database/alembic.ini` and stamps existing tables as `0001_initial_schema` before upgrading to `head` if the database exists but has no `alembic_version` row. This makes the E2E suite idempotent across cold starts and post-migration runs, and guarantees the seeded tables (`drafts`, migration 0012) are present before any test touches them.
 
@@ -211,6 +228,7 @@ When adding a new provider:
 - [ ] Add a draft creation test (`POST .../accounts/{aid}/drafts`) for the provider.
 - [ ] Add two draft sync tests (`POST .../drafts/sync` and `POST .../drafts/sync?account_id=...`) for the provider.
 - [ ] Add a draft listing test (`GET .../drafts?account_id=...`) for the provider.
+- [ ] Add a draft update test (`PATCH .../accounts/{aid}/drafts/{provider_draft_id}`) for the provider — must create a draft first and clean up the local row afterward.
 - [ ] Ensure flow assertions include the new provider behavior.
 
 The E2E suite should always represent the full set of supported providers.

@@ -16,11 +16,13 @@ from api.errors.exceptions import (
     DatabaseQueryError,
     DraftCreationError,
     DraftListError,
+    DraftNotFound,
     DraftSyncError,
+    DraftUpdateError,
     ExternalAPIError,
     Forbidden,
 )
-from api.schemas.draft import DraftCreate
+from api.schemas.draft import DraftCreate, DraftUpdate
 from api.services import drafts_service
 from core.email import DraftMetadata, EmailManager
 from core.email.errors import EmailAuthError, EmailExternalAPIError
@@ -902,3 +904,353 @@ class TestSyncDrafts:
         monkeypatch.setattr(drafts_service, "load_wrapped_app_credentials", _raise)
         with pytest.raises(DraftSyncError):
             drafts_service.sync_drafts(_MAILBOX_ID, _USER_ID, _ACCOUNT_ID)
+
+
+# =====================================================================
+# update_draft
+# =====================================================================
+
+
+_PROVIDER_DRAFT_ID = "fake_draft_1"
+
+
+def _patch_update_common(monkeypatch, *, fake_client_kwargs=None):
+    """Same shape as _patch_common but wires draft_store.get + update.
+
+    draft_store.get returns a pre-seeded row so the pre-check passes;
+    draft_store.update echoes the incoming row with deterministic timestamps.
+    """
+    _patch_common(monkeypatch, fake_client_kwargs=fake_client_kwargs)
+
+    monkeypatch.setattr(
+        drafts_service.draft_store, "get",
+        lambda _pdid, _aid: _persisted_row(provider_draft_id=_pdid),
+    )
+    monkeypatch.setattr(
+        drafts_service.draft_store, "update",
+        lambda row: _persisted_row(
+            provider_draft_id=row.get("provider_draft_id", _PROVIDER_DRAFT_ID),
+            to_recipients=row.get("to_recipients", []),
+            cc_recipients=row.get("cc_recipients", []),
+            bcc_recipients=row.get("bcc_recipients", []),
+            subject=row.get("subject", ""),
+            body_html=row.get("body_html", ""),
+        ),
+    )
+
+
+class TestUpdateDraft:
+
+    def _make_payload(self) -> DraftUpdate:
+        return DraftUpdate(
+            to_recipients=["updated@example.com"],
+            cc_recipients=[],
+            bcc_recipients=[],
+            subject="Updated subject",
+            body_html="<p>updated</p>",
+        )
+
+    def test_happy_path_returns_draft_out(self, monkeypatch):
+        _patch_update_common(monkeypatch)
+        result = drafts_service.update_draft(
+            _MAILBOX_ID, _ACCOUNT_ID, _PROVIDER_DRAFT_ID,
+            self._make_payload(), _USER_ID,
+        )
+        assert result.provider_draft_id == _PROVIDER_DRAFT_ID
+        assert result.account_id == _ACCOUNT_ID
+        assert result.to_recipients == ["updated@example.com"]
+        assert result.subject == "Updated subject"
+        assert result.body_html == "<p>updated</p>"
+
+    def test_mailbox_access_denied_raises(self, monkeypatch):
+        _patch_update_common(monkeypatch)
+
+        def _raise(*_a, **_kw):
+            raise Forbidden("You do not have access to this mailbox.")
+
+        monkeypatch.setattr(drafts_service, "ensure_mailbox_access", _raise)
+        with pytest.raises(Forbidden):
+            drafts_service.update_draft(
+                _MAILBOX_ID, _ACCOUNT_ID, _PROVIDER_DRAFT_ID,
+                self._make_payload(), _USER_ID,
+            )
+
+    def test_account_not_found_raises(self, monkeypatch):
+        _patch_update_common(monkeypatch)
+        monkeypatch.setattr(
+            drafts_service.account_store, "get",
+            lambda _mb, _aid: None,
+        )
+        with pytest.raises(AccountNotFound):
+            drafts_service.update_draft(
+                _MAILBOX_ID, _ACCOUNT_ID, _PROVIDER_DRAFT_ID,
+                self._make_payload(), _USER_ID,
+            )
+
+    def test_draft_not_found_raises(self, monkeypatch):
+        _patch_update_common(monkeypatch)
+        monkeypatch.setattr(
+            drafts_service.draft_store, "get",
+            lambda _pdid, _aid: None,
+        )
+        with pytest.raises(DraftNotFound):
+            drafts_service.update_draft(
+                _MAILBOX_ID, _ACCOUNT_ID, _PROVIDER_DRAFT_ID,
+                self._make_payload(), _USER_ID,
+            )
+
+    def test_account_db_lookup_error_translated(self, monkeypatch):
+        _patch_update_common(monkeypatch)
+
+        def _raise_db(*_a, **_kw):
+            raise DbQueryError("lookup failed")
+
+        monkeypatch.setattr(drafts_service.account_store, "get", _raise_db)
+        with pytest.raises(DatabaseQueryError):
+            drafts_service.update_draft(
+                _MAILBOX_ID, _ACCOUNT_ID, _PROVIDER_DRAFT_ID,
+                self._make_payload(), _USER_ID,
+            )
+
+    def test_account_db_lookup_unexpected_exception_raises_draft_update_error(
+        self, monkeypatch,
+    ):
+        _patch_update_common(monkeypatch)
+
+        def _raise(*_a, **_kw):
+            raise RuntimeError("boom")
+
+        monkeypatch.setattr(drafts_service.account_store, "get", _raise)
+        with pytest.raises(DraftUpdateError):
+            drafts_service.update_draft(
+                _MAILBOX_ID, _ACCOUNT_ID, _PROVIDER_DRAFT_ID,
+                self._make_payload(), _USER_ID,
+            )
+
+    def test_draft_db_lookup_error_translated(self, monkeypatch):
+        _patch_update_common(monkeypatch)
+
+        def _raise_db(*_a, **_kw):
+            raise DbQueryError("draft lookup failed")
+
+        monkeypatch.setattr(drafts_service.draft_store, "get", _raise_db)
+        with pytest.raises(DatabaseQueryError):
+            drafts_service.update_draft(
+                _MAILBOX_ID, _ACCOUNT_ID, _PROVIDER_DRAFT_ID,
+                self._make_payload(), _USER_ID,
+            )
+
+    def test_draft_db_lookup_unexpected_exception_raises_draft_update_error(
+        self, monkeypatch,
+    ):
+        _patch_update_common(monkeypatch)
+
+        def _raise(*_a, **_kw):
+            raise RuntimeError("boom")
+
+        monkeypatch.setattr(drafts_service.draft_store, "get", _raise)
+        with pytest.raises(DraftUpdateError):
+            drafts_service.update_draft(
+                _MAILBOX_ID, _ACCOUNT_ID, _PROVIDER_DRAFT_ID,
+                self._make_payload(), _USER_ID,
+            )
+
+    def test_provider_external_api_error_translated(self, monkeypatch):
+        _patch_update_common(monkeypatch, fake_client_kwargs={
+            "update_draft_exc": EmailExternalAPIError("Graph 400"),
+        })
+        with pytest.raises(ExternalAPIError):
+            drafts_service.update_draft(
+                _MAILBOX_ID, _ACCOUNT_ID, _PROVIDER_DRAFT_ID,
+                self._make_payload(), _USER_ID,
+            )
+
+    def test_provider_generic_exception_raises_external_api_error(self, monkeypatch):
+        # EmailManager wraps RuntimeError into EmailExternalAPIError which
+        # translates to ExternalAPIError via _CORE_TO_API_MAP.
+        _patch_update_common(monkeypatch, fake_client_kwargs={
+            "update_draft_exc": RuntimeError("boom"),
+        })
+        with pytest.raises(ExternalAPIError):
+            drafts_service.update_draft(
+                _MAILBOX_ID, _ACCOUNT_ID, _PROVIDER_DRAFT_ID,
+                self._make_payload(), _USER_ID,
+            )
+
+    def test_silent_auth_error_raises_account_not_connected(self, monkeypatch):
+        _patch_update_common(monkeypatch, fake_client_kwargs={
+            "auth_silent_exc": EmailAuthError("expired"),
+        })
+        with pytest.raises(AccountNotConnected):
+            drafts_service.update_draft(
+                _MAILBOX_ID, _ACCOUNT_ID, _PROVIDER_DRAFT_ID,
+                self._make_payload(), _USER_ID,
+            )
+
+    def test_db_update_error_translated(self, monkeypatch):
+        _patch_update_common(monkeypatch)
+
+        def _raise_db(*_a, **_kw):
+            raise DbQueryError("db down")
+
+        monkeypatch.setattr(drafts_service.draft_store, "update", _raise_db)
+        with pytest.raises(DatabaseQueryError):
+            drafts_service.update_draft(
+                _MAILBOX_ID, _ACCOUNT_ID, _PROVIDER_DRAFT_ID,
+                self._make_payload(), _USER_ID,
+            )
+
+    def test_db_update_unexpected_exception_raises_draft_update_error(self, monkeypatch):
+        _patch_update_common(monkeypatch)
+
+        def _raise(*_a, **_kw):
+            raise RuntimeError("boom")
+
+        monkeypatch.setattr(drafts_service.draft_store, "update", _raise)
+        with pytest.raises(DraftUpdateError):
+            drafts_service.update_draft(
+                _MAILBOX_ID, _ACCOUNT_ID, _PROVIDER_DRAFT_ID,
+                self._make_payload(), _USER_ID,
+            )
+
+    def test_provider_call_passes_payload_fields(self, monkeypatch):
+        """Verify the FakeEmailClient receives the exact payload fields."""
+        _patch_update_common(monkeypatch)
+        captured_clients: list[FakeEmailClient] = []
+
+        def _build(accounts):
+            manager = EmailManager()
+            for acc in accounts:
+                mid = str(acc.get("mailbox_id", ""))
+                aid = str(acc.get("account_id", ""))
+                label = f"{mid}__{aid}"
+                client = FakeEmailClient(
+                    label,
+                    auth_return={"access_token": "tok", "refresh_token": "ref"},
+                )
+                captured_clients.append(client)
+                manager.add_client(client)
+            return manager
+
+        monkeypatch.setattr(drafts_service, "build_manager_for_accounts", _build)
+        payload = DraftUpdate(
+            to_recipients=["a@b.com", "c@d.com"],
+            cc_recipients=["cc@e.com"],
+            bcc_recipients=["bcc@f.com"],
+            subject="New subject",
+            body_html="<b>new</b>",
+        )
+        drafts_service.update_draft(
+            _MAILBOX_ID, _ACCOUNT_ID, _PROVIDER_DRAFT_ID, payload, _USER_ID,
+        )
+        assert len(captured_clients) == 1
+        assert len(captured_clients[0].update_draft_calls) == 1
+        call = captured_clients[0].update_draft_calls[0]
+        assert call == (
+            _PROVIDER_DRAFT_ID,
+            ["a@b.com", "c@d.com"],
+            ["cc@e.com"],
+            ["bcc@f.com"],
+            "New subject",
+            "<b>new</b>",
+        )
+
+    def test_persist_refreshed_tokens_happy_path(self, monkeypatch):
+        _patch_update_common(monkeypatch, fake_client_kwargs={
+            "auth_silent_return": {
+                "access_token": "new-at",
+                "refresh_token": "new-rt",
+                "expiry": "2030-01-01T00:00:00Z",
+            },
+        })
+        upsert_calls: list[tuple] = []
+        monkeypatch.setattr(
+            drafts_service.account_store, "upsert_tokens",
+            lambda mb, acc, prov, payload: upsert_calls.append((mb, acc, prov, payload)),
+        )
+        drafts_service.update_draft(
+            _MAILBOX_ID, _ACCOUNT_ID, _PROVIDER_DRAFT_ID,
+            self._make_payload(), _USER_ID,
+        )
+        assert len(upsert_calls) == 1
+        mb, acc, prov, payload = upsert_calls[0]
+        assert mb == _MAILBOX_ID
+        assert acc == _ACCOUNT_ID
+        assert prov == _PROVIDER
+        assert payload["access_token"] == "new-at"
+        assert payload["refresh_token"] == "new-rt"
+
+    def test_persist_refreshed_tokens_db_error_raises_database_query_error(
+        self, monkeypatch,
+    ):
+        _patch_update_common(monkeypatch, fake_client_kwargs={
+            "auth_silent_return": {"access_token": "new-at", "refresh_token": "new-rt"},
+        })
+
+        def _raise_db(*_a, **_kw):
+            raise DbQueryError("tokens table down")
+
+        monkeypatch.setattr(drafts_service.account_store, "upsert_tokens", _raise_db)
+        with pytest.raises(DatabaseQueryError):
+            drafts_service.update_draft(
+                _MAILBOX_ID, _ACCOUNT_ID, _PROVIDER_DRAFT_ID,
+                self._make_payload(), _USER_ID,
+            )
+
+    def test_persist_refreshed_tokens_unexpected_exception_raises_draft_update_error(
+        self, monkeypatch,
+    ):
+        _patch_update_common(monkeypatch, fake_client_kwargs={
+            "auth_silent_return": {"access_token": "new-at", "refresh_token": "new-rt"},
+        })
+
+        def _raise(*_a, **_kw):
+            raise RuntimeError("boom")
+
+        monkeypatch.setattr(drafts_service.account_store, "upsert_tokens", _raise)
+        with pytest.raises(DraftUpdateError):
+            drafts_service.update_draft(
+                _MAILBOX_ID, _ACCOUNT_ID, _PROVIDER_DRAFT_ID,
+                self._make_payload(), _USER_ID,
+            )
+
+    def test_outer_exception_safety_net_raises_draft_update_error(self, monkeypatch):
+        # A RuntimeError raised inside the outer try (e.g. from load_wrapped_app_credentials)
+        # must bubble up as DraftUpdateError via the outer safety net.
+        _patch_update_common(monkeypatch)
+
+        def _raise(*_a, **_kw):
+            raise RuntimeError("boom")
+
+        monkeypatch.setattr(drafts_service, "load_wrapped_app_credentials", _raise)
+        with pytest.raises(DraftUpdateError):
+            drafts_service.update_draft(
+                _MAILBOX_ID, _ACCOUNT_ID, _PROVIDER_DRAFT_ID,
+                self._make_payload(), _USER_ID,
+            )
+
+    def test_none_fields_coalesced_to_defaults(self, monkeypatch):
+        _patch_update_common(monkeypatch)
+        monkeypatch.setattr(
+            drafts_service.draft_store, "update",
+            lambda row: {
+                "provider_draft_id": _PROVIDER_DRAFT_ID,
+                "account_id": _ACCOUNT_ID,
+                "to_recipients": None,
+                "cc_recipients": None,
+                "bcc_recipients": None,
+                "subject": None,
+                "body_html": None,
+                "created_at": datetime(2024, 1, 1, 12, 0, 0),
+                "updated_at": datetime(2024, 1, 1, 12, 0, 0),
+            },
+        )
+        result = drafts_service.update_draft(
+            _MAILBOX_ID, _ACCOUNT_ID, _PROVIDER_DRAFT_ID,
+            self._make_payload(), _USER_ID,
+        )
+        assert result.to_recipients == []
+        assert result.cc_recipients == []
+        assert result.bcc_recipients == []
+        assert result.subject == ""
+        assert result.body_html == ""

@@ -186,7 +186,33 @@ If there are NO remaining worktrees, skip to the final summary and inform the us
 
 ## Phase 4 — Rebase Remaining Worktrees
 
-### 4.1 Launch subagents
+### 4.1 Check for uncommitted changes
+
+Before launching any rebase subagent, inspect each non-excluded worktree for uncommitted changes:
+
+```bash
+git -C <worktree-path> status --porcelain
+```
+
+- **If all worktrees are clean**: continue directly to 4.2.
+- **If any worktree has uncommitted changes**: use `AskUserQuestion` to ask:
+
+> "Los siguientes worktrees tienen cambios sin commitear ni pushear:\n\n{list with name and branch of each dirty worktree}\n\n¿Quieres que haga commit + push de cada uno antes de iniciar el rebase + resolución de conflictos?"
+
+With exactly two options:
+1. "Sí, commit + push antes de rebasear"
+2. "No, excluir esos worktrees del rebase"
+
+**If the user chooses option 1 (commit + push):**
+For each dirty worktree, invoke the `/commit-push` skill in the context of that worktree (using `git -C <worktree-path>` for all git commands within that worktree). All commits and pushes must complete before launching any rebase subagents.
+
+**If the user chooses option 2 (exclude):**
+Remove those worktrees from the rebase list and output to chat for each one:
+> Excluido del rebase: `<worktree-name>` (branch: `<branch-name>`) — tiene cambios sin commitear.
+
+**Rationale**: The rebase + conflict resolution process only operates on committed code. WIP changes that are not committed are invisible to the rebase and cannot be checked against incoming conflicts, which may cause silent data loss or conflicts.
+
+### 4.2 Launch subagents
 
 For each non-excluded worktree, launch a `rebase-conflicts-solver` subagent **in parallel** (all in one message with multiple Agent tool calls). Each subagent receives:
 
@@ -197,11 +223,11 @@ For each non-excluded worktree, launch a `rebase-conflicts-solver` subagent **in
 **Output to chat:**
 > Subagents launched for worktrees: {list of worktree names}
 
-### 4.2 Collect results
+### 4.3 Collect results
 
 Wait for all subagents to complete. Each returns a structured conflict report.
 
-### 4.3 Sync local worktree directories
+### 4.4 Sync local worktree directories
 
 After all subagents complete, the remote branches are updated but local worktree directories may not reflect the rebased state. For each worktree where the rebase reported **SUCCESS**:
 
@@ -261,6 +287,7 @@ After all phases complete, output a structured final summary to chat. This is **
 - **Status**: SUCCESS | MANUAL INTERVENTION NEEDED
 - **Conflicts**: None | <N> resolved
 - **Local sync**: `git reset --hard origin/<branch>` completed | skipped (manual intervention)
+- **Local pull**: `origin/<branch>` synced | skipped (manual intervention)
 {If conflicts were resolved, include a detail table:}
 | File | Type | Details |
 |------|------|---------|

@@ -582,3 +582,28 @@ def test_sync_drafts_database_query_error_on_account_lookup_returns_503(
     resp = test_client.post(f"{_MAILBOX_URL}/{mid}/drafts/sync?account_id={aid}")
     assert resp.status_code == 503
     assert resp.json()["error"]["code"] == "database_query_error"
+
+
+def test_update_draft_database_connection_error_returns_503(
+    test_client, setup_mailbox_and_account, monkeypatch,
+):
+    from api.services import drafts_service
+
+    mid, aid = setup_mailbox_and_account(test_client)
+
+    monkeypatch.setattr(
+        drafts_service.draft_store,
+        "get",
+        lambda *_a, **_kw: {"provider_draft_id": "any-draft-id", "account_id": aid},
+    )
+
+    def _raise(*_a, **_kw):
+        raise ConnectionPoolError("pool down")
+
+    monkeypatch.setattr(drafts_service.draft_store, "update", _raise)
+    resp = test_client.patch(
+        f"{_MAILBOX_URL}/{mid}/accounts/{aid}/drafts/any-draft-id",
+        json={"subject": "S"},
+    )
+    assert resp.status_code == 503
+    assert resp.json()["error"]["code"] == "database_connection_error"

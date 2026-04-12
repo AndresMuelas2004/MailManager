@@ -7,7 +7,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, Query
 
 from api.routers.routers_helpers import require_session
-from api.schemas.draft import DraftCreate, DraftOut, DraftsSyncResultOut
+from api.schemas.draft import DraftCreate, DraftOut, DraftsSyncResultOut, DraftUpdate
 from api.services import drafts_service
 
 
@@ -28,6 +28,27 @@ def create_draft(
     Create a new draft at the provider and persist it locally.
     """
     return drafts_service.create_draft(mailbox_id, account_id, payload, user_id)
+
+
+@router.patch(
+    "/accounts/{account_id}/drafts/{provider_draft_id}",
+    response_model=DraftOut,
+)
+def update_draft(
+    mailbox_id: str,
+    account_id: str,
+    provider_draft_id: str,
+    payload: DraftUpdate,
+    user_id: str = Depends(require_session),
+) -> DraftOut:
+    """
+    Replace an existing draft at the provider and persist the new
+    content locally. Provider-First: the provider call runs before any
+    DB write.
+    """
+    return drafts_service.update_draft(
+        mailbox_id, account_id, provider_draft_id, payload, user_id,
+    )
 
 
 @router.get("/drafts", response_model=list[DraftOut])

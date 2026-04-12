@@ -148,6 +148,23 @@ class EmailClient(ABC):
         """
 
     @abstractmethod
+    def update_draft(
+        self,
+        provider_draft_id: str,
+        to_recipients: list[str],
+        cc_recipients: list[str],
+        bcc_recipients: list[str],
+        subject: str,
+        body_html: str,
+    ) -> DraftMetadata:
+        """
+        Replace an existing draft's content at the provider (full-field
+        replace). All fields may be empty (empty drafts are accepted).
+        Returns normalized draft metadata — timestamps are best-effort
+        (providers may not return them on update).
+        """
+
+    @abstractmethod
     def fetch_drafts(self) -> list[DraftMetadata]:
         """
         Fetch the most recent drafts from the provider as a flat list.

@@ -1214,17 +1214,178 @@ def test_40_list_drafts_gmail(e2e_client):
 
 
 # ===================================================================
+# Section 5e: Drafts update (tests 41–42)
+#
+# Each test creates a draft via POST, captures the returned
+# provider_draft_id, calls the PATCH endpoint with new recipients /
+# subject / body, asserts the response reflects the new content,
+# verifies the local DB row, and cleans up (deletes the local row only;
+# the draft is intentionally left at the provider — same pattern as
+# tests 32/33).
+# ===================================================================
+
+
+def test_41_update_draft_gmail(e2e_client):
+    """Create a Gmail draft, update it via PATCH, verify the new content, clean up."""
+    ts = datetime.now(timezone.utc).isoformat()
+    initial_subject = f"E2E update — Gmail {ts}"
+    create_resp = e2e_client.post(
+        f"/mailboxes/{GMAIL_MAILBOX_ID}/accounts/{GMAIL_ACCOUNT_ID}/drafts",
+        json={
+            "to_recipients": [SEND_RECIPIENT],
+            "cc_recipients": [],
+            "bcc_recipients": [],
+            "subject": initial_subject,
+            "body_html": "<p>E2E update initial</p>",
+        },
+    )
+    _assert_ok(create_resp)
+    provider_draft_id = create_resp.json()["provider_draft_id"]
+    original_created_at = create_resp.json()["created_at"]
+
+    try:
+        new_subject = f"E2E updated — Gmail {datetime.now(timezone.utc).isoformat()}"
+        patch_resp = e2e_client.patch(
+            f"/mailboxes/{GMAIL_MAILBOX_ID}/accounts/{GMAIL_ACCOUNT_ID}"
+            f"/drafts/{provider_draft_id}",
+            json={
+                "to_recipients": [SEND_RECIPIENT],
+                "cc_recipients": [],
+                "bcc_recipients": [],
+                "subject": new_subject,
+                "body_html": "<p>E2E updated body</p>",
+            },
+        )
+        _assert_ok(patch_resp)
+        data = patch_resp.json()
+        assert data["provider_draft_id"] == provider_draft_id
+        assert data["account_id"] == GMAIL_ACCOUNT_ID
+        assert data["to_recipients"] == [SEND_RECIPIENT]
+        assert data["cc_recipients"] == []
+        assert data["bcc_recipients"] == []
+        assert data["subject"] == new_subject
+        assert data["body_html"] == "<p>E2E updated body</p>"
+        assert data["created_at"] == original_created_at
+        assert data["updated_at"] >= original_created_at
+
+        # Verify the local DB row reflects the new content.
+        conn = _db_conn()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT subject, body_html, to_recipients, created_at, updated_at "
+                    "FROM drafts "
+                    "WHERE provider_draft_id = %s AND account_id = %s",
+                    (provider_draft_id, GMAIL_ACCOUNT_ID),
+                )
+                row = cur.fetchone()
+            assert row is not None
+            assert row[0] == new_subject
+            assert row[1] == "<p>E2E updated body</p>"
+            assert row[2] == [SEND_RECIPIENT]
+        finally:
+            conn.close()
+    finally:
+        # Clean up the local row (draft stays at the provider — same as tests 32/33).
+        conn = _db_conn()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "DELETE FROM drafts WHERE provider_draft_id = %s AND account_id = %s",
+                    (provider_draft_id, GMAIL_ACCOUNT_ID),
+                )
+            conn.commit()
+        finally:
+            conn.close()
+
+
+def test_42_update_draft_outlook(e2e_client):
+    """Create an Outlook draft, update it via PATCH, verify the new content, clean up."""
+    ts = datetime.now(timezone.utc).isoformat()
+    initial_subject = f"E2E update — Outlook {ts}"
+    create_resp = e2e_client.post(
+        f"/mailboxes/{OUTLOOK_MAILBOX_ID}/accounts/{OUTLOOK_ACCOUNT_ID}/drafts",
+        json={
+            "to_recipients": [SEND_RECIPIENT],
+            "cc_recipients": [],
+            "bcc_recipients": [],
+            "subject": initial_subject,
+            "body_html": "<p>E2E update initial</p>",
+        },
+    )
+    _assert_ok(create_resp)
+    provider_draft_id = create_resp.json()["provider_draft_id"]
+    original_created_at = create_resp.json()["created_at"]
+
+    try:
+        new_subject = f"E2E updated — Outlook {datetime.now(timezone.utc).isoformat()}"
+        patch_resp = e2e_client.patch(
+            f"/mailboxes/{OUTLOOK_MAILBOX_ID}/accounts/{OUTLOOK_ACCOUNT_ID}"
+            f"/drafts/{provider_draft_id}",
+            json={
+                "to_recipients": [SEND_RECIPIENT],
+                "cc_recipients": [],
+                "bcc_recipients": [],
+                "subject": new_subject,
+                "body_html": "<p>E2E updated body</p>",
+            },
+        )
+        _assert_ok(patch_resp)
+        data = patch_resp.json()
+        assert data["provider_draft_id"] == provider_draft_id
+        assert data["account_id"] == OUTLOOK_ACCOUNT_ID
+        assert data["to_recipients"] == [SEND_RECIPIENT]
+        assert data["cc_recipients"] == []
+        assert data["bcc_recipients"] == []
+        assert data["subject"] == new_subject
+        # Outlook wraps plain HTML in a full <html>/<body> structure, so match
+        # by containment rather than equality (same pattern as tests 36/37).
+        assert "E2E updated body" in data["body_html"]
+        assert data["created_at"] == original_created_at
+        assert data["updated_at"] >= original_created_at
+
+        # Verify the local DB row reflects the new content.
+        conn = _db_conn()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT subject, body_html, to_recipients "
+                    "FROM drafts "
+                    "WHERE provider_draft_id = %s AND account_id = %s",
+                    (provider_draft_id, OUTLOOK_ACCOUNT_ID),
+                )
+                row = cur.fetchone()
+            assert row is not None
+            assert row[0] == new_subject
+            assert "E2E updated body" in row[1]
+            assert row[2] == [SEND_RECIPIENT]
+        finally:
+            conn.close()
+    finally:
+        conn = _db_conn()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "DELETE FROM drafts WHERE provider_draft_id = %s AND account_id = %s",
+                    (provider_draft_id, OUTLOOK_ACCOUNT_ID),
+                )
+            conn.commit()
+        finally:
+            conn.close()
+
+
+# ===================================================================
 # Section 6: Auth lifecycle (MUST BE LAST — invalidates session)
 # ===================================================================
 
-def test_41_post_auth_logout(e2e_client, flow_state):
+def test_43_post_auth_logout(e2e_client, flow_state):
     response = e2e_client.post("/auth/logout")
     _assert_ok(response)
     assert response.json() == {"status": "logged_out"}
     flow_state["logged_out"] = "true"
 
 
-def test_42_get_auth_me_after_logout_401(e2e_client, flow_state):
+def test_44_get_auth_me_after_logout_401(e2e_client, flow_state):
     _require(flow_state, "logged_out")
     response = e2e_client.get("/auth/me")
     _assert_ok(response, expected=401)

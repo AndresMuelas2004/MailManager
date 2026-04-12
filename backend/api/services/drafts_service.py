@@ -14,9 +14,17 @@ from api.errors.exceptions import (
     ApiError,
     DraftCreationError,
     DraftListError,
+    DraftNotFound,
     DraftSyncError,
+    DraftUpdateError,
 )
-from api.schemas.draft import DraftCreate, DraftOut, DraftsAccountSyncDetail, DraftsSyncResultOut
+from api.schemas.draft import (
+    DraftCreate,
+    DraftOut,
+    DraftsAccountSyncDetail,
+    DraftsSyncResultOut,
+    DraftUpdate,
+)
 from api.services.services_helpers import (
     build_manager_for_accounts,
     ensure_mailbox_access,
@@ -178,6 +186,152 @@ def create_draft(
         raise DraftCreationError("Failed to create draft.") from exc
 
 
+def update_draft(
+    mailbox_id: str,
+    account_id: str,
+    provider_draft_id: str,
+    payload: DraftUpdate,
+    user_id: str,
+) -> DraftOut:
+    """
+    Replace an existing draft at the provider and persist the new
+    content locally. Provider-First: the provider call runs before any
+    DB write, so the local row is only updated after the provider
+    acknowledges the change.
+    """
+    ensure_mailbox_access(mailbox_id, user_id)
+
+    try:
+        account = account_store.get(mailbox_id, account_id)
+    except DatabaseError as exc:
+        raise translate_database_error(exc) from exc
+    except Exception as exc:
+        logger.warning(
+            "Unexpected account lookup error during draft update (%s): %s",
+            type(exc).__name__, exc,
+        )
+        raise DraftUpdateError(
+            "Failed to look up account while updating draft."
+        ) from exc
+    if account is None:
+        raise AccountNotFound(
+            f"Account '{account_id}' not found in mailbox '{mailbox_id}' "
+            "during draft update."
+        )
+
+    try:
+        existing_draft = draft_store.get(provider_draft_id, account_id)
+    except DatabaseError as exc:
+        raise translate_database_error(exc) from exc
+    except Exception as exc:
+        logger.warning(
+            "Unexpected draft lookup error during draft update (%s): %s",
+            type(exc).__name__, exc,
+        )
+        raise DraftUpdateError(
+            "Failed to look up draft while updating it."
+        ) from exc
+    if existing_draft is None:
+        raise DraftNotFound(
+            f"Draft '{provider_draft_id}' not found for account "
+            f"'{account_id}' during draft update."
+        )
+
+    try:
+        provider = str(account.get("provider") or "").lower()
+        account_label = f"{mailbox_id}__{account_id}"
+        manager = build_manager_for_accounts([account])
+
+        app_credentials = load_wrapped_app_credentials(provider)
+        user_tokens = load_wrapped_account_tokens(mailbox_id, account_id, provider)
+        auth_payloads: dict[str, tuple[dict[str, Any], dict[str, Any]]] = {
+            account_label: (app_credentials, user_tokens),
+        }
+        label_lookup: dict[str, tuple[str, str, str]] = {
+            account_label: (mailbox_id, account_id, provider),
+        }
+
+        updated_tokens = manager.authenticate_all_silent(auth_payloads)
+        if updated_tokens:
+            _persist_refreshed_tokens(
+                updated_tokens, label_lookup, fallback=DraftUpdateError,
+            )
+        raise_on_silent_auth_errors(
+            manager.get_last_errors(), fallback=DraftUpdateError,
+        )
+
+        try:
+            manager.update_draft(
+                account_label,
+                provider_draft_id,
+                payload.to_recipients,
+                payload.cc_recipients,
+                payload.bcc_recipients,
+                payload.subject,
+                payload.body_html,
+            )
+        except CoreError as exc:
+            raise translate_core_error(
+                exc,
+                fallback=DraftUpdateError,
+                context={
+                    "account_id": account_id,
+                    "account_label": account_label,
+                    "provider_draft_id": provider_draft_id,
+                },
+            ) from exc
+        except Exception as exc:
+            logger.warning(
+                "Unexpected error during provider draft update (%s): %s",
+                type(exc).__name__, exc,
+            )
+            raise DraftUpdateError(
+                "Unexpected failure while updating draft at provider."
+            ) from exc
+
+        row = {
+            "provider_draft_id": provider_draft_id,
+            "account_id": account_id,
+            "to_recipients": list(payload.to_recipients),
+            "cc_recipients": list(payload.cc_recipients),
+            "bcc_recipients": list(payload.bcc_recipients),
+            "subject": payload.subject,
+            "body_html": payload.body_html,
+        }
+        try:
+            persisted = draft_store.update(row)
+        except DatabaseError as exc:
+            raise translate_database_error(exc) from exc
+        except Exception as exc:
+            logger.warning(
+                "Unexpected draft DB persist error during update (%s): %s",
+                type(exc).__name__, exc,
+            )
+            raise DraftUpdateError(
+                "Failed to persist draft to database after provider update."
+            ) from exc
+
+        return DraftOut(
+            provider_draft_id=persisted["provider_draft_id"],
+            account_id=str(persisted["account_id"]),
+            to_recipients=persisted.get("to_recipients") or [],
+            cc_recipients=persisted.get("cc_recipients") or [],
+            bcc_recipients=persisted.get("bcc_recipients") or [],
+            subject=persisted.get("subject") or "",
+            body_html=persisted.get("body_html") or "",
+            created_at=persisted["created_at"],
+            updated_at=persisted["updated_at"],
+        )
+    except ApiError:
+        raise
+    except Exception as exc:
+        logger.warning(
+            "Unexpected draft update error (%s): %s",
+            type(exc).__name__, exc,
+        )
+        raise DraftUpdateError("Failed to update draft.") from exc
+
+
 def list_drafts(
     mailbox_id: str,
     user_id: str,
@@ -236,20 +390,27 @@ def list_drafts(
                 "Failed to list drafts for mailbox."
             ) from exc
 
-    return [
-        DraftOut(
-            provider_draft_id=row["provider_draft_id"],
-            account_id=str(row["account_id"]),
-            to_recipients=row.get("to_recipients") or [],
-            cc_recipients=row.get("cc_recipients") or [],
-            bcc_recipients=row.get("bcc_recipients") or [],
-            subject=row.get("subject") or "",
-            body_html=row.get("body_html") or "",
-            created_at=row["created_at"],
-            updated_at=row["updated_at"],
+    try:
+        return [
+            DraftOut(
+                provider_draft_id=row["provider_draft_id"],
+                account_id=str(row["account_id"]),
+                to_recipients=row.get("to_recipients") or [],
+                cc_recipients=row.get("cc_recipients") or [],
+                bcc_recipients=row.get("bcc_recipients") or [],
+                subject=row.get("subject") or "",
+                body_html=row.get("body_html") or "",
+                created_at=row["created_at"],
+                updated_at=row["updated_at"],
+            )
+            for row in rows
+        ]
+    except Exception as exc:
+        logger.warning(
+            "Unexpected error building draft list response (%s): %s",
+            type(exc).__name__, exc,
         )
-        for row in rows
-    ]
+        raise DraftListError("Failed to construct draft listing response.") from exc
 
 
 def _build_draft_auth_context(
@@ -368,53 +529,62 @@ def sync_drafts(
             "Failed to fetch drafts from providers."
         ) from exc
 
-    # Step 4: surface per-account errors captured by the manager
-    raise_on_silent_auth_errors(
-        manager.get_last_errors(), fallback=DraftSyncError,
-    )
+    try:
+        # Step 4: surface per-account errors captured by the manager
+        raise_on_silent_auth_errors(
+            manager.get_last_errors(), fallback=DraftSyncError,
+        )
 
-    # Step 5: persist per account (atomic replace)
-    account_details: list[DraftsAccountSyncDetail] = []
-    total_synced = 0
-    for label, drafts in fetch_results.items():
-        ids = label_lookup.get(label)
-        if not ids:
-            continue
-        _, account_id_inner, provider = ids
-        rows = [
-            {
-                "provider_draft_id": d.provider_draft_id,
-                "to_recipients": list(d.to_recipients),
-                "cc_recipients": list(d.cc_recipients),
-                "bcc_recipients": list(d.bcc_recipients),
-                "subject": d.subject,
-                "body_html": d.body_html,
-                "created_at": d.created_at,
-                "updated_at": d.updated_at,
-            }
-            for d in drafts
-        ]
-        try:
-            synced_count = draft_store.replace_all_for_account(account_id_inner, rows)
-        except DatabaseError as exc:
-            raise translate_database_error(exc) from exc
-        except Exception as exc:
-            logger.warning(
-                "Unexpected persist error during draft sync for account '%s' (%s): %s",
-                account_id_inner, type(exc).__name__, exc,
-            )
-            raise DraftSyncError(
-                "Failed to persist drafts during sync."
-            ) from exc
+        # Step 5: persist per account (atomic replace)
+        account_details: list[DraftsAccountSyncDetail] = []
+        total_synced = 0
+        for label, drafts in fetch_results.items():
+            ids = label_lookup.get(label)
+            if not ids:
+                continue
+            _, account_id_inner, provider = ids
+            rows = [
+                {
+                    "provider_draft_id": d.provider_draft_id,
+                    "to_recipients": list(d.to_recipients),
+                    "cc_recipients": list(d.cc_recipients),
+                    "bcc_recipients": list(d.bcc_recipients),
+                    "subject": d.subject,
+                    "body_html": d.body_html,
+                    "created_at": d.created_at,
+                    "updated_at": d.updated_at,
+                }
+                for d in drafts
+            ]
+            try:
+                synced_count = draft_store.replace_all_for_account(account_id_inner, rows)
+            except DatabaseError as exc:
+                raise translate_database_error(exc) from exc
+            except Exception as exc:
+                logger.warning(
+                    "Unexpected persist error during draft sync for account '%s' (%s): %s",
+                    account_id_inner, type(exc).__name__, exc,
+                )
+                raise DraftSyncError(
+                    "Failed to persist drafts during sync."
+                ) from exc
 
-        total_synced += synced_count
-        account_details.append(DraftsAccountSyncDetail(
-            account_id=account_id_inner,
-            provider=provider,
-            drafts_synced=synced_count,
-        ))
+            total_synced += synced_count
+            account_details.append(DraftsAccountSyncDetail(
+                account_id=account_id_inner,
+                provider=provider,
+                drafts_synced=synced_count,
+            ))
 
-    return DraftsSyncResultOut(
-        total_synced=total_synced,
-        accounts=account_details,
-    )
+        return DraftsSyncResultOut(
+            total_synced=total_synced,
+            accounts=account_details,
+        )
+    except ApiError:
+        raise
+    except Exception as exc:
+        logger.warning(
+            "Unexpected draft sync error (%s): %s",
+            type(exc).__name__, exc,
+        )
+        raise DraftSyncError("Unexpected failure during draft sync.") from exc

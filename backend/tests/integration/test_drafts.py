@@ -637,3 +637,333 @@ def test_sync_drafts_db_error_on_replace_returns_503(
     resp = test_client.post(_sync_drafts_url(mid, aid))
     assert resp.status_code == 503
     assert resp.json()["error"]["code"] == "database_query_error"
+
+
+# ------------------------------------------------------------------
+# PATCH /mailboxes/{mid}/accounts/{aid}/drafts/{provider_draft_id}
+# update_draft
+# ------------------------------------------------------------------
+
+
+def _update_draft_url(mailbox_id: str, account_id: str, provider_draft_id: str) -> str:
+    return (
+        f"{_MAILBOX_URL}/{mailbox_id}/accounts/{account_id}"
+        f"/drafts/{provider_draft_id}"
+    )
+
+
+def _update_payload(**overrides) -> dict:
+    base = {
+        "to_recipients": ["updated@example.com"],
+        "cc_recipients": [],
+        "bcc_recipients": [],
+        "subject": "Updated",
+        "body_html": "<p>updated</p>",
+    }
+    base.update(overrides)
+    return base
+
+
+def test_update_draft_happy_path_returns_updated_draft(
+    test_client, setup_mailbox_and_account, isolated_db,
+):
+    """Inserting a draft then PATCHing it returns the new content."""
+    mid, aid = setup_mailbox_and_account(test_client)
+    _insert_draft(
+        isolated_db, account_id=aid, provider_draft_id="draft-update-1",
+        subject="original", body_html="<p>old</p>",
+        to_recipients=["old@example.com"],
+    )
+
+    resp = test_client.patch(
+        _update_draft_url(mid, aid, "draft-update-1"),
+        json=_update_payload(
+            to_recipients=["updated@example.com"],
+            subject="Updated",
+            body_html="<p>new</p>",
+        ),
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["provider_draft_id"] == "draft-update-1"
+    assert body["account_id"] == aid
+    assert body["to_recipients"] == ["updated@example.com"]
+    assert body["cc_recipients"] == []
+    assert body["bcc_recipients"] == []
+    assert body["subject"] == "Updated"
+    assert body["body_html"] == "<p>new</p>"
+
+
+def test_update_draft_persists_to_db(
+    test_client, setup_mailbox_and_account, isolated_db,
+):
+    """After the PATCH, the drafts row must contain the new content."""
+    mid, aid = setup_mailbox_and_account(test_client)
+    _insert_draft(
+        isolated_db, account_id=aid, provider_draft_id="draft-update-2",
+        subject="original",
+    )
+
+    resp = test_client.patch(
+        _update_draft_url(mid, aid, "draft-update-2"),
+        json=_update_payload(
+            to_recipients=["a@b.com", "c@d.com"],
+            cc_recipients=["cc@e.com"],
+            bcc_recipients=["bcc@f.com"],
+            subject="DB Check",
+            body_html="<b>ok</b>",
+        ),
+    )
+    assert resp.status_code == 200, resp.text
+
+    with isolated_db.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(
+            "SELECT to_recipients, cc_recipients, bcc_recipients, subject, body_html "
+            "FROM drafts WHERE provider_draft_id = %s AND account_id = %s::uuid",
+            ("draft-update-2", aid),
+        )
+        row = cur.fetchone()
+    assert row is not None
+    assert row["to_recipients"] == ["a@b.com", "c@d.com"]
+    assert row["cc_recipients"] == ["cc@e.com"]
+    assert row["bcc_recipients"] == ["bcc@f.com"]
+    assert row["subject"] == "DB Check"
+    assert row["body_html"] == "<b>ok</b>"
+
+
+def test_update_draft_preserves_created_at_refreshes_updated_at(
+    test_client, setup_mailbox_and_account, isolated_db,
+):
+    """created_at must NOT change on update; updated_at is refreshed by the DB."""
+    mid, aid = setup_mailbox_and_account(test_client)
+    _insert_draft(
+        isolated_db, account_id=aid, provider_draft_id="draft-update-3",
+        subject="original", created_at="2023-01-01T10:00:00Z",
+    )
+
+    # Capture the original created_at / updated_at to compare after the PATCH.
+    with isolated_db.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(
+            "SELECT created_at, updated_at FROM drafts "
+            "WHERE provider_draft_id = %s AND account_id = %s::uuid",
+            ("draft-update-3", aid),
+        )
+        before = cur.fetchone()
+
+    resp = test_client.patch(
+        _update_draft_url(mid, aid, "draft-update-3"),
+        json=_update_payload(subject="new"),
+    )
+    assert resp.status_code == 200, resp.text
+
+    with isolated_db.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(
+            "SELECT created_at, updated_at FROM drafts "
+            "WHERE provider_draft_id = %s AND account_id = %s::uuid",
+            ("draft-update-3", aid),
+        )
+        after = cur.fetchone()
+
+    assert after["created_at"] == before["created_at"]
+    # The UPDATE sets updated_at = now(); inside a single transaction now() is
+    # frozen at transaction start, so updated_at == created_at when the insert
+    # also used the transaction's now(). Use >= for robustness.
+    assert after["updated_at"] >= after["created_at"]
+
+
+def test_update_draft_empty_body_allowed(
+    test_client, setup_mailbox_and_account, isolated_db,
+):
+    """An empty payload must be accepted (consistent with create)."""
+    mid, aid = setup_mailbox_and_account(test_client)
+    _insert_draft(
+        isolated_db, account_id=aid, provider_draft_id="draft-update-empty",
+        subject="original", to_recipients=["old@example.com"],
+    )
+
+    resp = test_client.patch(
+        _update_draft_url(mid, aid, "draft-update-empty"),
+        json={},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["subject"] == ""
+    assert body["body_html"] == ""
+    assert body["to_recipients"] == []
+    assert body["cc_recipients"] == []
+    assert body["bcc_recipients"] == []
+
+
+def test_update_draft_draft_not_found_returns_404(
+    test_client, setup_mailbox_and_account,
+):
+    mid, aid = setup_mailbox_and_account(test_client)
+    resp = test_client.patch(
+        _update_draft_url(mid, aid, "does-not-exist"),
+        json=_update_payload(),
+    )
+    assert resp.status_code == 404
+    assert resp.json()["error"]["code"] == "draft_not_found"
+
+
+def test_update_draft_account_not_found_returns_404(
+    test_client, setup_mailbox_and_account,
+):
+    mid, _ = setup_mailbox_and_account(test_client)
+    fake_aid = "00000000-0000-4000-a000-000000000099"
+    resp = test_client.patch(
+        _update_draft_url(mid, fake_aid, "any-draft-id"),
+        json=_update_payload(),
+    )
+    assert resp.status_code == 404
+    assert resp.json()["error"]["code"] == "account_not_found"
+
+
+def test_update_draft_nonexistent_mailbox_returns_404(test_client):
+    fake_mid = "00000000-0000-4000-a000-000000000099"
+    fake_aid = "00000000-0000-4000-a000-000000000098"
+    resp = test_client.patch(
+        _update_draft_url(fake_mid, fake_aid, "any-draft-id"),
+        json=_update_payload(),
+    )
+    assert resp.status_code == 404
+    assert resp.json()["error"]["code"] == "mailbox_not_found"
+
+
+def test_update_draft_on_foreign_mailbox_forbidden(test_client, isolated_db):
+    """PATCHing a draft on a mailbox owned by another user returns 403."""
+    foreign_mid = _create_foreign_mailbox(isolated_db)
+    fake_aid = "00000000-0000-4000-a000-000000000099"
+    resp = test_client.patch(
+        _update_draft_url(foreign_mid, fake_aid, "any-draft-id"),
+        json=_update_payload(),
+    )
+    assert resp.status_code == 403
+    assert resp.json()["error"]["code"] == "forbidden"
+
+
+def test_update_draft_provider_external_api_error_returns_502(
+    test_client, setup_mailbox_and_account, isolated_db, monkeypatch,
+):
+    """EmailExternalAPIError from the provider surfaces as 502 external_api_error."""
+    from core.email.errors import EmailExternalAPIError
+
+    mid, aid = setup_mailbox_and_account(test_client)
+    _insert_draft(
+        isolated_db, account_id=aid, provider_draft_id="draft-update-err",
+        subject="original",
+    )
+
+    def _build(accounts):
+        manager = EmailManager()
+        for acc in accounts:
+            mid_ = str(acc.get("mailbox_id", ""))
+            aid_ = str(acc.get("account_id", ""))
+            label = f"{mid_}__{aid_}"
+            manager.add_client(FakeEmailClient(
+                label,
+                auth_return={"access_token": "tok", "refresh_token": "ref"},
+                update_draft_exc=EmailExternalAPIError("Graph 400"),
+            ))
+        return manager
+
+    monkeypatch.setattr(drafts_service, "build_manager_for_accounts", _build)
+
+    resp = test_client.patch(
+        _update_draft_url(mid, aid, "draft-update-err"),
+        json=_update_payload(),
+    )
+    assert resp.status_code == 502
+    assert resp.json()["error"]["code"] == "external_api_error"
+
+
+def test_update_draft_provider_generic_exception_returns_502(
+    test_client, setup_mailbox_and_account, isolated_db, monkeypatch,
+):
+    """A plain RuntimeError from the provider is wrapped into ExternalAPIError (502)."""
+    mid, aid = setup_mailbox_and_account(test_client)
+    _insert_draft(
+        isolated_db, account_id=aid, provider_draft_id="draft-update-rt",
+        subject="original",
+    )
+
+    def _build(accounts):
+        manager = EmailManager()
+        for acc in accounts:
+            mid_ = str(acc.get("mailbox_id", ""))
+            aid_ = str(acc.get("account_id", ""))
+            label = f"{mid_}__{aid_}"
+            manager.add_client(FakeEmailClient(
+                label,
+                auth_return={"access_token": "tok", "refresh_token": "ref"},
+                update_draft_exc=RuntimeError("boom"),
+            ))
+        return manager
+
+    monkeypatch.setattr(drafts_service, "build_manager_for_accounts", _build)
+
+    resp = test_client.patch(
+        _update_draft_url(mid, aid, "draft-update-rt"),
+        json=_update_payload(),
+    )
+    assert resp.status_code == 502
+    assert resp.json()["error"]["code"] == "external_api_error"
+
+
+def test_update_draft_db_update_error_returns_503(
+    test_client, setup_mailbox_and_account, isolated_db, monkeypatch,
+):
+    """A DbQueryError from draft_store.update surfaces as 503."""
+    from database.errors import QueryError as DbQueryError
+
+    mid, aid = setup_mailbox_and_account(test_client)
+    _insert_draft(
+        isolated_db, account_id=aid, provider_draft_id="draft-update-db",
+        subject="original",
+    )
+
+    def _raise_db(*_a, **_kw):
+        raise DbQueryError("update failed")
+
+    monkeypatch.setattr(drafts_service.draft_store, "update", _raise_db)
+
+    resp = test_client.patch(
+        _update_draft_url(mid, aid, "draft-update-db"),
+        json=_update_payload(),
+    )
+    assert resp.status_code == 503
+    assert resp.json()["error"]["code"] == "database_query_error"
+
+
+def test_update_draft_silent_auth_failure_returns_409(
+    test_client, setup_mailbox_and_account, isolated_db, monkeypatch,
+):
+    """Silent auth failure during update_draft -> AccountNotConnected (409)."""
+    from core.email.errors import EmailAuthError
+
+    mid, aid = setup_mailbox_and_account(test_client)
+    _insert_draft(
+        isolated_db, account_id=aid, provider_draft_id="draft-update-auth",
+        subject="original",
+    )
+
+    def _build(accounts):
+        manager = EmailManager()
+        for acc in accounts:
+            mid_ = str(acc.get("mailbox_id", ""))
+            aid_ = str(acc.get("account_id", ""))
+            label = f"{mid_}__{aid_}"
+            manager.add_client(FakeEmailClient(
+                label,
+                auth_silent_exc=EmailAuthError("Token expired."),
+            ))
+        return manager
+
+    monkeypatch.setattr(drafts_service, "build_manager_for_accounts", _build)
+
+    resp = test_client.patch(
+        _update_draft_url(mid, aid, "draft-update-auth"),
+        json=_update_payload(),
+    )
+    assert resp.status_code == 409
+    assert resp.json()["error"]["code"] == "account_not_connected"

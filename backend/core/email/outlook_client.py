@@ -676,6 +676,41 @@ class OutlookClient(EmailClient):
                 f"Outlook unexpected send_email error ({type(exc).__name__}): {exc}"
             ) from exc
 
+    @staticmethod
+    def _parse_graph_datetime(value: Any) -> datetime:
+        """Parse an ISO-8601 datetime from a Graph response with soft
+        fallback to ``datetime.now(timezone.utc)``. Accepts both ``Z``
+        suffix and ``+00:00`` offsets.
+        """
+        if isinstance(value, str) and value:
+            try:
+                raw = value[:-1] + "+00:00" if value.endswith("Z") else value
+                return datetime.fromisoformat(raw)
+            except ValueError:
+                pass
+        return datetime.now(timezone.utc)
+
+    @staticmethod
+    def _build_draft_graph_payload(
+        to_recipients: list[str],
+        cc_recipients: list[str],
+        bcc_recipients: list[str],
+        subject: str,
+        body_html: str,
+    ) -> dict[str, Any]:
+        """Build the Graph Message payload used by both create_draft
+        (POST /me/messages) and update_draft (PATCH /me/messages/{id}).
+        Both endpoints accept the same shape; update semantically replaces
+        every listed field with the new value.
+        """
+        return {
+            "subject": subject or "",
+            "body": {"contentType": "HTML", "content": body_html or ""},
+            "toRecipients": [{"emailAddress": {"address": r}} for r in to_recipients],
+            "ccRecipients": [{"emailAddress": {"address": r}} for r in cc_recipients],
+            "bccRecipients": [{"emailAddress": {"address": r}} for r in bcc_recipients],
+        }
+
     def create_draft(
         self,
         to_recipients: list[str],
@@ -696,13 +731,9 @@ class OutlookClient(EmailClient):
         if self._access_token is None:
             raise EmailNotAuthenticatedError("Outlook create_draft requires authentication.")
 
-        payload: dict[str, Any] = {
-            "subject": subject or "",
-            "body": {"contentType": "HTML", "content": body_html or ""},
-            "toRecipients": [{"emailAddress": {"address": r}} for r in to_recipients],
-            "ccRecipients": [{"emailAddress": {"address": r}} for r in cc_recipients],
-            "bccRecipients": [{"emailAddress": {"address": r}} for r in bcc_recipients],
-        }
+        payload = self._build_draft_graph_payload(
+            to_recipients, cc_recipients, bcc_recipients, subject, body_html,
+        )
 
         try:
             response = self._graph_request(
@@ -719,21 +750,65 @@ class OutlookClient(EmailClient):
             ) from exc
 
         provider_draft_id = str(response.get("id", ""))
-
-        def _parse_graph_datetime(value: Any) -> datetime:
-            if isinstance(value, str) and value:
-                try:
-                    raw = value[:-1] + "+00:00" if value.endswith("Z") else value
-                    return datetime.fromisoformat(raw)
-                except ValueError:
-                    pass
-            return datetime.now(timezone.utc)
-
-        created_at = _parse_graph_datetime(response.get("createdDateTime"))
-        updated_at = _parse_graph_datetime(response.get("lastModifiedDateTime"))
+        created_at = self._parse_graph_datetime(response.get("createdDateTime"))
+        updated_at = self._parse_graph_datetime(response.get("lastModifiedDateTime"))
 
         return DraftMetadata(
             provider_draft_id=provider_draft_id,
+            to_recipients=list(to_recipients),
+            cc_recipients=list(cc_recipients),
+            bcc_recipients=list(bcc_recipients),
+            subject=subject,
+            body_html=body_html,
+            created_at=created_at,
+            updated_at=updated_at,
+        )
+
+    def update_draft(
+        self,
+        provider_draft_id: str,
+        to_recipients: list[str],
+        cc_recipients: list[str],
+        bcc_recipients: list[str],
+        subject: str,
+        body_html: str,
+    ) -> DraftMetadata:
+        """
+        Update an existing Outlook draft via PATCH /me/messages/{id}.
+
+        The ``Prefer: IdType="ImmutableId"`` header is repeated on every
+        subsequent call because the stored ``provider_draft_id`` is an
+        Immutable ID (created with that same header). Without the header
+        Graph may interpret the path parameter as a mutable ID and fail
+        the lookup.
+        """
+        if self._access_token is None:
+            raise EmailNotAuthenticatedError("Outlook update_draft requires authentication.")
+
+        payload = self._build_draft_graph_payload(
+            to_recipients, cc_recipients, bcc_recipients, subject, body_html,
+        )
+
+        try:
+            response = self._graph_request(
+                "PATCH",
+                f"{GRAPH_BASE_URL}/me/messages/{provider_draft_id}",
+                body=payload,
+                extra_headers={"Prefer": 'IdType="ImmutableId"'},
+            )
+        except EmailExternalAPIError:
+            raise
+        except Exception as exc:
+            raise EmailExternalAPIError(
+                f"Outlook unexpected update_draft error ({type(exc).__name__}): {exc}"
+            ) from exc
+
+        returned_id = str(response.get("id") or provider_draft_id)
+        created_at = self._parse_graph_datetime(response.get("createdDateTime"))
+        updated_at = self._parse_graph_datetime(response.get("lastModifiedDateTime"))
+
+        return DraftMetadata(
+            provider_draft_id=returned_id,
             to_recipients=list(to_recipients),
             cc_recipients=list(cc_recipients),
             bcc_recipients=list(bcc_recipients),
@@ -777,7 +852,13 @@ class OutlookClient(EmailClient):
         while url and len(drafts) < _DRAFTS_MAX_TOTAL:
             response = self._fetch_drafts_page_with_retries(url)
             for msg in response.get("value") or []:
-                drafts.append(self._parse_outlook_draft(msg))
+                try:
+                    drafts.append(self._parse_outlook_draft(msg))
+                except Exception as exc:
+                    logger.warning(
+                        "Outlook fetch_drafts: skipping unparseable draft %s: %s",
+                        msg.get("id", "?"), exc,
+                    )
                 if len(drafts) >= _DRAFTS_MAX_TOTAL:
                     break
             url = response.get("@odata.nextLink")
