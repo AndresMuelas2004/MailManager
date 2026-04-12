@@ -210,6 +210,20 @@ class DraftStore(ABC):
         """
         raise NotImplementedError
 
+    @abstractmethod
+    def get(self, account_id: str, provider_draft_id: str) -> dict[str, Any] | None:
+        """
+        Return a single draft row by composite PK, or None if not found.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def delete(self, account_id: str, provider_draft_id: str) -> None:
+        """
+        Delete a single draft row by composite PK.
+        """
+        raise NotImplementedError
+
 
 class UserStore(ABC):
     """

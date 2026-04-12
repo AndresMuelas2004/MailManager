@@ -182,4 +182,43 @@ class PgDraftStore(DraftStore):
         return len(drafts)
 
 
+    def get(self, account_id: str, provider_draft_id: str) -> dict[str, Any] | None:
+        try:
+            with connection.get_connection() as conn:
+                with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                    cur.execute(
+                        queries.GET_DRAFT,
+                        {"provider_draft_id": provider_draft_id, "account_id": account_id},
+                    )
+                    row = cur.fetchone()
+        except psycopg2.errors.InvalidTextRepresentation:
+            return None
+        except DatabaseError:
+            raise
+        except psycopg2.Error as exc:
+            raise QueryError("Failed to get draft.") from exc
+        except Exception as exc:
+            raise QueryError(
+                f"Unexpected draft get error ({type(exc).__name__}): {exc}"
+            ) from exc
+        return _row_to_dict(row) if row is not None else None
+
+    def delete(self, account_id: str, provider_draft_id: str) -> None:
+        try:
+            with connection.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        queries.DELETE_DRAFT,
+                        {"provider_draft_id": provider_draft_id, "account_id": account_id},
+                    )
+        except DatabaseError:
+            raise
+        except psycopg2.Error as exc:
+            raise QueryError("Failed to delete draft.") from exc
+        except Exception as exc:
+            raise QueryError(
+                f"Unexpected draft delete error ({type(exc).__name__}): {exc}"
+            ) from exc
+
+
 draft_store = PgDraftStore()

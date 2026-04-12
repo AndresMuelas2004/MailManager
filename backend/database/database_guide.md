@@ -164,7 +164,15 @@ Returns `len(drafts)`. Raises `QueryError` on SQL or unexpected failures. Invali
 
 The service layer (`drafts_service.sync_drafts`) calls this method per account after fetching drafts from the provider. The result is that local `drafts` rows for that account exactly match the provider's current state — stale drafts deleted, matching drafts updated, new drafts inserted.
 
-The contract currently exposes `create`, `get`, `update`, `list_by_account`, `list_by_mailbox`, and `replace_all_for_account`. Send and delete methods will be added incrementally as the corresponding drafts endpoints are implemented.
+### `DraftStore.get(account_id, provider_draft_id) → dict | None`
+
+Returns a single draft row matching the composite PK `(provider_draft_id, account_id)`, or `None` if not found. Uses the `GET_DRAFT` query. Handles `InvalidTextRepresentation` gracefully (returns `None` for malformed UUIDs). Row is mapped through `_row_to_dict`. Raises `QueryError` on other SQL failures or unexpected exceptions.
+
+### `DraftStore.delete(account_id, provider_draft_id) → None`
+
+Deletes a single draft row matching the composite PK `(provider_draft_id, account_id)`. Uses the `DELETE_DRAFT` query. Raises `QueryError` on SQL failures or unexpected exceptions.
+
+The contract now exposes `create`, `get`, `update`, `delete`, `list_by_account`, `list_by_mailbox`, and `replace_all_for_account` — send methods will be added incrementally as the corresponding drafts endpoints are implemented.
 
 ## Project-Specific Error Hierarchy
 

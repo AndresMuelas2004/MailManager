@@ -44,7 +44,7 @@ Pre-existing test account identifiers are centralized in `e2e_config.py` with en
 | `OUTLOOK_ACCOUNT_ID` | `E2E_OUTLOOK_ACCOUNT_ID` | `3c55eb17-9d5e-4d31-a3b5-14c6c24279b9` |
 | `SEND_RECIPIENT` | `E2E_SEND_RECIPIENT` | `muelonmuelon12@gmail.com` |
 
-`SEND_RECIPIENT` is the destination address used by `test_19_send_email_gmail`, `test_20_send_email_outlook`, `test_32_create_draft_gmail`, `test_33_create_draft_outlook`, `test_34_sync_drafts_gmail_single_account`, `test_35_sync_drafts_gmail_mailbox`, `test_36_sync_drafts_outlook_single_account`, `test_37_sync_drafts_outlook_mailbox`, `test_40_list_drafts_gmail`, `test_41_update_draft_gmail`, and `test_42_update_draft_outlook`. Override it via `E2E_SEND_RECIPIENT` when running the suite against an environment where the default address is not available.
+`SEND_RECIPIENT` is the destination address used by `test_19_send_email_gmail`, `test_20_send_email_outlook`, `test_32_create_draft_gmail`, `test_33_create_draft_outlook`, `test_34_sync_drafts_gmail_single_account`, `test_35_sync_drafts_gmail_mailbox`, `test_36_sync_drafts_outlook_single_account`, `test_37_sync_drafts_outlook_mailbox`, `test_40_list_drafts_gmail`, `test_41_update_draft_gmail`, `test_42_update_draft_outlook`, `test_41_delete_draft_gmail`, and `test_42_delete_draft_outlook`. Override it via `E2E_SEND_RECIPIENT` when running the suite against an environment where the default address is not available.
 
 ### Pre-existing test accounts — one per provider
 
@@ -139,9 +139,16 @@ Each spam test syncs metadata first, picks 10 `ALL_MAIL` emails, moves them to s
 | 32 | `POST .../accounts/{aid}/drafts` (gmail) | independent — creates a real Gmail draft and verifies the local row |
 | 33 | `POST .../accounts/{aid}/drafts` (outlook) | independent — creates a real Outlook draft (verifies the `Prefer: IdType="ImmutableId"` path) |
 
-**Cleanup workaround**: each test verifies the `drafts` row exists in the local DB, then deletes it inline via raw SQL (`DELETE FROM drafts WHERE provider_draft_id = ... AND account_id = ...`). This is a temporary measure until the future `DELETE /mailboxes/{mid}/accounts/{aid}/drafts/{provider_draft_id}` endpoint exists, which will replace the manual DB cleanup with proper provider-side deletion. The draft is intentionally left at the provider for now.
+**Cleanup**: each test creates a draft, verifies the local DB row exists, then cleans up via the DELETE endpoint or raw SQL. The DB existence check and the cleanup live in the **same** test function (per `common_mistakes.md` § 1) — they are not split into separate tests.
 
-The DB existence check and the cleanup live in the **same** test function (per `common_mistakes.md` § 1) — they are not split into separate tests.
+### Section 5b-delete: Draft deletion — pre-existing accounts (tests 41–42)
+
+| Test | Endpoint | Dependencies |
+|---|---|---|
+| 41 | `DELETE .../accounts/{aid}/drafts/{draft_id}` (gmail) | independent — creates a draft, then deletes it via the endpoint, verifies gone from DB and provider via sync |
+| 42 | `DELETE .../accounts/{aid}/drafts/{draft_id}` (outlook) | independent — creates a draft, then deletes it via the endpoint, verifies gone from DB and provider via sync |
+
+Each test follows a create-delete-verify pattern: create a draft via the POST endpoint, call the DELETE endpoint, verify the local `drafts` row is gone, then run a drafts sync to confirm the draft is also gone at the provider.
 
 ### Section 5c: Drafts sync — pre-existing accounts (tests 34–37)
 
@@ -162,7 +169,7 @@ Four tests covering all 4 combinations of `{Gmail, Outlook} × {single-account, 
 5. Assert the response is well-formed: `total_synced >= 1`, `len(accounts) == 1` (each test mailbox has exactly one account), `accounts[0].account_id` matches, `provider` matches, and `drafts_synced == total_synced`. The last check applies to **all four tests** — since each E2E test mailbox contains exactly one account, the single-account and mailbox-wide variants both see a 1-account response, so the per-account count must equal the grand total.
 6. Query the DB via `_find_local_draft(provider_draft_id, account_id)` — which returns the tuple `(subject, to_recipients, cc_recipients, bcc_recipients, body_html)` — and assert subject, `to_recipients == [SEND_RECIPIENT]`, `cc_recipients == []`, and (Gmail only) `body_html == "<p>sync test</p>"`. Outlook wraps plain HTML in a full `<html>/<body>` structure, so body_html is not asserted byte-for-byte on the Outlook tests.
 7. Cleanup local rows again (`_clear_local_drafts`).
-8. **The draft is intentionally left at the provider** — same pattern as tests 32/33 — so the account is not cluttered with residue. Future `DELETE /drafts/{id}` will clean up both sides.
+8. **The draft is intentionally left at the provider** — same pattern as tests 32/33. The `DELETE /mailboxes/{mid}/accounts/{aid}/drafts/{draft_id}` endpoint is now available and tested separately in Section 5b-delete (tests 41–42).
 
 These tests rely on the global `_DRAFTS_MAX_TOTAL = 100` cap being high enough that the freshly created draft always appears in the fetched set. Because Gmail returns drafts in reverse-chronological order by convention and Outlook explicitly uses `$orderby=lastModifiedDateTime desc`, a draft created seconds ago is virtually guaranteed to be in the top 100.
 
@@ -229,6 +236,7 @@ When adding a new provider:
 - [ ] Add two draft sync tests (`POST .../drafts/sync` and `POST .../drafts/sync?account_id=...`) for the provider.
 - [ ] Add a draft listing test (`GET .../drafts?account_id=...`) for the provider.
 - [ ] Add a draft update test (`PATCH .../accounts/{aid}/drafts/{provider_draft_id}`) for the provider — must create a draft first and clean up the local row afterward.
+- [ ] Add a draft deletion test (`DELETE .../accounts/{aid}/drafts/{draft_id}`) for the provider.
 - [ ] Ensure flow assertions include the new provider behavior.
 
 The E2E suite should always represent the full set of supported providers.

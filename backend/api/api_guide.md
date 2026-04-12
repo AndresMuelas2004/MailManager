@@ -154,6 +154,7 @@ Two helpers in `services_helpers.py` support the email content flow:
 - **Outlook critical**: the Outlook client passes `Prefer: IdType="ImmutableId"` when creating the draft so the message ID stays stable across state transitions (critical for the future send-draft endpoint, which would reuse the same ID).
 - **Service module**: lives in `api/services/drafts_service.py` with a local `_persist_refreshed_tokens` helper. The service is the only one that imports `draft_store` from `database`.
 
+<<<<<<< HEAD
 ### Draft update endpoint
 
 `PATCH /mailboxes/{mailbox_id}/accounts/{account_id}/drafts/{provider_draft_id}` — replace the content of an existing draft at the provider and persist the new values locally.
@@ -169,6 +170,15 @@ Two helpers in `services_helpers.py` support the email content flow:
 - **Outlook behavior**: `OutlookClient.update_draft` calls `PATCH /me/messages/{id}` with the same Graph payload shape used by `create_draft` and the `Prefer: IdType="ImmutableId"` header **repeated on every call** — the stored `provider_draft_id` is an Immutable ID (created with that header), so Graph must be told again on each subsequent call to interpret the path parameter correctly. The Graph payload and datetime parsing are shared with `create_draft` via `_build_draft_graph_payload` and `_parse_graph_datetime`.
 - **Service module**: lives in `api/services/drafts_service.py::update_draft` with the same outer `try: ... except ApiError: raise / except Exception: → DraftUpdateError` safety net as `create_draft`. Every intermediate `raise DraftUpdateError(...)` uses a globally unique message (API CLAUDE.md §7) so the origin of each failure is pinpointable from the message alone.
 
+### Draft deletion endpoint
+
+`DELETE /mailboxes/{mailbox_id}/accounts/{account_id}/drafts/{draft_id}` — delete a draft at the provider and remove it locally.
+
+- **Path params**: `mailbox_id`, `account_id`, `draft_id` (the `provider_draft_id`).
+- **Response**: `{"status": "deleted"}`.
+- **Errors**: `DraftNotFound` (code `"draft_not_found"`, HTTP 404) — draft not found in local DB. `DraftDeleteError` (code `"draft_delete_error"`, HTTP 502) — provider or unexpected failure during deletion.
+- **Flow**: validate ownership via `ensure_mailbox_access` → fetch the account via `account_store.get` (404 if missing) → verify draft exists locally via `draft_store.get(account_id, draft_id)` (raises `DraftNotFound` if `None`) → build manager via `build_manager_for_accounts` → silent auth + token refresh persistence → **Provider-First**: call `manager.delete_draft(account_label, draft_id)` (translated `CoreError` via `translate_core_error(fallback=DraftDeleteError)`) → only on success, call `draft_store.delete(account_id, draft_id)` → return `{"status": "deleted"}`.
+
 ### Draft listing endpoint
 
 `GET /mailboxes/{mailbox_id}/drafts` — list drafts stored locally for a mailbox. Query parameter `account_id` is optional:
@@ -181,7 +191,7 @@ The endpoint is **pure DB read**: it does not call any provider API, does not pe
 - **Response**: `list[DraftOut]` — the same schema used by the create endpoint. No wrapper object.
 - **Ordering**: `created_at DESC` (most recent first). No pagination.
 - **Error**: `DraftListError` (code `"draft_list_error"`, HTTP 500) — raised on DB-side failures during listing. Note the status difference with `DraftCreationError` (502): creation failures are usually provider-side, while listing failures can only be DB-side.
-- **Router note**: all draft endpoints live in the same `drafts_routers.py` router with prefix `/mailboxes/{mailbox_id}`. The create POST handler declares `/accounts/{account_id}/drafts`; the list GET and sync POST handlers declare `/drafts` and `/drafts/sync` respectively.
+- **Router note**: all draft endpoints live in the same `drafts_routers.py` router with prefix `/mailboxes/{mailbox_id}`. The create POST handler declares `/accounts/{account_id}/drafts`; the delete DELETE handler declares `/accounts/{account_id}/drafts/{draft_id}`; the list GET and sync POST handlers declare `/drafts` and `/drafts/sync` respectively.
 
 ### Draft sync endpoint
 
@@ -276,7 +286,7 @@ Complete, authoritative list of every `ApiError` subclass registered in `_STATUS
 | `MailboxNotFound` | `mailbox_not_found` | 404 | Mailbox not found or ownership check failed mid-query. |
 | `AccountNotFound` | `account_not_found` | 404 | Account not found inside its mailbox during an operation. |
 | `EmailNotFound` | `email_not_found` | 404 | The requested email has no row in `email_metadata` for the target account. Raised by `get_email_full_content` before the cache read, because `email_content` has a composite FK to `email_metadata` (migration 0013) and unknown messages would otherwise surface as a 500 from the FK violation at upsert time. |
-| `DraftNotFound` | `draft_not_found` | 404 | The requested draft has no row in `drafts` for the target `(provider_draft_id, account_id)` pair. Raised by `update_draft` as a pre-check before the provider call — avoids wasting a Gmail/Outlook round trip on drafts our system has never seen. |
+| `DraftNotFound` | `draft_not_found` | 404 | The requested draft has no row in `drafts` for the target `(provider_draft_id, account_id)` pair. Raised by `update_draft` and `delete_draft` as a pre-check before the provider call — avoids wasting a Gmail/Outlook round trip on drafts our system has never seen. |
 | `UserNotFound` | `user_not_found` | 404 | Authenticated user does not exist in the database (e.g. during `DELETE /auth/me` or `GET /auth/me`). |
 | `EmailNotInTrash` | `email_not_in_trash` | 409 | A `manage_trash` pre-check rejected an email that was not currently in the `TRASH` box. |
 | `AccountNotConnected` | `account_not_connected` | 409 | Silent auth failed or tokens are missing — the user must reconnect the account. Raised by `raise_on_silent_auth_errors`. |
@@ -300,6 +310,7 @@ Complete, authoritative list of every `ApiError` subclass registered in `_STATUS
 | `EmailContentFetchError` | `email_content_fetch_error` | 502 | Provider-side or unexpected failure when fetching full email content. |
 | `DraftCreationError` | `draft_creation_error` | 502 | Provider-side or unexpected failure during draft creation. |
 | `DraftUpdateError` | `draft_update_error` | 502 | Provider-side or unexpected failure during draft update. |
+| `DraftDeleteError` | `draft_delete_error` | 502 | Provider-side or unexpected failure during draft deletion. |
 | `ExternalAPIError` | `external_api_error` | 502 | Generic catch-all for translated `EmailExternalAPIError`. Use more specific subclasses where possible. |
 | `MoveToTrashError` | `move_to_trash_error` | 502 | Provider-side failure during `move_to_trash`. |
 | `ReadStatusUpdateError` | `read_status_update_error` | 502 | Provider-side failure during `update_read_status`. |

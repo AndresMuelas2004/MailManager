@@ -818,6 +818,31 @@ class OutlookClient(EmailClient):
             updated_at=updated_at,
         )
 
+    def delete_draft(self, provider_draft_id: str) -> None:
+        """Delete a draft in Outlook via DELETE /me/messages/{id}.
+
+        Uses Prefer: IdType="ImmutableId" because the provider_draft_id
+        stored locally was obtained with that header during create_draft.
+        Without it, Graph would interpret the ID as a mutable folder-scoped
+        ID and the request would fail.
+        """
+        if self._access_token is None:
+            raise EmailNotAuthenticatedError("Outlook delete_draft requires authentication.")
+
+        try:
+            self._graph_request(
+                "DELETE",
+                f"{GRAPH_BASE_URL}/me/messages/{provider_draft_id}",
+                extra_headers={"Prefer": 'IdType="ImmutableId"'},
+            )
+        except EmailExternalAPIError:
+            raise
+        except Exception as exc:
+            raise EmailExternalAPIError(
+                f"Outlook unexpected delete_draft error ({type(exc).__name__}): {exc}"
+            ) from exc
+
+
     def fetch_drafts(self) -> list[DraftMetadata]:
         """Fetch the most recent Outlook drafts (capped at _DRAFTS_MAX_TOTAL).
 

@@ -60,6 +60,7 @@ class FakeEmailClient(EmailClient):
         fetch_content_exc: Exception | None = None,
         create_draft_exc: Exception | None = None,
         update_draft_exc: Exception | None = None,
+        delete_draft_exc: Exception | None = None,
         fetch_drafts_exc: Exception | None = None,
         metadata: list[EmailMetadata] | None = None,
         sync_cursor_return: str = DEFAULT_SYNC_CURSOR,
@@ -97,6 +98,7 @@ class FakeEmailClient(EmailClient):
         self._create_draft_return = create_draft_return
         self._update_draft_exc = update_draft_exc
         self._update_draft_return = update_draft_return
+        self._delete_draft_exc = delete_draft_exc
         self._fetch_drafts_exc = fetch_drafts_exc
         self._fetch_drafts_return = list(fetch_drafts_return or [])
         self._metadata = list(metadata or [])
@@ -126,6 +128,7 @@ class FakeEmailClient(EmailClient):
         self.sent_emails: list[tuple[str, str, list[str]]] = []
         self.create_draft_calls: list[tuple[list[str], list[str], list[str], str, str]] = []
         self.update_draft_calls: list[tuple[str, list[str], list[str], list[str], str, str]] = []
+        self.delete_draft_calls: list[str] = []
         self.fetch_drafts_calls = 0
         self.deleted_message_ids: list[str] = []
         self.restored_items: list[dict] = []
@@ -298,6 +301,11 @@ class FakeEmailClient(EmailClient):
             created_at=DEFAULT_RECEIVED_AT,
             updated_at=DEFAULT_RECEIVED_AT,
         )
+
+    def delete_draft(self, provider_draft_id: str) -> None:
+        self.delete_draft_calls.append(provider_draft_id)
+        if self._delete_draft_exc:
+            raise self._delete_draft_exc
 
     def fetch_drafts(self) -> list[DraftMetadata]:
         self.fetch_drafts_calls += 1

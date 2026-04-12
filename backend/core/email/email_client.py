@@ -165,6 +165,14 @@ class EmailClient(ABC):
         """
 
     @abstractmethod
+    def delete_draft(self, provider_draft_id: str) -> None:
+        """
+        Delete a draft at the provider. Raises EmailNotAuthenticatedError
+        when not authenticated, EmailExternalAPIError on provider failure.
+        Returns None (success signaled by absence of exception).
+        """
+
+    @abstractmethod
     def fetch_drafts(self) -> list[DraftMetadata]:
         """
         Fetch the most recent drafts from the provider as a flat list.

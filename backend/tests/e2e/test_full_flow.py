@@ -1375,17 +1375,100 @@ def test_42_update_draft_outlook(e2e_client):
 
 
 # ===================================================================
+# Section 5f: Delete draft — Provider-First (tests 43–44)
+#
+# Each test creates a draft, deletes it via the endpoint, and verifies
+# the draft is gone both from the local DB and from the provider
+# (via a sync reconciliation).
+# ===================================================================
+
+
+def test_43_delete_draft_gmail(e2e_client):
+    """Create a Gmail draft, delete it via the endpoint, verify it's gone
+    from local DB AND from the Gmail provider (via sync reconciliation)."""
+    ts = datetime.now(timezone.utc).isoformat()
+    subject = f"E2E delete — Gmail {ts}"
+    create_resp = e2e_client.post(
+        f"/mailboxes/{GMAIL_MAILBOX_ID}/accounts/{GMAIL_ACCOUNT_ID}/drafts",
+        json={
+            "to_recipients": [SEND_RECIPIENT],
+            "subject": subject,
+            "body_html": "<p>delete test</p>",
+        },
+    )
+    _assert_ok(create_resp)
+    draft_id = create_resp.json()["provider_draft_id"]
+
+    delete_resp = e2e_client.delete(
+        f"/mailboxes/{GMAIL_MAILBOX_ID}/accounts/{GMAIL_ACCOUNT_ID}/drafts/{draft_id}",
+    )
+    _assert_ok(delete_resp)
+    assert delete_resp.json() == {"status": "deleted"}
+
+    # Local-DB assertion: row is gone.
+    assert _find_local_draft(draft_id, GMAIL_ACCOUNT_ID) is None
+
+    # Provider assertion: wipe local rows and re-sync — the deleted draft
+    # must NOT reappear, which proves it was deleted at Gmail.
+    _clear_local_drafts(GMAIL_ACCOUNT_ID)
+    sync_resp = e2e_client.post(
+        f"/mailboxes/{GMAIL_MAILBOX_ID}/drafts/sync?account_id={GMAIL_ACCOUNT_ID}",
+    )
+    _assert_ok(sync_resp)
+    assert _find_local_draft(draft_id, GMAIL_ACCOUNT_ID) is None
+
+    _clear_local_drafts(GMAIL_ACCOUNT_ID)
+
+
+def test_44_delete_draft_outlook(e2e_client):
+    """Create an Outlook draft, delete it via the endpoint, verify it's gone
+    from local DB AND from the Outlook provider (via sync reconciliation)."""
+    ts = datetime.now(timezone.utc).isoformat()
+    subject = f"E2E delete — Outlook {ts}"
+    create_resp = e2e_client.post(
+        f"/mailboxes/{OUTLOOK_MAILBOX_ID}/accounts/{OUTLOOK_ACCOUNT_ID}/drafts",
+        json={
+            "to_recipients": [SEND_RECIPIENT],
+            "subject": subject,
+            "body_html": "<p>delete test</p>",
+        },
+    )
+    _assert_ok(create_resp)
+    draft_id = create_resp.json()["provider_draft_id"]
+
+    delete_resp = e2e_client.delete(
+        f"/mailboxes/{OUTLOOK_MAILBOX_ID}/accounts/{OUTLOOK_ACCOUNT_ID}/drafts/{draft_id}",
+    )
+    _assert_ok(delete_resp)
+    assert delete_resp.json() == {"status": "deleted"}
+
+    # Local-DB assertion: row is gone.
+    assert _find_local_draft(draft_id, OUTLOOK_ACCOUNT_ID) is None
+
+    # Provider assertion: wipe local rows and re-sync — the deleted draft
+    # must NOT reappear, which proves it was deleted at Outlook.
+    _clear_local_drafts(OUTLOOK_ACCOUNT_ID)
+    sync_resp = e2e_client.post(
+        f"/mailboxes/{OUTLOOK_MAILBOX_ID}/drafts/sync?account_id={OUTLOOK_ACCOUNT_ID}",
+    )
+    _assert_ok(sync_resp)
+    assert _find_local_draft(draft_id, OUTLOOK_ACCOUNT_ID) is None
+
+    _clear_local_drafts(OUTLOOK_ACCOUNT_ID)
+
+
+# ===================================================================
 # Section 6: Auth lifecycle (MUST BE LAST — invalidates session)
 # ===================================================================
 
-def test_43_post_auth_logout(e2e_client, flow_state):
+def test_45_post_auth_logout(e2e_client, flow_state):
     response = e2e_client.post("/auth/logout")
     _assert_ok(response)
     assert response.json() == {"status": "logged_out"}
     flow_state["logged_out"] = "true"
 
 
-def test_44_get_auth_me_after_logout_401(e2e_client, flow_state):
+def test_46_get_auth_me_after_logout_401(e2e_client, flow_state):
     _require(flow_state, "logged_out")
     response = e2e_client.get("/auth/me")
     _assert_ok(response, expected=401)

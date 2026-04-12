@@ -15,6 +15,7 @@ from api.errors.exceptions import (
     AccountNotFound,
     DatabaseQueryError,
     DraftCreationError,
+    DraftDeleteError,
     DraftListError,
     DraftNotFound,
     DraftSyncError,
@@ -906,6 +907,7 @@ class TestSyncDrafts:
             drafts_service.sync_drafts(_MAILBOX_ID, _USER_ID, _ACCOUNT_ID)
 
 
+<<<<<<< HEAD
 # =====================================================================
 # update_draft
 # =====================================================================
@@ -1254,3 +1256,210 @@ class TestUpdateDraft:
         assert result.bcc_recipients == []
         assert result.subject == ""
         assert result.body_html == ""
+
+
+# ------------------------------------------------------------------
+# delete_draft
+# ------------------------------------------------------------------
+
+_DRAFT_ID = "draft_to_delete"
+
+
+def _patch_delete_common(monkeypatch, *, fake_client_kwargs=None):
+    """Apply common monkeypatches for delete_draft tests."""
+    monkeypatch.setattr(
+        drafts_service, "ensure_mailbox_access",
+        lambda _mb, _uid: {"mailbox_id": _MAILBOX_ID, "owner_user_id": _USER_ID},
+    )
+    monkeypatch.setattr(
+        drafts_service.account_store, "get",
+        lambda _mb, _aid: _fake_account() if _aid == _ACCOUNT_ID else None,
+    )
+    monkeypatch.setattr(
+        drafts_service.draft_store, "get",
+        lambda _aid, _did: _persisted_row(provider_draft_id=_did) if _did == _DRAFT_ID else None,
+    )
+    monkeypatch.setattr(
+        drafts_service, "load_wrapped_app_credentials",
+        lambda _prov: {"client_id": "cid", "client_secret": "cs"},
+    )
+    monkeypatch.setattr(
+        drafts_service, "load_wrapped_account_tokens",
+        lambda _mb, _acc, _prov: {"access_token": "at", "refresh_token": "rt"},
+    )
+    monkeypatch.setattr(
+        drafts_service.account_store, "upsert_tokens",
+        lambda *_a, **_kw: None,
+    )
+
+    kwargs = fake_client_kwargs or {}
+
+    def _build(accounts):
+        manager = EmailManager()
+        for acc in accounts:
+            mid = str(acc.get("mailbox_id", ""))
+            aid = str(acc.get("account_id", ""))
+            label = f"{mid}__{aid}"
+            manager.add_client(FakeEmailClient(
+                label,
+                auth_return={"access_token": "tok", "refresh_token": "ref"},
+                **kwargs,
+            ))
+        return manager
+
+    monkeypatch.setattr(drafts_service, "build_manager_for_accounts", _build)
+
+    deleted: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        drafts_service.draft_store, "delete",
+        lambda aid, did: deleted.append((aid, did)),
+    )
+    return deleted
+
+
+class TestDeleteDraft:
+
+    def test_happy_path_returns_status_deleted(self, monkeypatch):
+        _patch_delete_common(monkeypatch)
+        result = drafts_service.delete_draft(
+            _MAILBOX_ID, _ACCOUNT_ID, _DRAFT_ID, _USER_ID,
+        )
+        assert result == {"status": "deleted"}
+
+    def test_happy_path_calls_provider_and_db(self, monkeypatch):
+        deleted = _patch_delete_common(monkeypatch)
+        captured_clients: list[FakeEmailClient] = []
+
+        def _build(accounts):
+            manager = EmailManager()
+            for acc in accounts:
+                mid = str(acc.get("mailbox_id", ""))
+                aid = str(acc.get("account_id", ""))
+                label = f"{mid}__{aid}"
+                client = FakeEmailClient(
+                    label,
+                    auth_return={"access_token": "tok", "refresh_token": "ref"},
+                )
+                captured_clients.append(client)
+                manager.add_client(client)
+            return manager
+
+        monkeypatch.setattr(drafts_service, "build_manager_for_accounts", _build)
+        drafts_service.delete_draft(
+            _MAILBOX_ID, _ACCOUNT_ID, _DRAFT_ID, _USER_ID,
+        )
+        assert len(captured_clients) == 1
+        assert captured_clients[0].delete_draft_calls == [_DRAFT_ID]
+        assert deleted == [(_ACCOUNT_ID, _DRAFT_ID)]
+
+    def test_draft_not_found_raises(self, monkeypatch):
+        _patch_delete_common(monkeypatch)
+        monkeypatch.setattr(
+            drafts_service.draft_store, "get",
+            lambda _aid, _did: None,
+        )
+        with pytest.raises(DraftNotFound):
+            drafts_service.delete_draft(
+                _MAILBOX_ID, _ACCOUNT_ID, _DRAFT_ID, _USER_ID,
+            )
+
+    def test_account_not_found_raises(self, monkeypatch):
+        _patch_delete_common(monkeypatch)
+        monkeypatch.setattr(
+            drafts_service.account_store, "get",
+            lambda _mb, _aid: None,
+        )
+        with pytest.raises(AccountNotFound):
+            drafts_service.delete_draft(
+                _MAILBOX_ID, _ACCOUNT_ID, _DRAFT_ID, _USER_ID,
+            )
+
+    def test_mailbox_access_denied_raises(self, monkeypatch):
+        _patch_delete_common(monkeypatch)
+
+        def _raise(*_a, **_kw):
+            raise Forbidden("You do not have access to this mailbox.")
+
+        monkeypatch.setattr(drafts_service, "ensure_mailbox_access", _raise)
+        with pytest.raises(Forbidden):
+            drafts_service.delete_draft(
+                _MAILBOX_ID, _ACCOUNT_ID, _DRAFT_ID, _USER_ID,
+            )
+
+    def test_provider_external_api_error_translated(self, monkeypatch):
+        deleted = _patch_delete_common(monkeypatch, fake_client_kwargs={
+            "delete_draft_exc": EmailExternalAPIError("Graph 404"),
+        })
+        with pytest.raises(ExternalAPIError):
+            drafts_service.delete_draft(
+                _MAILBOX_ID, _ACCOUNT_ID, _DRAFT_ID, _USER_ID,
+            )
+        # Provider-First: DB must NOT be touched when provider fails.
+        assert deleted == []
+
+    def test_provider_generic_exception_raises_external_api_error(self, monkeypatch):
+        deleted = _patch_delete_common(monkeypatch, fake_client_kwargs={
+            "delete_draft_exc": RuntimeError("boom"),
+        })
+        with pytest.raises(ExternalAPIError):
+            drafts_service.delete_draft(
+                _MAILBOX_ID, _ACCOUNT_ID, _DRAFT_ID, _USER_ID,
+            )
+        assert deleted == []
+
+    def test_silent_auth_error_raises_account_not_connected(self, monkeypatch):
+        deleted = _patch_delete_common(monkeypatch, fake_client_kwargs={
+            "auth_silent_exc": EmailAuthError("expired"),
+        })
+        with pytest.raises(AccountNotConnected):
+            drafts_service.delete_draft(
+                _MAILBOX_ID, _ACCOUNT_ID, _DRAFT_ID, _USER_ID,
+            )
+        assert deleted == []
+
+    def test_db_error_on_delete_translated(self, monkeypatch):
+        _patch_delete_common(monkeypatch)
+
+        def _raise_db(*_a, **_kw):
+            raise DbQueryError("db down")
+
+        monkeypatch.setattr(drafts_service.draft_store, "delete", _raise_db)
+        with pytest.raises(DatabaseQueryError):
+            drafts_service.delete_draft(
+                _MAILBOX_ID, _ACCOUNT_ID, _DRAFT_ID, _USER_ID,
+            )
+
+    def test_db_error_on_draft_get_translated(self, monkeypatch):
+        _patch_delete_common(monkeypatch)
+
+        def _raise_db(*_a, **_kw):
+            raise DbQueryError("lookup failed")
+
+        monkeypatch.setattr(drafts_service.draft_store, "get", _raise_db)
+        with pytest.raises(DatabaseQueryError):
+            drafts_service.delete_draft(
+                _MAILBOX_ID, _ACCOUNT_ID, _DRAFT_ID, _USER_ID,
+            )
+
+    def test_refreshed_tokens_persisted(self, monkeypatch):
+        _patch_delete_common(monkeypatch, fake_client_kwargs={
+            "auth_silent_return": {
+                "access_token": "new-at",
+                "refresh_token": "new-rt",
+            },
+        })
+        upsert_calls: list[tuple] = []
+        monkeypatch.setattr(
+            drafts_service.account_store, "upsert_tokens",
+            lambda mb, acc, prov, payload: upsert_calls.append((mb, acc, prov, payload)),
+        )
+        drafts_service.delete_draft(
+            _MAILBOX_ID, _ACCOUNT_ID, _DRAFT_ID, _USER_ID,
+        )
+        assert len(upsert_calls) == 1
+        mb, acc, prov, payload = upsert_calls[0]
+        assert mb == _MAILBOX_ID
+        assert acc == _ACCOUNT_ID
+        assert prov == _PROVIDER
+        assert payload["access_token"] == "new-at"
+        assert payload["refresh_token"] == "new-rt"

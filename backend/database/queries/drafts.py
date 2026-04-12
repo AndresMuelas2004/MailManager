@@ -102,3 +102,17 @@ DELETE_DRAFTS_MISSING_FOR_ACCOUNT = """
     WHERE account_id = %(account_id)s
       AND NOT (provider_draft_id = ANY(%(keep_ids)s))
 """
+
+GET_DRAFT = """
+    SELECT provider_draft_id, account_id, to_recipients, cc_recipients, bcc_recipients,
+           subject, body_html, created_at, updated_at
+    FROM drafts
+    WHERE provider_draft_id = %(provider_draft_id)s
+      AND account_id = %(account_id)s
+"""
+
+DELETE_DRAFT = """
+    DELETE FROM drafts
+    WHERE provider_draft_id = %(provider_draft_id)s
+      AND account_id = %(account_id)s
+"""

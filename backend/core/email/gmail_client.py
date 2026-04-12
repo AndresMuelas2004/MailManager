@@ -1000,6 +1000,26 @@ class GmailClient(EmailClient):
             updated_at=now,
         )
 
+    def delete_draft(self, provider_draft_id: str) -> None:
+        """Delete a draft in Gmail via users().drafts().delete()."""
+        if self.service is None:
+            raise EmailNotAuthenticatedError("Gmail delete_draft requires authentication.")
+
+        try:
+            self.service.users().drafts().delete(
+                userId="me", id=provider_draft_id,
+            ).execute()
+        except HttpError as exc:
+            status, reason = http_error_detail(exc)
+            raise EmailExternalAPIError(
+                f"Gmail failed to delete draft (HTTP {status}: {reason})."
+            ) from exc
+        except Exception as exc:
+            raise EmailExternalAPIError(
+                f"Gmail unexpected delete_draft error ({type(exc).__name__}): {exc}"
+            ) from exc
+
+
     def fetch_drafts(self) -> list[DraftMetadata]:
         """Fetch the most recent Gmail drafts (capped at _DRAFTS_MAX_TOTAL).
 
