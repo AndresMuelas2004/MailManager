@@ -870,6 +870,32 @@ class GmailClient(EmailClient):
             box="SENT",
         )
 
+    @staticmethod
+    def _build_draft_raw_message(
+        to_recipients: list[str],
+        cc_recipients: list[str],
+        bcc_recipients: list[str],
+        subject: str,
+        body_html: str,
+    ) -> str:
+        """Build the base64url-encoded RFC 2822 message used by Gmail
+        drafts.create and drafts.update. Both endpoints accept the same
+        ``{"message": {"raw": ...}}`` body shape.
+        """
+        from email.mime.multipart import MIMEMultipart
+        from email.mime.text import MIMEText
+
+        message = MIMEMultipart("alternative")
+        if to_recipients:
+            message["to"] = ", ".join(to_recipients)
+        if cc_recipients:
+            message["cc"] = ", ".join(cc_recipients)
+        if bcc_recipients:
+            message["bcc"] = ", ".join(bcc_recipients)
+        message["subject"] = subject or ""
+        message.attach(MIMEText(body_html or "", "html"))
+        return base64.urlsafe_b64encode(message.as_bytes()).decode("utf-8")
+
     def create_draft(
         self,
         to_recipients: list[str],
@@ -885,20 +911,9 @@ class GmailClient(EmailClient):
         if self.service is None:
             raise EmailNotAuthenticatedError("Gmail create_draft requires authentication.")
 
-        from email.mime.multipart import MIMEMultipart
-        from email.mime.text import MIMEText
-
-        message = MIMEMultipart("alternative")
-        if to_recipients:
-            message["to"] = ", ".join(to_recipients)
-        if cc_recipients:
-            message["cc"] = ", ".join(cc_recipients)
-        if bcc_recipients:
-            message["bcc"] = ", ".join(bcc_recipients)
-        message["subject"] = subject or ""
-        message.attach(MIMEText(body_html or "", "html"))
-
-        raw_message = base64.urlsafe_b64encode(message.as_bytes()).decode("utf-8")
+        raw_message = self._build_draft_raw_message(
+            to_recipients, cc_recipients, bcc_recipients, subject, body_html,
+        )
 
         try:
             response = (
@@ -918,6 +933,61 @@ class GmailClient(EmailClient):
             ) from exc
 
         provider_draft_id = response.get("id", "")
+        now = datetime.now(timezone.utc)
+        return DraftMetadata(
+            provider_draft_id=provider_draft_id,
+            to_recipients=list(to_recipients),
+            cc_recipients=list(cc_recipients),
+            bcc_recipients=list(bcc_recipients),
+            subject=subject,
+            body_html=body_html,
+            created_at=now,
+            updated_at=now,
+        )
+
+    def update_draft(
+        self,
+        provider_draft_id: str,
+        to_recipients: list[str],
+        cc_recipients: list[str],
+        bcc_recipients: list[str],
+        subject: str,
+        body_html: str,
+    ) -> DraftMetadata:
+        """
+        Update an existing Gmail draft via users().drafts().update().
+        Full-field replacement — Gmail overwrites the entire draft with
+        the new MIME message. The Gmail ``draft.id`` is preserved (the
+        inner ``message.id`` may change, but we do not store it).
+        """
+        if self.service is None:
+            raise EmailNotAuthenticatedError("Gmail update_draft requires authentication.")
+
+        raw_message = self._build_draft_raw_message(
+            to_recipients, cc_recipients, bcc_recipients, subject, body_html,
+        )
+
+        try:
+            (
+                self.service.users()
+                .drafts()
+                .update(
+                    userId="me",
+                    id=provider_draft_id,
+                    body={"message": {"raw": raw_message}},
+                )
+                .execute()
+            )
+        except HttpError as exc:
+            status, reason = http_error_detail(exc)
+            raise EmailExternalAPIError(
+                f"Gmail failed to update draft (HTTP {status}: {reason})."
+            ) from exc
+        except Exception as exc:
+            raise EmailExternalAPIError(
+                f"Gmail unexpected update_draft error ({type(exc).__name__}): {exc}"
+            ) from exc
+
         now = datetime.now(timezone.utc)
         return DraftMetadata(
             provider_draft_id=provider_draft_id,
@@ -969,12 +1039,16 @@ class GmailClient(EmailClient):
             error_context="batch drafts fetch",
             resource="drafts",
         )
-        try:
-            return [self._parse_gmail_draft(item) for item in raw.values()]
-        except Exception as exc:
-            raise EmailExternalAPIError(
-                f"Gmail unexpected draft parse error ({type(exc).__name__}): {exc}"
-            ) from exc
+        drafts: list[DraftMetadata] = []
+        for item in raw.values():
+            try:
+                drafts.append(self._parse_gmail_draft(item))
+            except Exception as exc:
+                logger.warning(
+                    "Gmail fetch_drafts: skipping unparseable draft %s: %s",
+                    item.get("id", "?"), exc,
+                )
+        return drafts
 
     def _list_all_draft_ids(self) -> list[str]:
         """Paginated drafts.list — collects up to _DRAFTS_MAX_TOTAL draft IDs.

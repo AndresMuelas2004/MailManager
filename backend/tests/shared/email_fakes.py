@@ -59,6 +59,7 @@ class FakeEmailClient(EmailClient):
         restore_from_spam_exc: Exception | None = None,
         fetch_content_exc: Exception | None = None,
         create_draft_exc: Exception | None = None,
+        update_draft_exc: Exception | None = None,
         fetch_drafts_exc: Exception | None = None,
         metadata: list[EmailMetadata] | None = None,
         sync_cursor_return: str = DEFAULT_SYNC_CURSOR,
@@ -74,6 +75,7 @@ class FakeEmailClient(EmailClient):
         fetch_messages_metadata_return: list[EmailMetadata] | None = None,
         email_content: EmailContent | None = None,
         create_draft_return: DraftMetadata | None = None,
+        update_draft_return: DraftMetadata | None = None,
         fetch_drafts_return: list[DraftMetadata] | None = None,
     ) -> None:
         self._account_label = account_label
@@ -93,6 +95,8 @@ class FakeEmailClient(EmailClient):
         self._email_content = email_content or EmailContent(html_body=None, text_body=None)
         self._create_draft_exc = create_draft_exc
         self._create_draft_return = create_draft_return
+        self._update_draft_exc = update_draft_exc
+        self._update_draft_return = update_draft_return
         self._fetch_drafts_exc = fetch_drafts_exc
         self._fetch_drafts_return = list(fetch_drafts_return or [])
         self._metadata = list(metadata or [])
@@ -121,6 +125,7 @@ class FakeEmailClient(EmailClient):
         self.restore_from_spam_calls: list[list[str]] = []
         self.sent_emails: list[tuple[str, str, list[str]]] = []
         self.create_draft_calls: list[tuple[list[str], list[str], list[str], str, str]] = []
+        self.update_draft_calls: list[tuple[str, list[str], list[str], list[str], str, str]] = []
         self.fetch_drafts_calls = 0
         self.deleted_message_ids: list[str] = []
         self.restored_items: list[dict] = []
@@ -251,6 +256,40 @@ class FakeEmailClient(EmailClient):
             return self._create_draft_return
         return DraftMetadata(
             provider_draft_id="fake_draft_1",
+            to_recipients=list(to_recipients),
+            cc_recipients=list(cc_recipients),
+            bcc_recipients=list(bcc_recipients),
+            subject=subject,
+            body_html=body_html,
+            created_at=DEFAULT_RECEIVED_AT,
+            updated_at=DEFAULT_RECEIVED_AT,
+        )
+
+    def update_draft(
+        self,
+        provider_draft_id: str,
+        to_recipients: list[str],
+        cc_recipients: list[str],
+        bcc_recipients: list[str],
+        subject: str,
+        body_html: str,
+    ) -> DraftMetadata:
+        self.update_draft_calls.append(
+            (
+                provider_draft_id,
+                list(to_recipients),
+                list(cc_recipients),
+                list(bcc_recipients),
+                subject,
+                body_html,
+            )
+        )
+        if self._update_draft_exc:
+            raise self._update_draft_exc
+        if self._update_draft_return is not None:
+            return self._update_draft_return
+        return DraftMetadata(
+            provider_draft_id=provider_draft_id,
             to_recipients=list(to_recipients),
             cc_recipients=list(cc_recipients),
             bcc_recipients=list(bcc_recipients),

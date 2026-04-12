@@ -36,6 +36,7 @@ class PgDraftStore(DraftStore):
                 with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
                     cur.execute(queries.INSERT_DRAFT, draft)
                     row = cur.fetchone()
+            return _row_to_dict(row)
         except DatabaseError:
             raise
         except psycopg2.Error as exc:
@@ -44,7 +45,54 @@ class PgDraftStore(DraftStore):
             raise QueryError(
                 f"Unexpected draft create error ({type(exc).__name__}): {exc}"
             ) from exc
+
+    def get(
+        self,
+        provider_draft_id: str,
+        account_id: str,
+    ) -> dict[str, Any] | None:
+        try:
+            with connection.get_connection() as conn:
+                with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                    cur.execute(
+                        queries.GET_DRAFT,
+                        {
+                            "provider_draft_id": provider_draft_id,
+                            "account_id": account_id,
+                        },
+                    )
+                    row = cur.fetchone()
+        except psycopg2.errors.InvalidTextRepresentation:
+            return None
+        except DatabaseError:
+            raise
+        except psycopg2.Error as exc:
+            raise QueryError("Failed to get draft.") from exc
+        except Exception as exc:
+            raise QueryError(
+                f"Unexpected draft get error ({type(exc).__name__}): {exc}"
+            ) from exc
+        if row is None:
+            return None
         return _row_to_dict(row)
+
+    def update(self, draft: dict[str, Any]) -> dict[str, Any]:
+        try:
+            with connection.get_connection() as conn:
+                with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                    cur.execute(queries.UPDATE_DRAFT, draft)
+                    row = cur.fetchone()
+            if row is None:
+                raise QueryError("Draft row to update not found.")
+            return _row_to_dict(row)
+        except DatabaseError:
+            raise
+        except psycopg2.Error as exc:
+            raise QueryError("Failed to update draft.") from exc
+        except Exception as exc:
+            raise QueryError(
+                f"Unexpected draft update error ({type(exc).__name__}): {exc}"
+            ) from exc
 
     def list_by_account(self, account_id: str) -> list[dict[str, Any]]:
         try:
@@ -55,6 +103,7 @@ class PgDraftStore(DraftStore):
                         {"account_id": account_id},
                     )
                     rows = cur.fetchall()
+            return [_row_to_dict(row) for row in rows]
         except psycopg2.errors.InvalidTextRepresentation:
             return []
         except DatabaseError:
@@ -65,7 +114,6 @@ class PgDraftStore(DraftStore):
             raise QueryError(
                 f"Unexpected drafts list by account error ({type(exc).__name__}): {exc}"
             ) from exc
-        return [_row_to_dict(row) for row in rows]
 
     def list_by_mailbox(self, mailbox_id: str) -> list[dict[str, Any]]:
         try:
@@ -76,6 +124,7 @@ class PgDraftStore(DraftStore):
                         {"mailbox_id": mailbox_id},
                     )
                     rows = cur.fetchall()
+            return [_row_to_dict(row) for row in rows]
         except psycopg2.errors.InvalidTextRepresentation:
             return []
         except DatabaseError:
@@ -86,7 +135,6 @@ class PgDraftStore(DraftStore):
             raise QueryError(
                 f"Unexpected drafts list by mailbox error ({type(exc).__name__}): {exc}"
             ) from exc
-        return [_row_to_dict(row) for row in rows]
 
     def replace_all_for_account(
         self,

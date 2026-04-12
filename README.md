@@ -10,6 +10,7 @@ It lets you group Gmail and Outlook accounts under mailbox entities, connect the
 - Unified inbox per mailbox across all connected accounts.
 - Send email from a specific account in a mailbox.
 - Draft creation that mirrors the draft at the provider (Gmail and Outlook).
+- Draft update that replaces draft content at the provider (PATCH, Provider-First).
 - Draft synchronization pulls the most recent drafts from every connected account into the local database (capped at 100 per account).
 - Batch read/unread status management across accounts.
 - Trash management: move emails to trash, permanently delete, or restore.
@@ -242,6 +243,7 @@ Emails:
 Drafts:
 
 - `POST /mailboxes/{mailbox_id}/accounts/{account_id}/drafts` — Create a draft at the provider and persist it locally (Provider-First; Outlook uses `Prefer: IdType="ImmutableId"`).
+- `PATCH /mailboxes/{mailbox_id}/accounts/{account_id}/drafts/{provider_draft_id}` — Replace an existing draft's content at the provider (full-field replacement) and persist the new values locally. Provider-First with a pre-check: the draft must exist in the local DB (404 `draft_not_found` otherwise) before any provider call. Gmail uses `users().drafts().update()`; Outlook uses `PATCH /me/messages/{id}` with `Prefer: IdType="ImmutableId"` repeated on every call. `created_at` is preserved; `updated_at` is refreshed.
 - `POST /mailboxes/{mailbox_id}/drafts/sync` — Fetch the most recent drafts from the provider(s) into the local database (full replace per account, capped at 100 drafts per account most recent by date). Optional query param `account_id`: when provided, syncs only that account; when omitted, syncs every account in the mailbox. Gmail uses parallel batched `drafts.get` calls (workers configurable via `GMAIL_BATCH_MAX_WORKERS`, default 5); Outlook uses `$top=100` + `$orderby=lastModifiedDateTime desc` paginated fetch with per-page retries.
 - `GET /mailboxes/{mailbox_id}/drafts` — List drafts for the mailbox (DB-only, no provider calls). Optional query param `account_id`: when provided, returns drafts of that account; when omitted, returns the unified view across all accounts in the mailbox. Ordered by `created_at DESC`.
 
@@ -274,6 +276,7 @@ Each API error code maps to a fixed HTTP status. The list below shows every code
 - `mailbox_not_found` — 404
 - `account_not_found` — 404
 - `email_not_found` — 404
+- `draft_not_found` — 404
 - `user_not_found` — 404
 - `account_misconfigured` — 400
 - `recipients_missing` — 400
@@ -295,6 +298,10 @@ Each API error code maps to a fixed HTTP status. The list below shows every code
 - `trash_operation_error` — 500
 - `email_list_error` — 500
 - `draft_list_error` — 500
+- `mailbox_operation_error` — 500
+- `account_operation_error` — 500
+- `session_operation_error` — 500
+- `user_operation_error` — 500
 - `email_fetch_error` — 502
 - `email_send_error` — 502
 - `external_api_error` — 502
@@ -304,6 +311,7 @@ Each API error code maps to a fixed HTTP status. The list below shows every code
 - `spam_restore_error` — 502
 - `email_content_fetch_error` — 502
 - `draft_creation_error` — 502
+- `draft_update_error` — 502
 - `draft_sync_error` — 502
 
 ## Testing

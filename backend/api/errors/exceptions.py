@@ -159,6 +159,14 @@ class DraftSyncError(ApiError):
     code = "draft_sync_error"
 
 
+class DraftUpdateError(ApiError):
+    code = "draft_update_error"
+
+
+class DraftNotFound(ApiError):
+    code = "draft_not_found"
+
+
 class MailboxOperationError(ApiError):
     code = "mailbox_operation_error"
 

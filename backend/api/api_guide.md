@@ -154,6 +154,21 @@ Two helpers in `services_helpers.py` support the email content flow:
 - **Outlook critical**: the Outlook client passes `Prefer: IdType="ImmutableId"` when creating the draft so the message ID stays stable across state transitions (critical for the future send-draft endpoint, which would reuse the same ID).
 - **Service module**: lives in `api/services/drafts_service.py` with a local `_persist_refreshed_tokens` helper. The service is the only one that imports `draft_store` from `database`.
 
+### Draft update endpoint
+
+`PATCH /mailboxes/{mailbox_id}/accounts/{account_id}/drafts/{provider_draft_id}` — replace the content of an existing draft at the provider and persist the new values locally.
+
+- **Path params**: `mailbox_id`, `account_id`, and `provider_draft_id` — all three in the URL. The composite `(provider_draft_id, account_id)` is the primary key of the local `drafts` table.
+- **Request**: `DraftUpdate` with all fields optional and defaulted — same shape as `DraftCreate`. The endpoint semantically performs a **full-field replacement**: the caller sends every field (to/cc/bcc/subject/body) and the provider overwrites the draft with exactly those values. Empty drafts are valid.
+- **Response**: `DraftOut` — same schema as the create endpoint. `created_at` is preserved from the original insert; `updated_at` is refreshed by the DB.
+- **Errors**:
+  - `DraftNotFound` (code `"draft_not_found"`, HTTP 404) — the draft does not exist in the local DB for the given `(provider_draft_id, account_id)` pair. Raised by a pre-check **before** any provider call, so a missing draft never costs a round trip to Gmail/Outlook.
+  - `DraftUpdateError` (code `"draft_update_error"`, HTTP 502) — provider-side or unexpected failure during the update.
+- **Flow**: validate ownership via `ensure_mailbox_access` → fetch the account via `account_store.get` (404 if missing) → **pre-check the draft exists** via `draft_store.get` (404 `draft_not_found` otherwise) → build manager → silent auth + token refresh persistence (with `fallback=DraftUpdateError`) → **Provider-First**: call `manager.update_draft(account_label, provider_draft_id, ...)` (translated `CoreError` via `translate_core_error(fallback=DraftUpdateError)`) → only on success, call `draft_store.update(row)` → return `DraftOut` from the persisted row.
+- **Gmail behavior**: `GmailClient.update_draft` calls `users().drafts().update(userId="me", id=provider_draft_id, body={"message": {"raw": ...}})`. Gmail preserves `draft.id` on update (the inner `message.id` may change, but is not stored). The MIME build is shared with `create_draft` via the private helper `_build_draft_raw_message` (Helper Reuse Policy).
+- **Outlook behavior**: `OutlookClient.update_draft` calls `PATCH /me/messages/{id}` with the same Graph payload shape used by `create_draft` and the `Prefer: IdType="ImmutableId"` header **repeated on every call** — the stored `provider_draft_id` is an Immutable ID (created with that header), so Graph must be told again on each subsequent call to interpret the path parameter correctly. The Graph payload and datetime parsing are shared with `create_draft` via `_build_draft_graph_payload` and `_parse_graph_datetime`.
+- **Service module**: lives in `api/services/drafts_service.py::update_draft` with the same outer `try: ... except ApiError: raise / except Exception: → DraftUpdateError` safety net as `create_draft`. Every intermediate `raise DraftUpdateError(...)` uses a globally unique message (API CLAUDE.md §7) so the origin of each failure is pinpointable from the message alone.
+
 ### Draft listing endpoint
 
 `GET /mailboxes/{mailbox_id}/drafts` — list drafts stored locally for a mailbox. Query parameter `account_id` is optional:
@@ -175,7 +190,7 @@ The endpoint is **pure DB read**: it does not call any provider API, does not pe
 - **Provided** → syncs only that account.
 - **Omitted / null** → syncs every account in the mailbox.
 
-**Flow**: `ensure_mailbox_access` → load account(s) (`account_store.get` or `account_store.list_by_mailbox`) → `build_manager_for_accounts` → silent auth + token refresh persist → `raise_on_silent_auth_errors` → `manager.fetch_all_drafts()` → per account: `draft_store.replace_all_for_account(account_id, drafts)` (atomic upsert + delete-missing).
+**Flow**: `ensure_mailbox_access` → load account(s) (`account_store.get` or `account_store.list_by_mailbox`) → `build_manager_for_accounts` → silent auth + token refresh persist → `raise_on_silent_auth_errors` → `manager.fetch_all_drafts()` → `raise_on_silent_auth_errors` (same post-fetch inspection as metadata sync — catches auth errors surfaced during the fetch) → per account: `draft_store.replace_all_for_account(account_id, drafts)` (atomic upsert + delete-missing).
 
 **Cap per account**: `_DRAFTS_MAX_TOTAL = 100` drafts most recent by date. Both providers enforce this cap in the client layer:
 - **Gmail**: `_list_all_draft_ids` stops paginating once it has collected `_DRAFTS_MAX_TOTAL` IDs, then `_execute_batch_get` (`resource="drafts"`) fetches them in parallel batches. The parallel-worker count is controlled by the `GMAIL_BATCH_MAX_WORKERS` env var (default 5; configurable). Each batch chunk holds up to 100 items and is retried up to 4 times on transient failures. With the current cap this degrades to a single batch chunk, but the skeleton scales transparently if the cap is raised.
@@ -261,6 +276,7 @@ Complete, authoritative list of every `ApiError` subclass registered in `_STATUS
 | `MailboxNotFound` | `mailbox_not_found` | 404 | Mailbox not found or ownership check failed mid-query. |
 | `AccountNotFound` | `account_not_found` | 404 | Account not found inside its mailbox during an operation. |
 | `EmailNotFound` | `email_not_found` | 404 | The requested email has no row in `email_metadata` for the target account. Raised by `get_email_full_content` before the cache read, because `email_content` has a composite FK to `email_metadata` (migration 0013) and unknown messages would otherwise surface as a 500 from the FK violation at upsert time. |
+| `DraftNotFound` | `draft_not_found` | 404 | The requested draft has no row in `drafts` for the target `(provider_draft_id, account_id)` pair. Raised by `update_draft` as a pre-check before the provider call — avoids wasting a Gmail/Outlook round trip on drafts our system has never seen. |
 | `UserNotFound` | `user_not_found` | 404 | Authenticated user does not exist in the database (e.g. during `DELETE /auth/me` or `GET /auth/me`). |
 | `EmailNotInTrash` | `email_not_in_trash` | 409 | A `manage_trash` pre-check rejected an email that was not currently in the `TRASH` box. |
 | `AccountNotConnected` | `account_not_connected` | 409 | Silent auth failed or tokens are missing — the user must reconnect the account. Raised by `raise_on_silent_auth_errors`. |
@@ -283,6 +299,7 @@ Complete, authoritative list of every `ApiError` subclass registered in `_STATUS
 | `EmailSendError` | `email_send_error` | 502 | Provider-side failure when sending an email. |
 | `EmailContentFetchError` | `email_content_fetch_error` | 502 | Provider-side or unexpected failure when fetching full email content. |
 | `DraftCreationError` | `draft_creation_error` | 502 | Provider-side or unexpected failure during draft creation. |
+| `DraftUpdateError` | `draft_update_error` | 502 | Provider-side or unexpected failure during draft update. |
 | `ExternalAPIError` | `external_api_error` | 502 | Generic catch-all for translated `EmailExternalAPIError`. Use more specific subclasses where possible. |
 | `MoveToTrashError` | `move_to_trash_error` | 502 | Provider-side failure during `move_to_trash`. |
 | `ReadStatusUpdateError` | `read_status_update_error` | 502 | Provider-side failure during `update_read_status`. |

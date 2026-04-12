@@ -158,6 +158,29 @@ class DraftStore(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    def get(
+        self,
+        provider_draft_id: str,
+        account_id: str,
+    ) -> dict[str, Any] | None:
+        """
+        Return the draft row keyed by (provider_draft_id, account_id),
+        or None when no matching row exists. Used as a pre-check before
+        calling the provider on draft-update operations.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def update(self, draft: dict[str, Any]) -> dict[str, Any]:
+        """
+        Update an existing draft row (full-field replace). Returns the
+        persisted row including the refreshed ``updated_at`` timestamp.
+        The caller must pre-verify the row exists — this method raises
+        ``QueryError`` if the update affects zero rows.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
     def list_by_account(self, account_id: str) -> list[dict[str, Any]]:
         """
         Return all draft rows for a single account, ordered by created_at DESC.

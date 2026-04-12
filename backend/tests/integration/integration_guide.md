@@ -63,7 +63,7 @@ Tests mutate `config` between API calls to simulate different provider responses
 
 ### `seeded_test_client` fixture
 
-`seeded_test_client` is a per-test fixture used by GET endpoint tests against the seeded data from migration `0010`. It overrides the auth dependency to return the seeded user ID (instead of the default test user), runs the body of the test, and then restores the previous override on teardown via a `try/finally` inside the fixture's yield. Because the override is global to the FastAPI app, any test that uses this fixture must not interleave with other auth overrides; the fixture is fully self-contained.
+`seeded_test_client` is a per-test fixture used by GET endpoint tests against the seeded data from migration `0010`. It overrides the auth dependency to return the seeded user ID (instead of the default test user), runs the body of the test, and then restores the previous override unconditionally after the yield (reassigns `app.dependency_overrides[require_session]` back to the default test user). Because the override is global to the FastAPI app, any test that uses this fixture must not interleave with other auth overrides; the fixture is fully self-contained.
 
 ### Auth endpoint integration coverage
 
@@ -105,7 +105,7 @@ Trash management integration tests first sync emails via the normal sync endpoin
 
 ### Drafts integration coverage
 
-`test_drafts.py` covers all three draft endpoints (POST create + GET list + POST sync).
+`test_drafts.py` covers all four draft endpoints (POST create + PATCH update + GET list + POST sync).
 
 **POST `/mailboxes/{mid}/accounts/{aid}/drafts`** — 5 tests:
 
@@ -127,17 +127,35 @@ Trash management integration tests first sync emails via the normal sync endpoin
 
 **`_insert_draft` helper and the `now()` invariance trap**: `test_drafts.py` uses a local `_insert_draft` helper to seed rows directly via SQL (bypassing `FakeEmailClient`'s default `provider_draft_id` collision across multiple POSTs). The helper accepts an optional `created_at` ISO string. This parameter is essential for ordering tests: PostgreSQL's `now()` returns the **same value for every statement inside a single transaction** — so when the isolated-db fixture wraps the whole test in one transaction, rows inserted back-to-back without explicit timestamps all share the exact same `created_at`, and `ORDER BY created_at DESC` produces a non-deterministic order. Tests that assert a specific ordering must pass distinct `created_at` values to `_insert_draft`.
 
-**POST `/mailboxes/{mid}/drafts/sync`** — 7 tests (helpers: `_sync_drafts_url`, `_make_draft`, `_patch_drafts_builder`):
+**POST `/mailboxes/{mid}/drafts/sync`** — 10 tests (helpers: `_sync_drafts_url`, `_make_draft`, `_patch_drafts_builder`):
 
 - Empty provider returns zero: `FakeEmailClient.fetch_drafts_return=[]` → response `total_synced == 0` and 0 rows in DB.
 - Single-account persists 3 drafts: provider returns 3 DraftMetadata → response `total_synced == 3` and DB contains exactly those 3 provider_draft_ids.
 - Mailbox-wide persists rows for all accounts: 2 accounts with 2 drafts each → response `total_synced == 4`, 2 `accounts` entries, 4 DB rows.
 - Replaces stale rows: pre-insert 2 stale drafts directly in DB, provider returns 1 new draft → after sync only the new draft remains (stale ones deleted).
 - Upserts existing rows: pre-insert a draft, provider returns the same provider_draft_id with a changed subject → subject is updated in place via `ON CONFLICT DO UPDATE`.
+- Empty provider for a single account returns `total_synced == 0` and 0 DB rows.
+- Empty provider for mailbox-wide sync with multiple accounts returns `total_synced == 0` and the `accounts` list is populated (one entry per account).
+- `draft_store.replace_all_for_account` raising `QueryError` → 503 `database_query_error`.
 - Nonexistent account returns 404 `account_not_found`.
 - Foreign mailbox returns 403 `forbidden` (reuses `_create_foreign_mailbox`).
 
 The `_patch_drafts_builder` helper overrides `drafts_service.build_manager_for_accounts` with a fresh builder that constructs a `FakeEmailClient` per account and configures its `fetch_drafts_return` from a `dict[account_id, list[DraftMetadata]]` map. This is how each sync test injects the exact drafts the "provider" should return without relying on real Gmail/Outlook APIs.
+
+**PATCH `/mailboxes/{mid}/accounts/{aid}/drafts/{provider_draft_id}`** — 12 tests:
+
+- Happy path returns `DraftOut` with updated fields (`subject`, recipients, `body_html`).
+- DB persistence verified via `isolated_db.cursor()` — reads `subject`, `to_recipients`, `body_html` from the `drafts` table and asserts the new values.
+- `created_at` is preserved from the original insert; `updated_at` is greater than or equal to `created_at`.
+- Empty body (`{}`) is accepted — all fields default to empty strings / empty arrays (same behavior as POST create).
+- Draft not found (no matching DB row) → 404 `draft_not_found`.
+- Nonexistent account → 404 `account_not_found`.
+- Nonexistent mailbox → 404 `mailbox_not_found`.
+- Foreign mailbox → 403 `forbidden`.
+- Provider `EmailExternalAPIError` → 502 `external_api_error`.
+- Provider generic `RuntimeError` → 502 `external_api_error`.
+- `draft_store.update` raising `QueryError` → 503 `database_query_error`.
+- Silent auth `EmailAuthError` → 409 `account_not_connected`.
 
 Core-error translation tests for drafts live in `test_core_error_translation.py`:
 
@@ -148,7 +166,7 @@ The GET `list_drafts` endpoint is DB-only and has no provider call path to trans
 
 **Trap reminder**: when the drafts feature was first added, `conftest.py` needed two updates that any future draft-related endpoint must also respect:
 1. The new `draft_repository` module must be added to the `isolated_db` fixture so it shares the per-test transaction connection (otherwise the `INSERT_DRAFT`, `LIST_DRAFTS_BY_ACCOUNT`, and `LIST_DRAFTS_BY_MAILBOX` queries bypass the rollback and leak data between tests).
-2. The new `drafts_service` module must be added to `_apply_test_monkeypatches` for `build_manager_for_accounts`, `load_wrapped_app_credentials`, `load_wrapped_account_tokens`, and `account_store.upsert_tokens` (otherwise the service hits the real provider APIs — **only relevant for the POST**; the GET does not use any of these helpers).
+2. The new `drafts_service` module must be added to `_apply_test_monkeypatches` for `build_manager_for_accounts`, `load_wrapped_app_credentials`, `load_wrapped_account_tokens`, and `account_store.upsert_tokens` (otherwise the service hits the real provider APIs — **only relevant for POST and PATCH**; the GET does not use any of these helpers).
 
 ### Email listing integration coverage
 

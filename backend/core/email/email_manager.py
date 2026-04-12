@@ -245,6 +245,36 @@ class EmailManager:
                 f"Unexpected create_draft error ({type(exc).__name__}): {exc}"
             ) from exc
 
+    def update_draft(
+        self,
+        account_label: str,
+        provider_draft_id: str,
+        to_recipients: list[str],
+        cc_recipients: list[str],
+        bcc_recipients: list[str],
+        subject: str,
+        body_html: str,
+    ) -> DraftMetadata:
+        """
+        Update an existing draft using the client that matches the
+        requested account label. Full-field replacement semantics — the
+        caller passes every field; the provider overwrites the draft
+        with exactly those values.
+        """
+        client = self._get_client_or_raise(account_label)
+        try:
+            return client.update_draft(
+                provider_draft_id,
+                to_recipients, cc_recipients, bcc_recipients,
+                subject, body_html,
+            )
+        except CoreError:
+            raise
+        except Exception as exc:
+            raise EmailExternalAPIError(
+                f"Unexpected update_draft error ({type(exc).__name__}): {exc}"
+            ) from exc
+
     def fetch_all_drafts(self) -> dict[str, list[DraftMetadata]]:
         """
         Fetch drafts from every registered client. Returns

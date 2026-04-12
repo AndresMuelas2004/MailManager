@@ -127,7 +127,21 @@ Inserts a new draft row using `INSERT_DRAFT` (defined in `queries/drafts.py`). T
 
 **Return contract**: always a populated dict. The method does NOT return an empty dict when `RETURNING` yields no row — that is a programming error and will surface as `TypeError` from `_row_to_dict(None)`, which the service layer's outer `except Exception` converts to `DraftCreationError`.
 
-**Error handling guard order**: the method follows the capture technique from `database/CLAUDE.md` §7. The `try` block contains `connection.get_connection()` which can raise a `DatabaseError` subclass (`ConnectionPoolError`), so the method **must** have `except DatabaseError: raise` before the `except psycopg2.Error` / `except Exception` catches — otherwise a pool exhaustion would be silently re-wrapped as `QueryError`. The current implementation has this guard in all four `DraftStore` methods.
+**Error handling guard order**: the method follows the capture technique from `database/CLAUDE.md` §7. The `try` block contains `connection.get_connection()` which can raise a `DatabaseError` subclass (`ConnectionPoolError`), so the method **must** have `except DatabaseError: raise` before the `except psycopg2.Error` / `except Exception` catches — otherwise a pool exhaustion would be silently re-wrapped as `QueryError`. The current implementation has this guard in all six `DraftStore` methods.
+
+### `DraftStore.get(provider_draft_id, account_id) → dict | None`
+
+Single-row lookup by composite key `(provider_draft_id, account_id)`. Returns the row dict (via `_row_to_dict`) when found, or `None` when no matching row exists. Handles `psycopg2.errors.InvalidTextRepresentation` gracefully (returns `None` for malformed UUIDs) so the service layer can surface a clean 404 instead of a 500 on bad inputs.
+
+Used by `drafts_service.update_draft` as a **pre-check before the provider call** — a draft that does not exist in the local DB surfaces as `DraftNotFound` (404) without wasting a Gmail/Outlook round trip. The method raises `QueryError` only on truly unexpected SQL/runtime failures.
+
+### `DraftStore.update(draft) → dict`
+
+Full-field replace of an existing draft row. Executes `UPDATE_DRAFT` which sets `to_recipients`, `cc_recipients`, `bcc_recipients`, `subject`, `body_html`, and `updated_at = now()` where the composite PK matches. **`created_at` is NOT touched** — the original creation timestamp is preserved across updates.
+
+**Return contract**: always a populated dict. If `UPDATE ... RETURNING` yields no row (composite key did not match any row), the method raises `QueryError("Draft row to update not found.")`. This is a defensive check — the service layer pre-verifies existence via `DraftStore.get` before calling `update`, so hitting this branch indicates a race condition (another request deleted the row between the pre-check and the update).
+
+**Error handling guard order**: like `create`, this method has the `except DatabaseError: raise` guard before the generic `except psycopg2.Error` / `except Exception` catches — `connection.get_connection()` can raise `ConnectionPoolError` which must propagate unchanged rather than being re-wrapped as `QueryError`.
 
 ### `DraftStore.list_by_account(account_id) → list[dict]`
 
@@ -150,7 +164,7 @@ Returns `len(drafts)`. Raises `QueryError` on SQL or unexpected failures. Invali
 
 The service layer (`drafts_service.sync_drafts`) calls this method per account after fetching drafts from the provider. The result is that local `drafts` rows for that account exactly match the provider's current state — stale drafts deleted, matching drafts updated, new drafts inserted.
 
-The contract intentionally exposes only `create`, `list_by_account`, `list_by_mailbox`, and `replace_all_for_account` for now — update, send, and delete methods will be added incrementally as the corresponding drafts endpoints are implemented.
+The contract currently exposes `create`, `get`, `update`, `list_by_account`, `list_by_mailbox`, and `replace_all_for_account`. Send and delete methods will be added incrementally as the corresponding drafts endpoints are implemented.
 
 ## Project-Specific Error Hierarchy
 

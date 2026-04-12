@@ -3,6 +3,36 @@ SQL queries for draft persistence (business-logic only).
 """
 from __future__ import annotations
 
+GET_DRAFT = """
+    SELECT provider_draft_id, account_id, to_recipients, cc_recipients, bcc_recipients,
+           subject, body_html, created_at, updated_at
+    FROM drafts
+    WHERE provider_draft_id = %(provider_draft_id)s
+      AND account_id        = %(account_id)s
+"""
+
+UPDATE_DRAFT = """
+    UPDATE drafts
+    SET to_recipients = %(to_recipients)s,
+        cc_recipients = %(cc_recipients)s,
+        bcc_recipients = %(bcc_recipients)s,
+        subject       = %(subject)s,
+        body_html     = %(body_html)s,
+        updated_at    = now()
+    WHERE provider_draft_id = %(provider_draft_id)s
+      AND account_id        = %(account_id)s
+    RETURNING
+        provider_draft_id,
+        account_id,
+        to_recipients,
+        cc_recipients,
+        bcc_recipients,
+        subject,
+        body_html,
+        created_at,
+        updated_at
+"""
+
 INSERT_DRAFT = """
     INSERT INTO drafts (
         provider_draft_id,

@@ -22,6 +22,21 @@ class DraftCreate(BaseModel):
     body_html: str = ""
 
 
+class DraftUpdate(BaseModel):
+    """
+    Request model for updating an existing draft. Semantically a full
+    replacement: the provider call overwrites the draft with exactly
+    the fields in this payload. All fields are optional with defaults,
+    matching DraftCreate — empty fields are valid.
+    """
+
+    to_recipients: list[str] = Field(default_factory=list)
+    cc_recipients: list[str] = Field(default_factory=list)
+    bcc_recipients: list[str] = Field(default_factory=list)
+    subject: str = ""
+    body_html: str = ""
+
+
 class DraftOut(BaseModel):
     """
     Response model for a persisted draft.

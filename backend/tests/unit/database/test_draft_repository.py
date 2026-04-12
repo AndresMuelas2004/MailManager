@@ -94,6 +94,116 @@ class TestPgDraftStoreCreate:
 # =====================================================================
 
 
+# =====================================================================
+# PgDraftStore.get
+# =====================================================================
+
+
+class TestPgDraftStoreGet:
+
+    def test_get_happy_path(self, monkeypatch):
+        cursor = FakeCursor(fetchone_results=[_fake_draft_row()])
+        patch_connection(monkeypatch, draft_module, [cursor])
+
+        result = draft_module.draft_store.get("draft_1", "acc-1")
+        assert result is not None
+        assert result["provider_draft_id"] == "draft_1"
+        assert result["account_id"] == "acc-1"
+
+    def test_get_returns_none_when_row_missing(self, monkeypatch):
+        cursor = FakeCursor(fetchone_results=[None])
+        patch_connection(monkeypatch, draft_module, [cursor])
+
+        assert draft_module.draft_store.get("missing", "acc-1") is None
+
+    def test_get_returns_none_on_invalid_text_representation(self, monkeypatch):
+        cursor = FakeCursor(execute_side_effect=psycopg2.errors.InvalidTextRepresentation())
+        patch_connection(monkeypatch, draft_module, [cursor])
+
+        assert draft_module.draft_store.get("draft_1", "not-a-uuid") is None
+
+    def test_get_raises_query_error_on_psycopg2(self, monkeypatch):
+        cursor = FakeCursor(execute_side_effect=psycopg2.OperationalError("fail"))
+        patch_connection(monkeypatch, draft_module, [cursor])
+
+        with pytest.raises(QueryError, match="Failed to get draft"):
+            draft_module.draft_store.get("draft_1", "acc-1")
+
+    def test_get_raises_query_error_on_generic(self, monkeypatch):
+        cursor = FakeCursor(execute_side_effect=RuntimeError("boom"))
+        patch_connection(monkeypatch, draft_module, [cursor])
+
+        with pytest.raises(QueryError, match="RuntimeError"):
+            draft_module.draft_store.get("draft_1", "acc-1")
+
+    def test_get_propagates_database_error(self, monkeypatch):
+        patch_connection_error(monkeypatch, draft_module, ConnectionPoolError("pool down"))
+
+        with pytest.raises(ConnectionPoolError, match="pool down"):
+            draft_module.draft_store.get("draft_1", "acc-1")
+
+
+# =====================================================================
+# PgDraftStore.update
+# =====================================================================
+
+
+class TestPgDraftStoreUpdate:
+
+    def _sample_row(self) -> dict:
+        return {
+            "provider_draft_id": "draft_1",
+            "account_id": "acc-1",
+            "to_recipients": ["to@example.com"],
+            "cc_recipients": [],
+            "bcc_recipients": [],
+            "subject": "Updated",
+            "body_html": "<p>new</p>",
+        }
+
+    def test_update_happy_path(self, monkeypatch):
+        returned = _fake_draft_row(subject="Updated")
+        cursor = FakeCursor(fetchone_results=[returned])
+        patch_connection(monkeypatch, draft_module, [cursor])
+
+        result = draft_module.draft_store.update(self._sample_row())
+        assert result["provider_draft_id"] == "draft_1"
+        assert result["subject"] == "Updated"
+        assert result["account_id"] == "acc-1"
+
+    def test_update_row_missing_raises_query_error(self, monkeypatch):
+        cursor = FakeCursor(fetchone_results=[None])
+        patch_connection(monkeypatch, draft_module, [cursor])
+
+        with pytest.raises(QueryError, match="Draft row to update not found"):
+            draft_module.draft_store.update(self._sample_row())
+
+    def test_update_raises_query_error_on_psycopg2(self, monkeypatch):
+        cursor = FakeCursor(execute_side_effect=psycopg2.OperationalError("fail"))
+        patch_connection(monkeypatch, draft_module, [cursor])
+
+        with pytest.raises(QueryError, match="Failed to update draft"):
+            draft_module.draft_store.update(self._sample_row())
+
+    def test_update_raises_query_error_on_generic(self, monkeypatch):
+        cursor = FakeCursor(execute_side_effect=RuntimeError("boom"))
+        patch_connection(monkeypatch, draft_module, [cursor])
+
+        with pytest.raises(QueryError, match="RuntimeError"):
+            draft_module.draft_store.update(self._sample_row())
+
+    def test_update_propagates_database_error(self, monkeypatch):
+        patch_connection_error(monkeypatch, draft_module, ConnectionPoolError("pool down"))
+
+        with pytest.raises(ConnectionPoolError, match="pool down"):
+            draft_module.draft_store.update(self._sample_row())
+
+
+# =====================================================================
+# PgDraftStore.list_by_account
+# =====================================================================
+
+
 class TestPgDraftStoreListByAccount:
 
     def test_list_happy_path(self, monkeypatch):
