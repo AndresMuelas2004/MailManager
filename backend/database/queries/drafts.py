@@ -56,9 +56,7 @@ UPSERT_DRAFTS_BATCH = """
         provider_draft_id, account_id, to_recipients, cc_recipients,
         bcc_recipients, subject, body_html, created_at, updated_at
     )
-    -- %s is the execute_values template placeholder, not a direct parameter
     VALUES %s
-    -- created_at intentionally excluded — preserves first-seen timestamp
     ON CONFLICT (provider_draft_id, account_id) DO UPDATE SET
         to_recipients = EXCLUDED.to_recipients,
         cc_recipients = EXCLUDED.cc_recipients,

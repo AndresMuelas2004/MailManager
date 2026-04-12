@@ -64,6 +64,7 @@ def test_warmup_raises_connection_pool_error_on_generic(monkeypatch):
 
 
 def test_migration_failure_raises_migration_error(monkeypatch):
+    monkeypatch.setenv("DATABASE_URL", "postgresql://localhost/test")
     monkeypatch.setenv("DB_AUTO_MIGRATE", "true")
     monkeypatch.setattr(
         lifecycle_module,

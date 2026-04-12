@@ -345,5 +345,5 @@ def test_get_current_user_unexpected_error_raises_api_error(monkeypatch):
             raise RuntimeError("unexpected")
 
     monkeypatch.setattr(auth_service, "user_store", FailingUserStore())
-    with pytest.raises(ApiError, match="Failed to look up user"):
+    with pytest.raises(ApiError, match="Failed to look up current user"):
         auth_service.get_current_user("some-user-id")
