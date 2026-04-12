@@ -43,13 +43,10 @@ Execute these steps sequentially:
 
 7. If `backend/database/` is affected, collect the list of changed query files: filter the diff file list for paths matching `backend/database/queries/*.py` (exclude `__init__.py`). These are the only query files that will receive a queries-reviewer agent. If no query files were changed, skip query review entirely.
 
-8. Check whether `README.md` exists at the repo root (via Glob or ls). Note its existence for Phase 2.
-
-9. Print a brief summary to the user:
+8. Print a brief summary to the user:
    - List of changed files (truncated if > 30)
    - Affected backend directories
    - Test directories to review
-   - MD files to review
    - Then proceed immediately to Phase 2.
 
 ---
@@ -63,17 +60,17 @@ Launch ALL of the following agents in a SINGLE message with multiple Agent tool 
 For EACH affected directory, launch:
 
 1. **error-structure-reviewer** — `subagent_type: "error-structure-reviewer"`
-   - Prompt: "Audit error handling compliance and coverage in `{directory}`. Read the layer's CLAUDE.md and *_guide.md for the error hierarchy rules. Focus on files changed in the current diffs: {list of changed files in this directory}."
+   - Prompt: "Audit error handling compliance and coverage. Analyze ONLY the following files (they are the ones with diffs in this commit): {list of changed files in this directory}. For each file, review ONLY the changed/added code (the diffs), not the entire file. Read the layer's CLAUDE.md and *_guide.md for the error hierarchy rules. Do NOT read or analyze files outside this list."
 
 2. **dead-code-finder** — `subagent_type: "dead-code-finder"`
-   - Prompt: "Scan `{directory}` for dead code: unused functions, methods, variables, classes, constants, imports, and orphan files. Pay special attention to files changed in the current diffs: {list of changed files in this directory}."
+   - Prompt: "Scan for dead code: unused functions, methods, variables, classes, constants, imports, and orphan files. Analyze ONLY the following files (they are the ones with diffs in this commit): {list of changed files in this directory}. For each file, focus exclusively on the changed/added code (the diffs), not the entire file. Do NOT read or analyze files outside this list."
 
 ### Test quality (1 agent per **affected** test directory):
 
 For EACH **affected** test directory (filtered in Phase 1 step 5), launch:
 
 3. **tests-quality-reviewer** — `subagent_type: "tests-quality-reviewer"`
-   - Prompt: "Audit test quality, coverage completeness, and architectural soundness in `{test_directory}`. Check for test gaps, missing edge cases, and structural issues."
+   - Prompt: "Audit test quality, coverage completeness, and architectural soundness. Analyze ONLY the following test files (they are the ones with diffs in this commit): {list of changed files in this test directory}. For each file, focus exclusively on the changed/added code (the diffs), not the entire file. Do NOT read or analyze test files outside this list."
    - Do NOT launch for test directories that have zero changed files in the diffs.
 
 ### Documentation MD (variable number of agents):
@@ -87,10 +84,7 @@ For EACH **affected** test directory (filtered in Phase 1 step 5), launch:
    - Prompt: "Review `{test_guide_path}` for accuracy and completeness by cross-referencing the test files and source code."
    - Guide paths: `backend/tests/unit/unit_guide.md`, `backend/tests/integration/integration_guide.md`, `backend/tests/e2e/e2e_guide.md`
 
-6. **md-reviewer for README.md** (only if it exists) — `subagent_type: "md-reviewer"`
-   - Prompt: "Review `README.md` for accuracy, completeness, and clarity by cross-referencing the current codebase."
-
-7. **md-reviewer for extra MDs** (only if `--md` in $ARGUMENTS) — `subagent_type: "md-reviewer"`
+6. **md-reviewer for extra MDs** (only if `--md` in $ARGUMENTS) — `subagent_type: "md-reviewer"`
    - One agent per extra MD path provided.
 
 ### Query review (only if changed query files exist in the diffs):

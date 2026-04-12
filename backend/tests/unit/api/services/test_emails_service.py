@@ -99,11 +99,11 @@ def _patch_common(monkeypatch, *, fake_client_kwargs=None):
     monkeypatch.setattr(emails_service, "build_manager_for_accounts", _build)
 
     # Stub persistence helpers
-    monkeypatch.setattr(emails_service, "persist_email_metadata_batch", lambda _aid, _meta: len(_meta))
-    monkeypatch.setattr(emails_service, "delete_email_metadata_batch", lambda _aid, _ids: len(_ids))
-    monkeypatch.setattr(emails_service, "update_email_metadata_labels_batch", lambda _aid, _lu: len(_lu))
-    monkeypatch.setattr(emails_service, "load_sync_cursors", lambda _lookup: {})
-    monkeypatch.setattr(emails_service, "update_sync_cursor", lambda _mb, _acc, _cur: None)
+    monkeypatch.setattr(emails_service, "persist_email_metadata_batch", lambda _aid, _meta, **_kw: len(_meta))
+    monkeypatch.setattr(emails_service, "delete_email_metadata_batch", lambda _aid, _ids, **_kw: len(_ids))
+    monkeypatch.setattr(emails_service, "update_email_metadata_labels_batch", lambda _aid, _lu, **_kw: len(_lu))
+    monkeypatch.setattr(emails_service, "load_sync_cursors", lambda _lookup, **_kw: {})
+    monkeypatch.setattr(emails_service, "update_sync_cursor", lambda _mb, _acc, _cur, **_kw: None)
 
 
 # ==================================================================
@@ -190,7 +190,7 @@ class TestSyncEmailMetadata:
         original_load = emails_service.load_sync_cursors
         monkeypatch.setattr(
             emails_service, "load_sync_cursors",
-            lambda lookup: (load_calls.append(lookup), {})[1],
+            lambda lookup, **_kw: (load_calls.append(lookup), {})[1],
         )
         emails_service.sync_email_metadata(_MAILBOX_ID, _USER_ID)
         assert len(load_calls) == 1
@@ -200,7 +200,7 @@ class TestSyncEmailMetadata:
         persist_calls = []
         monkeypatch.setattr(
             emails_service, "persist_email_metadata_batch",
-            lambda aid, meta: (persist_calls.append((aid, meta)), len(meta))[1],
+            lambda aid, meta, **_kw: (persist_calls.append((aid, meta)), len(meta))[1],
         )
         emails_service.sync_email_metadata(_MAILBOX_ID, _USER_ID)
         assert len(persist_calls) >= 1
@@ -364,7 +364,7 @@ class TestSendEmail:
         persist_calls = []
         monkeypatch.setattr(
             emails_service, "persist_email_metadata_batch",
-            lambda aid, meta: (persist_calls.append((aid, meta)), len(meta))[1],
+            lambda aid, meta, **_kw: (persist_calls.append((aid, meta)), len(meta))[1],
         )
         emails_service.send_email(_MAILBOX_ID, self._make_payload(), _USER_ID)
         assert len(persist_calls) == 1
@@ -390,12 +390,12 @@ class TestReconciliation:
         # DB has m1 + m_ghost; bootstrap only returned m1
         monkeypatch.setattr(
             emails_service, "load_stored_message_ids",
-            lambda _aid: ["m1", "m_ghost"],
+            lambda _aid, **_kw: ["m1", "m_ghost"],
         )
         delete_calls = []
         monkeypatch.setattr(
             emails_service, "delete_email_metadata_batch",
-            lambda aid, ids: (delete_calls.append((aid, ids)), len(ids))[1],
+            lambda aid, ids, **_kw: (delete_calls.append((aid, ids)), len(ids))[1],
         )
         result = emails_service.sync_email_metadata(_MAILBOX_ID, _USER_ID)
         # m_ghost should have been deleted
@@ -409,7 +409,7 @@ class TestReconciliation:
         load_calls = []
         monkeypatch.setattr(
             emails_service, "load_stored_message_ids",
-            lambda _aid: (load_calls.append(_aid), [])[1],
+            lambda _aid, **_kw: (load_calls.append(_aid), [])[1],
         )
         emails_service.sync_email_metadata(_MAILBOX_ID, _USER_ID)
         assert load_calls == []
@@ -422,7 +422,7 @@ class TestReconciliation:
         })
         monkeypatch.setattr(
             emails_service, "load_stored_message_ids",
-            lambda _aid: ["m1", "m_ghost"],
+            lambda _aid, **_kw: ["m1", "m_ghost"],
         )
         # Should not raise
         result = emails_service.sync_email_metadata(_MAILBOX_ID, _USER_ID)
@@ -437,12 +437,12 @@ class TestReconciliation:
         # DB has exactly the same IDs as bootstrap
         monkeypatch.setattr(
             emails_service, "load_stored_message_ids",
-            lambda _aid: ["m1"],
+            lambda _aid, **_kw: ["m1"],
         )
         delete_calls = []
         monkeypatch.setattr(
             emails_service, "delete_email_metadata_batch",
-            lambda aid, ids: (delete_calls.append((aid, ids)), len(ids))[1],
+            lambda aid, ids, **_kw: (delete_calls.append((aid, ids)), len(ids))[1],
         )
         emails_service.sync_email_metadata(_MAILBOX_ID, _USER_ID)
         # No ghost deletes (only the normal deletes call with empty list)
@@ -457,12 +457,12 @@ class TestReconciliation:
         })
         monkeypatch.setattr(
             emails_service, "load_stored_message_ids",
-            lambda _aid: ["m1", "ghost1", "ghost2"],
+            lambda _aid, **_kw: ["m1", "ghost1", "ghost2"],
         )
         delete_calls = []
         monkeypatch.setattr(
             emails_service, "delete_email_metadata_batch",
-            lambda aid, ids: (delete_calls.append((aid, ids)), len(ids))[1],
+            lambda aid, ids, **_kw: (delete_calls.append((aid, ids)), len(ids))[1],
         )
         emails_service.sync_email_metadata(_MAILBOX_ID, _USER_ID)
         all_deleted = [mid for _, ids in delete_calls for mid in ids]
@@ -487,22 +487,22 @@ class TestManageTrash:
         _patch_common(monkeypatch, fake_client_kwargs=fake_client_kwargs)
         monkeypatch.setattr(
             emails_service, "get_trash_emails_by_ids",
-            lambda _aid, _ids: [
+            lambda _aid, _ids, **_kw: [
                 {"provider_message_id": mid, "box": "TRASH", "previous_box": previous_box}
                 for mid in _ids
             ],
         )
         monkeypatch.setattr(
             emails_service, "mark_as_deleted_batch",
-            lambda _aid, _ids: len(_ids),
+            lambda _aid, _ids, **_kw: len(_ids),
         )
         monkeypatch.setattr(
             emails_service, "restore_from_trash_batch",
-            lambda _aid, _rows: len(_rows),
+            lambda _aid, _rows, **_kw: len(_rows),
         )
         monkeypatch.setattr(
             emails_service, "restore_from_trash_discovered_batch",
-            lambda _aid, _rows: len(_rows),
+            lambda _aid, _rows, **_kw: len(_rows),
         )
 
     def test_delete_happy_path(self, monkeypatch):
@@ -524,7 +524,7 @@ class TestManageTrash:
         mark_calls = []
         monkeypatch.setattr(
             emails_service, "mark_as_deleted_batch",
-            lambda aid, ids: (mark_calls.append((aid, ids)), len(ids))[1],
+            lambda aid, ids, **_kw: (mark_calls.append((aid, ids)), len(ids))[1],
         )
         emails_service.manage_trash(
             _MAILBOX_ID, self._make_payload("delete"), _USER_ID,
@@ -538,7 +538,7 @@ class TestManageTrash:
         restore_calls = []
         monkeypatch.setattr(
             emails_service, "restore_from_trash_batch",
-            lambda aid, rows: (restore_calls.append((aid, rows)), len(rows))[1],
+            lambda aid, rows, **_kw: (restore_calls.append((aid, rows)), len(rows))[1],
         )
         emails_service.manage_trash(
             _MAILBOX_ID, self._make_payload("restore"), _USER_ID,
@@ -571,7 +571,7 @@ class TestManageTrash:
         self._patch_trash_common(monkeypatch)
         monkeypatch.setattr(
             emails_service, "get_trash_emails_by_ids",
-            lambda _aid, _ids: [],  # no emails found in trash
+            lambda _aid, _ids, **_kw: [],  # no emails found in trash
         )
         with pytest.raises(EmailNotInTrash):
             emails_service.manage_trash(
@@ -616,12 +616,12 @@ class TestManageTrash:
         discovered_calls = []
         monkeypatch.setattr(
             emails_service, "restore_from_trash_discovered_batch",
-            lambda aid, rows: (discovered_calls.append((aid, rows)), len(rows))[1],
+            lambda aid, rows, **_kw: (discovered_calls.append((aid, rows)), len(rows))[1],
         )
         restore_calls = []
         monkeypatch.setattr(
             emails_service, "restore_from_trash_batch",
-            lambda aid, rows: (restore_calls.append((aid, rows)), len(rows))[1],
+            lambda aid, rows, **_kw: (restore_calls.append((aid, rows)), len(rows))[1],
         )
         result = emails_service.manage_trash(
             _MAILBOX_ID, self._make_payload("restore"), _USER_ID,
@@ -637,12 +637,12 @@ class TestManageTrash:
         restore_calls = []
         monkeypatch.setattr(
             emails_service, "restore_from_trash_batch",
-            lambda aid, rows: (restore_calls.append((aid, rows)), len(rows))[1],
+            lambda aid, rows, **_kw: (restore_calls.append((aid, rows)), len(rows))[1],
         )
         discovered_calls = []
         monkeypatch.setattr(
             emails_service, "restore_from_trash_discovered_batch",
-            lambda aid, rows: (discovered_calls.append((aid, rows)), len(rows))[1],
+            lambda aid, rows, **_kw: (discovered_calls.append((aid, rows)), len(rows))[1],
         )
         result = emails_service.manage_trash(
             _MAILBOX_ID, self._make_payload("restore"), _USER_ID,
@@ -661,7 +661,7 @@ class TestManageTrash:
         discovered_calls = []
         monkeypatch.setattr(
             emails_service, "restore_from_trash_discovered_batch",
-            lambda aid, rows: (discovered_calls.append((aid, rows)), len(rows))[1],
+            lambda aid, rows, **_kw: (discovered_calls.append((aid, rows)), len(rows))[1],
         )
         emails_service.manage_trash(
             _MAILBOX_ID, self._make_payload("restore"), _USER_ID,
@@ -687,7 +687,7 @@ class TestMoveToTrash:
         _patch_common(monkeypatch, fake_client_kwargs=fake_client_kwargs)
         monkeypatch.setattr(
             emails_service, "move_to_trash_batch",
-            lambda _aid, _rows: len(_rows),
+            lambda _aid, _rows, **_kw: len(_rows),
         )
 
     def test_happy_path(self, monkeypatch):
@@ -791,7 +791,7 @@ def _patch_read_status(monkeypatch, *, accounts=None, fake_client_kwargs=None):
     )
     monkeypatch.setattr(
         emails_service, "update_email_read_status_batch",
-        lambda _aid, _ids, _read: len(_ids),
+        lambda _aid, _ids, _read, **_kw: len(_ids),
     )
 
     kwargs = fake_client_kwargs or {}
@@ -928,7 +928,7 @@ class TestUpdateReadStatus:
         db_calls = []
         monkeypatch.setattr(
             emails_service, "update_email_read_status_batch",
-            lambda aid, ids, is_read: (db_calls.append((aid, list(ids), is_read)), len(ids))[1],
+            lambda aid, ids, is_read, **_kw: (db_calls.append((aid, list(ids), is_read)), len(ids))[1],
         )
 
         payload = self._make_payload([
@@ -960,7 +960,7 @@ class TestUpdateReadStatus:
         )
         monkeypatch.setattr(
             emails_service, "update_email_read_status_batch",
-            lambda _aid, _ids, _read: len(_ids),
+            lambda _aid, _ids, _read, **_kw: len(_ids),
         )
 
         upsert_calls = []
@@ -1020,7 +1020,7 @@ def _patch_spam(monkeypatch, *, accounts=None, fake_client_kwargs=None):
     )
     monkeypatch.setattr(
         emails_service, "update_email_spam_status_batch",
-        lambda _aid, _results, _box: len(_results),
+        lambda _aid, _results, _box, **_kw: len(_results),
     )
 
     kwargs = fake_client_kwargs or {}
@@ -1102,7 +1102,7 @@ class TestMoveToSpam:
         db_calls: list[tuple] = []
         monkeypatch.setattr(
             emails_service, "update_email_spam_status_batch",
-            lambda aid, results, box: (db_calls.append((aid, results, box)), len(results))[1],
+            lambda aid, results, box, **_kw: (db_calls.append((aid, results, box)), len(results))[1],
         )
         payload = _spam_payload([(_ACCOUNT_ID, "m1")])
         emails_service.move_to_spam(_MAILBOX_ID, payload, _USER_ID)
@@ -1164,7 +1164,7 @@ class TestRestoreFromSpam:
         db_calls: list[tuple] = []
         monkeypatch.setattr(
             emails_service, "update_email_spam_status_batch",
-            lambda aid, results, box: (db_calls.append((aid, results, box)), len(results))[1],
+            lambda aid, results, box, **_kw: (db_calls.append((aid, results, box)), len(results))[1],
         )
         payload = _spam_payload([(_ACCOUNT_ID, "m1")])
         emails_service.restore_from_spam(_MAILBOX_ID, payload, _USER_ID)
@@ -1345,7 +1345,7 @@ def _patch_get_content_common(monkeypatch, *, fake_client_kwargs=None):
     )
 
     # Stub persist helper (best-effort, no-op by default)
-    monkeypatch.setattr(emails_service, "persist_email_content", lambda *_a: None)
+    monkeypatch.setattr(emails_service, "persist_email_content", lambda *_a, **_kw: None)
 
 
 class TestGetEmailFullContent:
@@ -1478,7 +1478,7 @@ class TestGetEmailFullContent:
         get_content_calls = []
         monkeypatch.setattr(
             emails_service, "get_email_content",
-            lambda _aid, _mid: get_content_calls.append((_aid, _mid)) or None,
+            lambda _aid, _mid, **_kw: get_content_calls.append((_aid, _mid)) or None,
         )
 
         with pytest.raises(EmailNotFound):

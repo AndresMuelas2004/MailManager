@@ -112,15 +112,16 @@ def test_connect_account_not_found_raises_error(manager: EmailManager):
     assert manager.get_last_errors() == {}
 
 
-def test_connect_account_authenticate_failure_is_recorded_and_raised(
+def test_connect_account_authenticate_failure_propagates_without_recording(
     manager: EmailManager, fake_client_fail_auth
 ):
-    """Propagates auth failure and records it under the account label."""
+    """Propagates auth failure without writing to _last_errors (single-account flow)."""
     manager.add_client(fake_client_fail_auth)
     with pytest.raises(Exception, match="boom"):
         manager.connect_account(fake_client_fail_auth.get_account_label())
-    errors = manager.get_last_errors()
-    assert set(errors.keys()) == {fake_client_fail_auth.get_account_label()}
+    # Per core_guide.md: connect_account does not record errors in _last_errors
+    # because it is a single-account interactive flow; exception propagation suffices.
+    assert manager.get_last_errors() == {}
 
 
 def test_fetch_all_email_metadata_aggregates_from_all_clients(
