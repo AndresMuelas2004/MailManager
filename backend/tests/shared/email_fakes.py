@@ -62,6 +62,7 @@ class FakeEmailClient(EmailClient):
         update_draft_exc: Exception | None = None,
         delete_draft_exc: Exception | None = None,
         fetch_drafts_exc: Exception | None = None,
+        send_draft_exc: Exception | None = None,
         metadata: list[EmailMetadata] | None = None,
         sync_cursor_return: str = DEFAULT_SYNC_CURSOR,
         auth_return: dict | None = None,
@@ -78,6 +79,7 @@ class FakeEmailClient(EmailClient):
         create_draft_return: DraftMetadata | None = None,
         update_draft_return: DraftMetadata | None = None,
         fetch_drafts_return: list[DraftMetadata] | None = None,
+        send_draft_return: EmailMetadata | None = None,
     ) -> None:
         self._account_label = account_label
         self._auth_exc = auth_exc
@@ -101,6 +103,8 @@ class FakeEmailClient(EmailClient):
         self._delete_draft_exc = delete_draft_exc
         self._fetch_drafts_exc = fetch_drafts_exc
         self._fetch_drafts_return = list(fetch_drafts_return or [])
+        self._send_draft_exc = send_draft_exc
+        self._send_draft_return = send_draft_return
         self._metadata = list(metadata or [])
         self._sync_cursor_return = sync_cursor_return
         self._auth_return = auth_return
@@ -130,6 +134,7 @@ class FakeEmailClient(EmailClient):
         self.update_draft_calls: list[tuple[str, list[str], list[str], list[str], str, str]] = []
         self.delete_draft_calls: list[str] = []
         self.fetch_drafts_calls = 0
+        self.send_draft_calls: list[str] = []
         self.deleted_message_ids: list[str] = []
         self.restored_items: list[dict] = []
         self.trashed_items: list[dict[str, str]] = []
@@ -312,6 +317,19 @@ class FakeEmailClient(EmailClient):
         if self._fetch_drafts_exc:
             raise self._fetch_drafts_exc
         return list(self._fetch_drafts_return)
+
+    def send_draft(self, provider_draft_id: str) -> EmailMetadata:
+        self.send_draft_calls.append(provider_draft_id)
+        if self._send_draft_exc:
+            raise self._send_draft_exc
+        if self._send_draft_return is not None:
+            return self._send_draft_return
+        return build_metadata(
+            provider_message_id=f"sent_{provider_draft_id}",
+            subject="",
+            box="SENT",
+            is_read=True,
+        )
 
     def get_account_label(self) -> str:
         return self._account_label

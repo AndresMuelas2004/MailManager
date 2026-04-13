@@ -1457,17 +1457,131 @@ def test_44_delete_draft_outlook(e2e_client):
 
 
 # ===================================================================
+# Section 5g: Send draft (pre-existing connected accounts, tests 45–46)
+#
+# Each test creates a draft first, sends it via the POST .../send
+# endpoint, verifies the response and that the local draft row was
+# deleted. A finally block ensures orphan draft rows are cleaned up.
+# ===================================================================
+
+def test_45_send_draft_gmail(e2e_client):
+    """Create a Gmail draft, send it, verify response and DB cleanup."""
+    subject = f"E2E send draft — Gmail {datetime.now(timezone.utc).isoformat()}"
+    create_resp = e2e_client.post(
+        f"/mailboxes/{GMAIL_MAILBOX_ID}/accounts/{GMAIL_ACCOUNT_ID}/drafts",
+        json={
+            "to_recipients": [SEND_RECIPIENT],
+            "cc_recipients": [],
+            "bcc_recipients": [],
+            "subject": subject,
+            "body_html": "<p>E2E send draft test body</p>",
+        },
+    )
+    _assert_ok(create_resp)
+    provider_draft_id = create_resp.json()["provider_draft_id"]
+
+    try:
+        send_resp = e2e_client.post(
+            f"/mailboxes/{GMAIL_MAILBOX_ID}/accounts/{GMAIL_ACCOUNT_ID}"
+            f"/drafts/{provider_draft_id}/send",
+        )
+        _assert_ok(send_resp)
+        data = send_resp.json()
+        assert data["status"] == "sent"
+        assert data["provider_message_id"]
+        assert data["provider_message_id"] != provider_draft_id  # Gmail returns new ID
+        assert data["provider"] == "gmail"
+
+        # Verify the draft row was deleted from the local DB
+        conn = _db_conn()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT 1 FROM drafts WHERE provider_draft_id = %s AND account_id = %s",
+                    (provider_draft_id, GMAIL_ACCOUNT_ID),
+                )
+                assert cur.fetchone() is None, "Draft row should be deleted after send"
+        finally:
+            conn.close()
+    finally:
+        # Safety-net cleanup: delete any orphan draft row if the send failed
+        conn = _db_conn()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "DELETE FROM drafts WHERE provider_draft_id = %s AND account_id = %s",
+                    (provider_draft_id, GMAIL_ACCOUNT_ID),
+                )
+            conn.commit()
+        finally:
+            conn.close()
+
+
+def test_46_send_draft_outlook(e2e_client):
+    """Create an Outlook draft, send it, verify response and DB cleanup."""
+    subject = f"E2E send draft — Outlook {datetime.now(timezone.utc).isoformat()}"
+    create_resp = e2e_client.post(
+        f"/mailboxes/{OUTLOOK_MAILBOX_ID}/accounts/{OUTLOOK_ACCOUNT_ID}/drafts",
+        json={
+            "to_recipients": [SEND_RECIPIENT],
+            "cc_recipients": [],
+            "bcc_recipients": [],
+            "subject": subject,
+            "body_html": "<p>E2E send draft Outlook test body</p>",
+        },
+    )
+    _assert_ok(create_resp)
+    provider_draft_id = create_resp.json()["provider_draft_id"]
+
+    try:
+        send_resp = e2e_client.post(
+            f"/mailboxes/{OUTLOOK_MAILBOX_ID}/accounts/{OUTLOOK_ACCOUNT_ID}"
+            f"/drafts/{provider_draft_id}/send",
+        )
+        _assert_ok(send_resp)
+        data = send_resp.json()
+        assert data["status"] == "sent"
+        assert data["provider_message_id"]
+        assert data["provider_message_id"] == provider_draft_id  # Outlook ImmutableId
+        assert data["provider"] == "outlook"
+
+        # Verify the draft row was deleted from the local DB
+        conn = _db_conn()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT 1 FROM drafts WHERE provider_draft_id = %s AND account_id = %s",
+                    (provider_draft_id, OUTLOOK_ACCOUNT_ID),
+                )
+                assert cur.fetchone() is None, "Draft row should be deleted after send"
+        finally:
+            conn.close()
+    finally:
+        # Safety-net cleanup: delete any orphan draft row if the send failed
+        conn = _db_conn()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "DELETE FROM drafts WHERE provider_draft_id = %s AND account_id = %s",
+                    (provider_draft_id, OUTLOOK_ACCOUNT_ID),
+                )
+            conn.commit()
+        finally:
+            conn.close()
+
+
+# ===================================================================
 # Section 6: Auth lifecycle (MUST BE LAST — invalidates session)
 # ===================================================================
 
-def test_45_post_auth_logout(e2e_client, flow_state):
+def test_47_post_auth_logout(e2e_client, flow_state):
     response = e2e_client.post("/auth/logout")
     _assert_ok(response)
     assert response.json() == {"status": "logged_out"}
     flow_state["logged_out"] = "true"
 
 
-def test_46_get_auth_me_after_logout_401(e2e_client, flow_state):
+def test_48_get_auth_me_after_logout_401(e2e_client, flow_state):
     _require(flow_state, "logged_out")
     response = e2e_client.get("/auth/me")
     _assert_ok(response, expected=401)

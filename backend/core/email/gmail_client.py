@@ -47,6 +47,8 @@ _BATCH_MAX_RETRIES = 4
 _BATCH_RETRY_DELAY = 1.0  # seconds
 _INCREMENTAL_EVENT_THRESHOLD = 100
 _DRAFTS_MAX_TOTAL = 100
+_SEND_DRAFT_MAX_ATTEMPTS = 3
+_SEND_DRAFT_RETRY_DELAY = 1.0  # seconds
 
 
 def _parse_max_workers() -> int:
@@ -865,6 +867,75 @@ class GmailClient(EmailClient):
             from_email=sender_email,
             from_name=sender_email,
             subject=subject,
+            received_at=datetime.now(timezone.utc),
+            is_read=True,
+            box="SENT",
+        )
+
+    def send_draft(self, provider_draft_id: str) -> EmailMetadata:
+        """
+        Send an existing Gmail draft via users().drafts().send().
+
+        Gmail returns a Message resource with a new message_id (different
+        from the draft ID). The draft is automatically deleted by Gmail.
+        Retries transient failures up to 3 total attempts.
+        """
+        if self.service is None:
+            raise EmailNotAuthenticatedError("Gmail send_draft requires authentication.")
+
+        response: dict[str, Any] | None = None
+        for attempt in range(1, _SEND_DRAFT_MAX_ATTEMPTS + 1):
+            try:
+                response = (
+                    self.service.users()
+                    .drafts()
+                    .send(userId="me", body={"id": provider_draft_id})
+                    .execute()
+                )
+                break
+            except HttpError as exc:
+                if not _is_retryable(exc) or attempt == _SEND_DRAFT_MAX_ATTEMPTS:
+                    status, reason = http_error_detail(exc)
+                    raise EmailExternalAPIError(
+                        f"Gmail failed to send draft (HTTP {status}: {reason})."
+                    ) from exc
+                logger.warning(
+                    "Gmail send_draft attempt %d/%d failed, retrying: %s",
+                    attempt, _SEND_DRAFT_MAX_ATTEMPTS, exc,
+                )
+                time.sleep(_SEND_DRAFT_RETRY_DELAY)
+            except Exception as exc:
+                raise EmailExternalAPIError(
+                    f"Gmail unexpected send_draft error ({type(exc).__name__}): {exc}"
+                ) from exc
+
+        if response is None:
+            raise EmailExternalAPIError("Gmail send_draft: no response after retry loop.")
+
+        message_id = response.get("id", "")
+        if message_id:
+            try:
+                fetched = self.fetch_messages_metadata([message_id])
+                if fetched:
+                    result = fetched[0]
+                    if not result.from_email:
+                        result.from_email = self._fetch_sender_email()
+                    if not result.from_name:
+                        result.from_name = result.from_email
+                    return result
+            except Exception as exc:
+                logger.warning(
+                    "Gmail failed to fetch metadata for sent draft %s (%s): %s",
+                    message_id, type(exc).__name__, exc,
+                )
+
+        sender_email = self._fetch_sender_email()
+        return EmailMetadata(
+            provider_message_id=message_id,
+            thread_id=response.get("threadId") or "",
+            from_email=sender_email,
+            from_name=sender_email,
+            subject="",
             received_at=datetime.now(timezone.utc),
             is_read=True,
             box="SENT",

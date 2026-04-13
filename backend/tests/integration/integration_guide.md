@@ -105,7 +105,7 @@ Trash management integration tests first sync emails via the normal sync endpoin
 
 ### Drafts integration coverage
 
-`test_drafts.py` covers all five draft endpoints (POST create + PATCH update + DELETE delete + GET list + POST sync).
+`test_drafts.py` covers all draft endpoints (POST create + PATCH update + DELETE delete + POST send + GET list + POST sync).
 
 **POST `/mailboxes/{mid}/accounts/{aid}/drafts`** — 5 tests:
 
@@ -145,8 +145,8 @@ Trash management integration tests first sync emails via the normal sync endpoin
 - Mailbox-wide persists rows for all accounts: 2 accounts with 2 drafts each → response `total_synced == 4`, 2 `accounts` entries, 4 DB rows.
 - Replaces stale rows: pre-insert 2 stale drafts directly in DB, provider returns 1 new draft → after sync only the new draft remains (stale ones deleted).
 - Upserts existing rows: pre-insert a draft, provider returns the same provider_draft_id with a changed subject → subject is updated in place via `ON CONFLICT DO UPDATE`.
-- Empty provider for a single account returns `total_synced == 0` and 0 DB rows.
-- Empty provider for mailbox-wide sync with multiple accounts returns `total_synced == 0` and the `accounts` list is populated (one entry per account).
+- Empty mailbox (no accounts) returns `total_synced == 0` and `accounts == []`: the service early-returns before building any `EmailManager` clients when the mailbox has no accounts.
+- Empty provider for mailbox-wide sync (no `account_id` param) with a single account returns `total_synced == 0` and a one-entry `accounts` list (`drafts_synced == 0`).
 - `draft_store.replace_all_for_account` raising `QueryError` → 503 `database_query_error`.
 - Nonexistent account returns 404 `account_not_found`.
 - Foreign mailbox returns 403 `forbidden` (reuses `_create_foreign_mailbox`).
@@ -173,6 +173,17 @@ Core-error translation tests for drafts live in `test_core_error_translation.py`
 - **Create draft** (3 parametrized cases): `create_draft_exc: EmailExternalAPIError → 502`, `auth_silent_exc: EmailAuthError → 409`, `create_draft_exc: RuntimeError → 502`.
 - **Delete draft** (3 parametrized cases): `delete_draft_exc: EmailExternalAPIError → 502 external_api_error`, `auth_silent_exc: EmailAuthError → 409 account_not_connected`, `delete_draft_exc: RuntimeError → 502 external_api_error` (RuntimeError is wrapped by the manager into `EmailExternalAPIError`). Each test seeds a draft row via `_insert_draft_for_delete` so the service pre-check passes.
 - **Sync drafts** (3 parametrized cases): `fetch_drafts_exc: EmailExternalAPIError → 502 external_api_error`, `auth_silent_exc: EmailAuthError → 409 account_not_connected`, `fetch_drafts_exc: RuntimeError → 502 draft_sync_error`. Note: `RuntimeError` from sync is captured in `_last_errors` by `EmailManager.fetch_all_drafts` (not wrapped like `send_email` does) and surfaces as `draft_sync_error` (the fallback passed to `raise_on_silent_auth_errors`), not `external_api_error`.
+
+**POST `/mailboxes/{mid}/accounts/{aid}/drafts/{provider_draft_id}/send`** — 8 tests:
+
+- Happy path: inserts a draft row, POSTs the send endpoint, asserts 200 with `DraftSendOut` fields (`status == "sent"`, `provider_message_id`, `provider`), and verifies the draft row was deleted from the DB.
+- Draft not found → 404 `draft_not_found`.
+- Account not found → 404 `account_not_found`.
+- Foreign mailbox → 403 `forbidden`.
+- Nonexistent mailbox → 404 `mailbox_not_found`.
+- Provider failure (`send_draft_exc=EmailExternalAPIError`) → 502 `external_api_error`.
+- Silent auth `EmailAuthError` → 409 `account_not_connected`.
+- Provider generic `RuntimeError` → 502 `external_api_error` (via EmailManager wrapping).
 
 The GET `list_drafts` endpoint is DB-only and has no provider call path to translate.
 

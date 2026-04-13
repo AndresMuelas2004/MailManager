@@ -3,6 +3,7 @@ Integration tests for the drafts endpoints:
     - POST   /mailboxes/{mid}/accounts/{aid}/drafts                    (create_draft)
     - PATCH  /mailboxes/{mid}/accounts/{aid}/drafts/{draft_id}         (update_draft)
     - DELETE /mailboxes/{mid}/accounts/{aid}/drafts/{draft_id}         (delete_draft)
+    - POST   /mailboxes/{mid}/accounts/{aid}/drafts/{draft_id}/send    (send_draft)
     - GET    /mailboxes/{mid}/drafts                                   (list_drafts)
     - POST   /mailboxes/{mid}/drafts/sync                              (sync_drafts)
 
@@ -1123,3 +1124,175 @@ def test_delete_draft_db_delete_error_returns_503(
     resp = test_client.delete(_delete_draft_url(mid, aid, "draft-delete-db"))
     assert resp.status_code == 503
     assert resp.json()["error"]["code"] == "database_query_error"
+
+
+# ===================================================================
+# SEND DRAFT — POST /mailboxes/{mid}/accounts/{aid}/drafts/{did}/send
+# ===================================================================
+
+
+def _send_draft_url(mailbox_id: str, account_id: str, provider_draft_id: str) -> str:
+    return (
+        f"{_MAILBOX_URL}/{mailbox_id}/accounts/{account_id}"
+        f"/drafts/{provider_draft_id}/send"
+    )
+
+
+def test_send_draft_happy_path(
+    test_client, setup_mailbox_and_account, isolated_db,
+):
+    """Insert a draft, POST send, assert 200 and verify the draft row is deleted."""
+    mid, aid = setup_mailbox_and_account(test_client)
+    _insert_draft(
+        isolated_db, account_id=aid, provider_draft_id="draft-send-1",
+        subject="send me", body_html="<p>send</p>",
+        to_recipients=["dest@example.com"],
+    )
+    resp = test_client.post(_send_draft_url(mid, aid, "draft-send-1"))
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "sent"
+    assert data["provider_message_id"] == "sent_draft-send-1"
+    assert data["provider"] == "gmail"
+
+    # Verify the draft row was deleted
+    with isolated_db.cursor() as cur:
+        cur.execute(
+            "SELECT 1 FROM drafts WHERE provider_draft_id = %s AND account_id = %s::uuid",
+            ("draft-send-1", aid),
+        )
+        assert cur.fetchone() is None
+
+
+def test_send_draft_draft_not_found_404(
+    test_client, setup_mailbox_and_account,
+):
+    """POST send for a nonexistent draft_id returns 404."""
+    mid, aid = setup_mailbox_and_account(test_client)
+    resp = test_client.post(_send_draft_url(mid, aid, "nonexistent-draft"))
+    assert resp.status_code == 404
+    assert resp.json()["error"]["code"] == "draft_not_found"
+
+
+def test_send_draft_account_not_found_404(
+    test_client, setup_mailbox_and_account,
+):
+    """POST send with a nonexistent account_id returns 404."""
+    mid, _ = setup_mailbox_and_account(test_client)
+    fake_aid = str(uuid4())
+    resp = test_client.post(_send_draft_url(mid, fake_aid, "draft-x"))
+    assert resp.status_code == 404
+    assert resp.json()["error"]["code"] == "account_not_found"
+
+
+def test_send_draft_forbidden_403(
+    test_client, setup_mailbox_and_account, isolated_db,
+):
+    """POST send against a mailbox owned by another user returns 403."""
+    foreign_mid = _create_foreign_mailbox(isolated_db)
+    _, aid = setup_mailbox_and_account(test_client)
+    resp = test_client.post(_send_draft_url(foreign_mid, aid, "draft-x"))
+    assert resp.status_code == 403
+    assert resp.json()["error"]["code"] == "forbidden"
+
+
+def test_send_draft_provider_failure_502(
+    test_client, setup_mailbox_and_account, isolated_db, monkeypatch,
+):
+    """Provider send failure returns 502."""
+    from core.email.errors import EmailExternalAPIError
+
+    mid, aid = setup_mailbox_and_account(test_client)
+    _insert_draft(
+        isolated_db, account_id=aid, provider_draft_id="draft-send-fail",
+        subject="fail me", body_html="<p>fail</p>",
+    )
+
+    def _build(accounts):
+        manager = EmailManager()
+        for acc in accounts:
+            mid_ = str(acc.get("mailbox_id", ""))
+            aid_ = str(acc.get("account_id", ""))
+            label = f"{mid_}__{aid_}"
+            manager.add_client(FakeEmailClient(
+                label,
+                send_draft_exc=EmailExternalAPIError("Provider send failed."),
+            ))
+        return manager
+
+    monkeypatch.setattr(drafts_service, "build_manager_for_accounts", _build)
+
+    resp = test_client.post(_send_draft_url(mid, aid, "draft-send-fail"))
+    assert resp.status_code == 502
+    assert resp.json()["error"]["code"] == "external_api_error"
+
+
+def test_send_draft_nonexistent_mailbox_returns_404(
+    test_client, setup_mailbox_and_account,
+):
+    """POST send against a nonexistent mailbox returns 404."""
+    fake_mid = str(uuid4())
+    fake_aid = str(uuid4())
+    resp = test_client.post(_send_draft_url(fake_mid, fake_aid, "draft-x"))
+    assert resp.status_code == 404
+    assert resp.json()["error"]["code"] == "mailbox_not_found"
+
+
+def test_send_draft_silent_auth_failure_returns_409(
+    test_client, setup_mailbox_and_account, isolated_db, monkeypatch,
+):
+    """Silent auth failure during send returns 409."""
+    from core.email.errors import EmailAuthError
+
+    mid, aid = setup_mailbox_and_account(test_client)
+    _insert_draft(
+        isolated_db, account_id=aid, provider_draft_id="draft-send-auth",
+        subject="auth fail", body_html="<p>auth</p>",
+    )
+
+    def _build(accounts):
+        manager = EmailManager()
+        for acc in accounts:
+            mid_ = str(acc.get("mailbox_id", ""))
+            aid_ = str(acc.get("account_id", ""))
+            label = f"{mid_}__{aid_}"
+            manager.add_client(FakeEmailClient(
+                label,
+                auth_silent_exc=EmailAuthError("Token expired."),
+            ))
+        return manager
+
+    monkeypatch.setattr(drafts_service, "build_manager_for_accounts", _build)
+
+    resp = test_client.post(_send_draft_url(mid, aid, "draft-send-auth"))
+    assert resp.status_code == 409
+    assert resp.json()["error"]["code"] == "account_not_connected"
+
+
+def test_send_draft_provider_generic_exception_returns_502(
+    test_client, setup_mailbox_and_account, isolated_db, monkeypatch,
+):
+    """Provider RuntimeError (wrapped by EmailManager) returns 502."""
+    mid, aid = setup_mailbox_and_account(test_client)
+    _insert_draft(
+        isolated_db, account_id=aid, provider_draft_id="draft-send-runtime",
+        subject="runtime fail", body_html="<p>runtime</p>",
+    )
+
+    def _build(accounts):
+        manager = EmailManager()
+        for acc in accounts:
+            mid_ = str(acc.get("mailbox_id", ""))
+            aid_ = str(acc.get("account_id", ""))
+            label = f"{mid_}__{aid_}"
+            manager.add_client(FakeEmailClient(
+                label,
+                send_draft_exc=RuntimeError("boom"),
+            ))
+        return manager
+
+    monkeypatch.setattr(drafts_service, "build_manager_for_accounts", _build)
+
+    resp = test_client.post(_send_draft_url(mid, aid, "draft-send-runtime"))
+    assert resp.status_code == 502
+    assert resp.json()["error"]["code"] == "external_api_error"

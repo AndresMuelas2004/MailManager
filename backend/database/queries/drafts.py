@@ -1,7 +1,6 @@
 """
 SQL string constants for draft persistence.
 """
-from __future__ import annotations
 
 GET_DRAFT = """
     SELECT provider_draft_id, account_id, to_recipients, cc_recipients, bcc_recipients,
@@ -81,6 +80,7 @@ LIST_DRAFTS_BY_MAILBOX = """
     ORDER BY d.created_at DESC
 """
 
+# Used with execute_values(cur, UPSERT_DRAFTS_BATCH, rows); positional %s required.
 UPSERT_DRAFTS_BATCH = """
     INSERT INTO drafts (
         provider_draft_id, account_id, to_recipients, cc_recipients,
@@ -94,6 +94,7 @@ UPSERT_DRAFTS_BATCH = """
         subject       = EXCLUDED.subject,
         body_html     = EXCLUDED.body_html,
         updated_at    = now()
+        -- created_at intentionally excluded; preserve original on upsert
 """
 
 DELETE_DRAFTS_MISSING_FOR_ACCOUNT = """

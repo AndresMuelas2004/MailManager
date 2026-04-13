@@ -44,7 +44,7 @@ Pre-existing test account identifiers are centralized in `e2e_config.py` with en
 | `OUTLOOK_ACCOUNT_ID` | `E2E_OUTLOOK_ACCOUNT_ID` | `3c55eb17-9d5e-4d31-a3b5-14c6c24279b9` |
 | `SEND_RECIPIENT` | `E2E_SEND_RECIPIENT` | `muelonmuelon12@gmail.com` |
 
-`SEND_RECIPIENT` is the destination address used by `test_19_send_email_gmail`, `test_20_send_email_outlook`, `test_32_create_draft_gmail`, `test_33_create_draft_outlook`, `test_34_sync_drafts_gmail_single_account`, `test_35_sync_drafts_gmail_mailbox`, `test_36_sync_drafts_outlook_single_account`, `test_37_sync_drafts_outlook_mailbox`, `test_40_list_drafts_gmail`, `test_41_update_draft_gmail`, `test_42_update_draft_outlook`, `test_43_delete_draft_gmail`, and `test_44_delete_draft_outlook`. Override it via `E2E_SEND_RECIPIENT` when running the suite against an environment where the default address is not available.
+`SEND_RECIPIENT` is the destination address used by `test_19_send_email_gmail`, `test_20_send_email_outlook`, `test_32_create_draft_gmail`, `test_33_create_draft_outlook`, `test_34_sync_drafts_gmail_single_account`, `test_35_sync_drafts_gmail_mailbox`, `test_36_sync_drafts_outlook_single_account`, `test_37_sync_drafts_outlook_mailbox`, `test_40_list_drafts_gmail`, `test_41_update_draft_gmail`, `test_42_update_draft_outlook`, `test_43_delete_draft_gmail`, `test_44_delete_draft_outlook`, `test_45_send_draft_gmail`, and `test_46_send_draft_outlook`. Override it via `E2E_SEND_RECIPIENT` when running the suite against an environment where the default address is not available.
 
 ### Pre-existing test accounts — one per provider
 
@@ -200,12 +200,32 @@ These tests exist because the three database-backed GET endpoints (`list_emails`
 
 **Outlook caveat**: the HTML body is wrapped in a full `<html>/<body>` structure by the Graph API, so `body_html` is asserted by containment (`assert "E2E updated body" in data["body_html"]`) rather than byte-for-byte equality — same pattern as tests 36/37.
 
-### Section 6: Auth lifecycle — MUST BE LAST (tests 45–46)
+### Section 5g: Send draft — pre-existing accounts (tests 45–46)
 
 | Test | Endpoint | Dependencies |
 |---|---|---|
-| 45 | `POST /auth/logout` | independent → produces `logged_out` |
-| 46 | `GET /auth/me` → 401 | requires `logged_out` |
+| 45 | `POST .../accounts/{aid}/drafts/{provider_draft_id}/send` (gmail) | independent — creates a draft, sends it, verifies response and DB cleanup |
+| 46 | `POST .../accounts/{aid}/drafts/{provider_draft_id}/send` (outlook) | independent — same as 45 for Outlook |
+
+**Common pattern** for these two tests:
+1. Create a draft at the provider via the POST endpoint with a unique subject (ISO timestamp) and a known body.
+2. Capture the returned `provider_draft_id`.
+3. POST the send endpoint: `.../drafts/{provider_draft_id}/send`.
+4. Assert 200, `status == "sent"`, `provider_message_id` non-empty, `provider` matches (`"gmail"` or `"outlook"`).
+5. Query the DB directly to verify the `drafts` row was deleted.
+6. A `finally` block performs safety-net cleanup via raw SQL `DELETE FROM drafts WHERE ...` — covers the case where the send failed and the draft row is still present.
+
+**Gmail**: the `provider_message_id` in the response is a **new** ID (different from the draft ID) because Gmail creates a new Message when sending a draft.
+**Outlook**: the `provider_message_id` equals the original `provider_draft_id` thanks to `Prefer: IdType="ImmutableId"` used at draft creation time.
+
+`SEND_RECIPIENT` is used as the destination address — same recipient used by all draft and send tests.
+
+### Section 6: Auth lifecycle — MUST BE LAST (tests 47–48)
+
+| Test | Endpoint | Dependencies |
+|---|---|---|
+| 47 | `POST /auth/logout` | independent → produces `logged_out` |
+| 48 | `GET /auth/me` → 401 | requires `logged_out` |
 
 ## Behavioral Contracts — Traps to Avoid
 
@@ -219,7 +239,7 @@ The pre-existing user, mailboxes, and accounts (defined in `e2e_config.py`) must
 
 ### Auth lifecycle tests must be last
 
-`POST /auth/logout` (test 43) invalidates the session cookie. Any test running after it will get 401. This is why Section 6 is the final section.
+`POST /auth/logout` (test 47) invalidates the session cookie. Any test running after it will get 401. This is why Section 6 is the final section.
 
 ### Schema migration — `create_e2e_schema` fixture
 
@@ -237,6 +257,7 @@ When adding a new provider:
 - [ ] Add a draft listing test (`GET .../drafts?account_id=...`) for the provider.
 - [ ] Add a draft update test (`PATCH .../accounts/{aid}/drafts/{provider_draft_id}`) for the provider — must create a draft first and clean up the local row afterward.
 - [ ] Add a draft deletion test (`DELETE .../accounts/{aid}/drafts/{draft_id}`) for the provider.
+- [ ] Add a draft send test (`POST .../accounts/{aid}/drafts/{provider_draft_id}/send`) for the provider — must create a draft first, send it, and verify the local draft row is deleted. Safety-net cleanup in a `finally` block.
 - [ ] Ensure flow assertions include the new provider behavior.
 
 The E2E suite should always represent the full set of supported providers.

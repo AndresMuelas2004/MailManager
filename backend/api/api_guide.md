@@ -167,7 +167,22 @@ Two helpers in `services_helpers.py` support the email content flow:
 - **Flow**: validate ownership via `ensure_mailbox_access` → fetch the account via `account_store.get` (404 if missing) → **pre-check the draft exists** via `draft_store.get` (404 `draft_not_found` otherwise) → build manager → silent auth + token refresh persistence (with `fallback=DraftUpdateError`) → **Provider-First**: call `manager.update_draft(account_label, provider_draft_id, ...)` (translated `CoreError` via `translate_core_error(fallback=DraftUpdateError)`) → only on success, call `draft_store.update(row)` → return `DraftOut` from the persisted row.
 - **Gmail behavior**: `GmailClient.update_draft` calls `users().drafts().update(userId="me", id=provider_draft_id, body={"message": {"raw": ...}})`. Gmail preserves `draft.id` on update (the inner `message.id` may change, but is not stored). The MIME build is shared with `create_draft` via the private helper `_build_draft_raw_message` (Helper Reuse Policy).
 - **Outlook behavior**: `OutlookClient.update_draft` calls `PATCH /me/messages/{id}` with the same Graph payload shape used by `create_draft` and the `Prefer: IdType="ImmutableId"` header **repeated on every call** — the stored `provider_draft_id` is an Immutable ID (created with that header), so Graph must be told again on each subsequent call to interpret the path parameter correctly. The Graph payload and datetime parsing are shared with `create_draft` via `_build_draft_graph_payload` and `_parse_graph_datetime`.
-- **Service module**: lives in `api/services/drafts_service.py::update_draft` with the same outer `try: ... except ApiError: raise / except Exception: → DraftUpdateError` safety net as `create_draft`. Every intermediate `raise DraftUpdateError(...)` uses a globally unique message (API CLAUDE.md §7) so the origin of each failure is pinpointable from the message alone.
+- **Service module**: lives in `api/services/drafts_service.py::update_draft` with the same outer `try: ... except ApiError: raise / except Exception: → DraftUpdateError` safety net as `create_draft`. Every intermediate `raise DraftUpdateError(...)` uses a globally unique message (API CLAUDE.md §7) so the origin of each failure is pinpointable from the message alone. A second private helper, `_build_draft_auth_context(accounts, mailbox_id)`, builds the `(auth_payloads, label_lookup)` pair for a batch of accounts and is used by `sync_drafts`.
+
+### Draft send endpoint
+
+`POST /mailboxes/{mailbox_id}/accounts/{account_id}/drafts/{provider_draft_id}/send` — send an existing draft via the provider and remove it from local storage.
+
+- **Path params**: `mailbox_id`, `account_id`, `provider_draft_id` — all three in the URL. No request body — the draft content was defined at create/update time.
+- **Response**: `DraftSendOut` with `provider_message_id: str`, `provider: str`, `status: str = "sent"`.
+- **Errors**:
+  - `DraftNotFound` (code `"draft_not_found"`, HTTP 404) — the draft does not exist in the local DB for the given `(provider_draft_id, account_id)` pair. Raised by a pre-check before any provider call.
+  - `DraftSendError` (code `"draft_send_error"`, HTTP 502) — provider-side or unexpected failure during the send.
+- **Flow**: validate ownership via `ensure_mailbox_access` → fetch the account via `account_store.get` (404 if missing) → **pre-check the draft exists** via `draft_store.get` (404 `draft_not_found` otherwise) → build manager → silent auth + token refresh persistence (with `fallback=DraftSendError`) → **Provider-First**: call `manager.send_draft(account_label, provider_draft_id)` (3 retries handled inside the client layer) → **best-effort** delete from `drafts` table via `draft_store.delete` → **best-effort** persist sent email metadata to `email_metadata` via `persist_email_metadata_batch` → return `DraftSendOut`.
+- **Gmail behavior**: `GmailClient.send_draft` calls `users().drafts().send(userId="me", body={"id": provider_draft_id})`. Gmail returns a `Message` resource with a **new** `message_id` (different from the draft ID). The draft is automatically deleted by Gmail. Post-send metadata enrichment via `fetch_messages_metadata([message_id])`.
+- **Outlook behavior**: `OutlookClient.send_draft` calls `POST /me/messages/{provider_draft_id}/send` with `Prefer: IdType="ImmutableId"`. Returns 202 (no body). The message ID stays the **same** thanks to Immutable ID. Post-send metadata enrichment via `fetch_messages_metadata([provider_draft_id])`.
+- **Retry**: both clients retry transient failures up to 3 total attempts (`_SEND_DRAFT_MAX_ATTEMPTS = 3`, `_SEND_DRAFT_RETRY_DELAY = 1.0`). Gmail checks `_RETRYABLE_STATUS_CODES`; Outlook retries all `EmailExternalAPIError`.
+- **Best-effort post-send**: both the local draft deletion and the email_metadata persistence are best-effort — if either fails, the error is logged but swallowed. The draft was already sent at the provider, so the response reports success regardless.
 
 ### Draft deletion endpoint
 
@@ -191,7 +206,7 @@ The endpoint is **pure DB read**: it does not call any provider API, does not pe
 - **Response**: `list[DraftOut]` — the same schema used by the create endpoint. No wrapper object.
 - **Ordering**: `created_at DESC` (most recent first). No pagination.
 - **Error**: `DraftListError` (code `"draft_list_error"`, HTTP 500) — raised on DB-side failures during listing. Note the status difference with `DraftCreationError` (502): creation failures are usually provider-side, while listing failures can only be DB-side.
-- **Router note**: all draft endpoints live in the same `drafts_routers.py` router with prefix `/mailboxes/{mailbox_id}`. The create POST handler declares `/accounts/{account_id}/drafts`; the delete DELETE handler declares `/accounts/{account_id}/drafts/{draft_id}`; the list GET and sync POST handlers declare `/drafts` and `/drafts/sync` respectively.
+- **Router note**: all draft handlers share the same `drafts_routers.py` router with prefix `/mailboxes/{mailbox_id}`: `POST /accounts/{account_id}/drafts` (create), `PATCH /accounts/{account_id}/drafts/{provider_draft_id}` (update), `DELETE /accounts/{account_id}/drafts/{draft_id}` (delete), `POST /accounts/{account_id}/drafts/{provider_draft_id}/send` (send), `GET /drafts` (list), `POST /drafts/sync` (sync).
 
 ### Draft sync endpoint
 
@@ -311,6 +326,7 @@ Complete, authoritative list of every `ApiError` subclass registered in `_STATUS
 | `DraftCreationError` | `draft_creation_error` | 502 | Provider-side or unexpected failure during draft creation. |
 | `DraftUpdateError` | `draft_update_error` | 502 | Provider-side or unexpected failure during draft update. |
 | `DraftDeleteError` | `draft_delete_error` | 502 | Provider-side or unexpected failure during draft deletion. |
+| `DraftSendError` | `draft_send_error` | 502 | Provider-side or unexpected failure during draft send. |
 | `ExternalAPIError` | `external_api_error` | 502 | Generic catch-all for translated `EmailExternalAPIError`. Use more specific subclasses where possible. |
 | `MoveToTrashError` | `move_to_trash_error` | 502 | Provider-side failure during `move_to_trash`. |
 | `ReadStatusUpdateError` | `read_status_update_error` | 502 | Provider-side failure during `update_read_status`. |
