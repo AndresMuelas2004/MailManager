@@ -364,7 +364,7 @@ def delete_draft(
         )
 
     try:
-        existing = draft_store.get(account_id, draft_id)
+        existing = draft_store.get(draft_id, account_id)
     except DatabaseError as exc:
         raise translate_database_error(exc) from exc
     except Exception as exc:
@@ -419,7 +419,7 @@ def delete_draft(
         ) from exc
 
     try:
-        draft_store.delete(account_id, draft_id)
+        draft_store.delete(draft_id, account_id)
     except DatabaseError as exc:
         raise translate_database_error(exc) from exc
     except Exception as exc:

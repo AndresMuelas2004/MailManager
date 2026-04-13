@@ -154,7 +154,6 @@ Two helpers in `services_helpers.py` support the email content flow:
 - **Outlook critical**: the Outlook client passes `Prefer: IdType="ImmutableId"` when creating the draft so the message ID stays stable across state transitions (critical for the future send-draft endpoint, which would reuse the same ID).
 - **Service module**: lives in `api/services/drafts_service.py` with a local `_persist_refreshed_tokens` helper. The service is the only one that imports `draft_store` from `database`.
 
-<<<<<<< HEAD
 ### Draft update endpoint
 
 `PATCH /mailboxes/{mailbox_id}/accounts/{account_id}/drafts/{provider_draft_id}` — replace the content of an existing draft at the provider and persist the new values locally.

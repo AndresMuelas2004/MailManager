@@ -640,7 +640,6 @@ def test_sync_drafts_db_error_on_replace_returns_503(
 
 
 # ------------------------------------------------------------------
-<<<<<<< HEAD
 # PATCH /mailboxes/{mid}/accounts/{aid}/drafts/{provider_draft_id}
 # update_draft
 # ------------------------------------------------------------------

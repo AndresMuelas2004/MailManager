@@ -907,7 +907,6 @@ class TestSyncDrafts:
             drafts_service.sync_drafts(_MAILBOX_ID, _USER_ID, _ACCOUNT_ID)
 
 
-<<<<<<< HEAD
 # =====================================================================
 # update_draft
 # =====================================================================
@@ -1277,7 +1276,7 @@ def _patch_delete_common(monkeypatch, *, fake_client_kwargs=None):
     )
     monkeypatch.setattr(
         drafts_service.draft_store, "get",
-        lambda _aid, _did: _persisted_row(provider_draft_id=_did) if _did == _DRAFT_ID else None,
+        lambda _did, _aid: _persisted_row(provider_draft_id=_did) if _did == _DRAFT_ID else None,
     )
     monkeypatch.setattr(
         drafts_service, "load_wrapped_app_credentials",
@@ -1312,7 +1311,7 @@ def _patch_delete_common(monkeypatch, *, fake_client_kwargs=None):
     deleted: list[tuple[str, str]] = []
     monkeypatch.setattr(
         drafts_service.draft_store, "delete",
-        lambda aid, did: deleted.append((aid, did)),
+        lambda did, aid: deleted.append((aid, did)),
     )
     return deleted
 
@@ -1356,7 +1355,7 @@ class TestDeleteDraft:
         _patch_delete_common(monkeypatch)
         monkeypatch.setattr(
             drafts_service.draft_store, "get",
-            lambda _aid, _did: None,
+            lambda _did, _aid: None,
         )
         with pytest.raises(DraftNotFound):
             drafts_service.delete_draft(
