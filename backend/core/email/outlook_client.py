@@ -842,7 +842,6 @@ class OutlookClient(EmailClient):
                 f"Outlook unexpected delete_draft error ({type(exc).__name__}): {exc}"
             ) from exc
 
-
     def fetch_drafts(self) -> list[DraftMetadata]:
         """Fetch the most recent Outlook drafts (capped at _DRAFTS_MAX_TOTAL).
 

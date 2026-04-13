@@ -1,5 +1,5 @@
 """
-Unit tests for drafts_service (create_draft + list_drafts + sync_drafts).
+Unit tests for drafts_service (create_draft + update_draft + delete_draft + list_drafts + sync_drafts).
 
 All external dependencies are monkeypatched so tests run without DB or provider APIs.
 """
@@ -1462,3 +1462,59 @@ class TestDeleteDraft:
         assert prov == _PROVIDER
         assert payload["access_token"] == "new-at"
         assert payload["refresh_token"] == "new-rt"
+
+    def test_db_error_on_account_get_translated(self, monkeypatch):
+        _patch_delete_common(monkeypatch)
+
+        def _raise_db(*_a, **_kw):
+            raise DbQueryError("account lookup failed")
+
+        monkeypatch.setattr(drafts_service.account_store, "get", _raise_db)
+        with pytest.raises(DatabaseQueryError):
+            drafts_service.delete_draft(
+                _MAILBOX_ID, _ACCOUNT_ID, _DRAFT_ID, _USER_ID,
+            )
+
+    def test_persist_refreshed_tokens_db_error_raises_database_query_error(
+        self, monkeypatch,
+    ):
+        _patch_delete_common(monkeypatch, fake_client_kwargs={
+            "auth_silent_return": {"access_token": "new-at", "refresh_token": "new-rt"},
+        })
+
+        def _raise_db(*_a, **_kw):
+            raise DbQueryError("tokens table down")
+
+        monkeypatch.setattr(drafts_service.account_store, "upsert_tokens", _raise_db)
+        with pytest.raises(DatabaseQueryError):
+            drafts_service.delete_draft(
+                _MAILBOX_ID, _ACCOUNT_ID, _DRAFT_ID, _USER_ID,
+            )
+
+    def test_persist_refreshed_tokens_unexpected_exception_raises_draft_delete_error(
+        self, monkeypatch,
+    ):
+        _patch_delete_common(monkeypatch, fake_client_kwargs={
+            "auth_silent_return": {"access_token": "new-at", "refresh_token": "new-rt"},
+        })
+
+        def _raise(*_a, **_kw):
+            raise RuntimeError("boom")
+
+        monkeypatch.setattr(drafts_service.account_store, "upsert_tokens", _raise)
+        with pytest.raises(DraftDeleteError):
+            drafts_service.delete_draft(
+                _MAILBOX_ID, _ACCOUNT_ID, _DRAFT_ID, _USER_ID,
+            )
+
+    def test_outer_exception_safety_net_raises_draft_delete_error(self, monkeypatch):
+        _patch_delete_common(monkeypatch)
+
+        def _raise(*_a, **_kw):
+            raise RuntimeError("boom")
+
+        monkeypatch.setattr(drafts_service, "load_wrapped_app_credentials", _raise)
+        with pytest.raises(DraftDeleteError):
+            drafts_service.delete_draft(
+                _MAILBOX_ID, _ACCOUNT_ID, _DRAFT_ID, _USER_ID,
+            )

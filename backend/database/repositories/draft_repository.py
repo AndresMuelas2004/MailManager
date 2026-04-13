@@ -190,6 +190,8 @@ class PgDraftStore(DraftStore):
                         queries.DELETE_DRAFT,
                         {"provider_draft_id": provider_draft_id, "account_id": account_id},
                     )
+                    if cur.fetchone() is None:
+                        raise QueryError("Draft row to delete not found.")
         except DatabaseError:
             raise
         except psycopg2.Error as exc:

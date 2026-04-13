@@ -832,10 +832,9 @@ def test_31_restore_outlook_from_trash(e2e_client, flow_state):
 # ===================================================================
 # Section 5b: Drafts — pre-existing accounts (tests 32–33)
 #
-# TODO: Manual DB cleanup is performed inline because the DELETE drafts
-# endpoint does not exist yet. The draft is intentionally left at the
-# provider; a future DELETE drafts endpoint will replace this manual
-# cleanup with proper provider-side deletion.
+# Manual DB cleanup is performed inline because these tests verify
+# draft creation only. Provider-side draft deletion is tested
+# separately in Section 5f (tests 43–44).
 # ===================================================================
 
 def test_32_create_draft_gmail(e2e_client):

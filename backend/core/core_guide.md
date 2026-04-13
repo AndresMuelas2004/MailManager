@@ -278,6 +278,12 @@ Iterates every registered client, calls `client.fetch_drafts()`, and returns `{a
 
 When Outlook moves a message between folders (via `POST /me/messages/{id}/move`), the message receives a **new ID**. The response body contains the moved message object with the updated `id` field. Any code that moves messages between folders must capture this new ID and propagate it to upper layers for database persistence. This applies to spam operations and any future folder-move operations.
 
+## Provider-Specific Behavior — Outlook Message ID URL Encoding
+
+Outlook Immutable IDs are base64-encoded strings that can contain `+`, `/`, and `=` characters, which are not safe in URL path segments. Every call to `_graph_request` that embeds a message or draft ID in the URL path **must** percent-encode that ID with `urllib.parse.quote(id, safe='')` before interpolation. Without encoding, Graph API returns 400 or 404 for any ID containing those characters.
+
+**Extension rule:** Any new Outlook operation embedding an ID in a URL path must apply `urllib.parse.quote(id, safe='')`.
+
 ## Extension
 
 ### New provider checklist

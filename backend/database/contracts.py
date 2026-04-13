@@ -214,6 +214,7 @@ class DraftStore(ABC):
     def delete(self, provider_draft_id: str, account_id: str) -> None:
         """
         Delete a single draft row by composite PK.
+        Raises QueryError if the row does not exist.
         """
         raise NotImplementedError
 

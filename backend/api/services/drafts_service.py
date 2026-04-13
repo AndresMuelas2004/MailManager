@@ -381,57 +381,66 @@ def delete_draft(
             "during draft deletion."
         )
 
-    provider = str(account.get("provider") or "").lower()
-    account_label = f"{mailbox_id}__{account_id}"
-    manager = build_manager_for_accounts([account])
-
-    app_credentials = load_wrapped_app_credentials(provider)
-    user_tokens = load_wrapped_account_tokens(mailbox_id, account_id, provider)
-    auth_payloads: dict[str, tuple[dict[str, Any], dict[str, Any]]] = {
-        account_label: (app_credentials, user_tokens),
-    }
-    label_lookup: dict[str, tuple[str, str, str]] = {
-        account_label: (mailbox_id, account_id, provider),
-    }
-
-    updated_tokens = manager.authenticate_all_silent(auth_payloads)
-    if updated_tokens:
-        _persist_refreshed_tokens(updated_tokens, label_lookup, fallback=DraftDeleteError)
-    raise_on_silent_auth_errors(
-        manager.get_last_errors(), fallback=DraftDeleteError,
-    )
-
     try:
-        manager.delete_draft(account_label, draft_id)
-    except CoreError as exc:
-        raise translate_core_error(
-            exc,
-            fallback=DraftDeleteError,
-            context={"account_id": account_id, "draft_id": draft_id},
-        ) from exc
+        provider = str(account.get("provider") or "").lower()
+        account_label = f"{mailbox_id}__{account_id}"
+        manager = build_manager_for_accounts([account])
+
+        app_credentials = load_wrapped_app_credentials(provider)
+        user_tokens = load_wrapped_account_tokens(mailbox_id, account_id, provider)
+        auth_payloads: dict[str, tuple[dict[str, Any], dict[str, Any]]] = {
+            account_label: (app_credentials, user_tokens),
+        }
+        label_lookup: dict[str, tuple[str, str, str]] = {
+            account_label: (mailbox_id, account_id, provider),
+        }
+
+        updated_tokens = manager.authenticate_all_silent(auth_payloads)
+        if updated_tokens:
+            _persist_refreshed_tokens(updated_tokens, label_lookup, fallback=DraftDeleteError)
+        raise_on_silent_auth_errors(
+            manager.get_last_errors(), fallback=DraftDeleteError,
+        )
+
+        try:
+            manager.delete_draft(account_label, draft_id)
+        except CoreError as exc:
+            raise translate_core_error(
+                exc,
+                fallback=DraftDeleteError,
+                context={"account_id": account_id, "draft_id": draft_id},
+            ) from exc
+        except Exception as exc:
+            logger.warning(
+                "Unexpected error during provider draft deletion (%s): %s",
+                type(exc).__name__, exc,
+            )
+            raise DraftDeleteError(
+                "Unexpected failure while deleting draft at provider."
+            ) from exc
+
+        try:
+            draft_store.delete(draft_id, account_id)
+        except DatabaseError as exc:
+            raise translate_database_error(exc) from exc
+        except Exception as exc:
+            logger.warning(
+                "Unexpected draft DB delete error (%s): %s",
+                type(exc).__name__, exc,
+            )
+            raise DraftDeleteError(
+                "Failed to delete draft from database after provider deletion."
+            ) from exc
+
+        return {"status": "deleted"}
+    except ApiError:
+        raise
     except Exception as exc:
         logger.warning(
-            "Unexpected error during provider draft deletion (%s): %s",
+            "Unexpected draft deletion error (%s): %s",
             type(exc).__name__, exc,
         )
-        raise DraftDeleteError(
-            "Unexpected failure while deleting draft at provider."
-        ) from exc
-
-    try:
-        draft_store.delete(draft_id, account_id)
-    except DatabaseError as exc:
-        raise translate_database_error(exc) from exc
-    except Exception as exc:
-        logger.warning(
-            "Unexpected draft DB delete error (%s): %s",
-            type(exc).__name__, exc,
-        )
-        raise DraftDeleteError(
-            "Failed to delete draft from database after provider deletion."
-        ) from exc
-
-    return {"status": "deleted"}
+        raise DraftDeleteError("Failed to delete draft.") from exc
 
 
 def list_drafts(

@@ -1,5 +1,5 @@
 """
-SQL queries for draft persistence (business-logic only).
+SQL string constants for draft persistence.
 """
 from __future__ import annotations
 
@@ -107,4 +107,5 @@ DELETE_DRAFT = """
     DELETE FROM drafts
     WHERE provider_draft_id = %(provider_draft_id)s
       AND account_id = %(account_id)s
+    RETURNING provider_draft_id
 """

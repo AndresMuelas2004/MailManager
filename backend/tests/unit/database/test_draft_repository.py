@@ -1,9 +1,9 @@
 """
 Unit tests for draft_repository (PgDraftStore).
 
-Covers the 4 public methods (create, list_by_account, list_by_mailbox,
-replace_all_for_account) including the DatabaseError propagation guard
-added in Bloque 1.2.
+Covers the 7 public methods (create, get, update, delete, list_by_account,
+list_by_mailbox, replace_all_for_account) including the DatabaseError
+propagation guard added in Bloque 1.2.
 """
 
 from __future__ import annotations
@@ -414,3 +414,46 @@ class TestPgDraftStoreReplaceAllForAccount:
             draft_module.draft_store.replace_all_for_account(
                 "acc-1", self._sample_drafts(),
             )
+
+
+# =====================================================================
+# PgDraftStore.delete
+# =====================================================================
+
+
+class TestPgDraftStoreDelete:
+
+    def test_delete_happy_path(self, monkeypatch):
+        cursor = FakeCursor(fetchone_results=[("draft-1",)])
+        patch_connection(monkeypatch, draft_module, [cursor])
+
+        draft_module.draft_store.delete("draft-1", "acc-1")
+        executed_sqls = [call[0] for call in cursor.executed]
+        assert any("DELETE FROM drafts" in sql for sql in executed_sqls)
+
+    def test_delete_not_found_raises_query_error(self, monkeypatch):
+        cursor = FakeCursor(fetchone_results=[None])
+        patch_connection(monkeypatch, draft_module, [cursor])
+
+        with pytest.raises(QueryError, match="Draft row to delete not found"):
+            draft_module.draft_store.delete("missing", "acc-1")
+
+    def test_delete_raises_query_error_on_psycopg2(self, monkeypatch):
+        cursor = FakeCursor(execute_side_effect=psycopg2.OperationalError("fail"))
+        patch_connection(monkeypatch, draft_module, [cursor])
+
+        with pytest.raises(QueryError, match="Failed to delete draft"):
+            draft_module.draft_store.delete("draft-1", "acc-1")
+
+    def test_delete_raises_query_error_on_generic(self, monkeypatch):
+        cursor = FakeCursor(execute_side_effect=RuntimeError("boom"))
+        patch_connection(monkeypatch, draft_module, [cursor])
+
+        with pytest.raises(QueryError, match="RuntimeError"):
+            draft_module.draft_store.delete("draft-1", "acc-1")
+
+    def test_delete_propagates_database_error(self, monkeypatch):
+        patch_connection_error(monkeypatch, draft_module, ConnectionPoolError("pool down"))
+
+        with pytest.raises(ConnectionPoolError, match="pool down"):
+            draft_module.draft_store.delete("draft-1", "acc-1")

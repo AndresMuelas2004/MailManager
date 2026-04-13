@@ -127,13 +127,7 @@ Inserts a new draft row using `INSERT_DRAFT` (defined in `queries/drafts.py`). T
 
 **Return contract**: always a populated dict. The method does NOT return an empty dict when `RETURNING` yields no row — that is a programming error and will surface as `TypeError` from `_row_to_dict(None)`, which the service layer's outer `except Exception` converts to `DraftCreationError`.
 
-**Error handling guard order**: the method follows the capture technique from `database/CLAUDE.md` §7. The `try` block contains `connection.get_connection()` which can raise a `DatabaseError` subclass (`ConnectionPoolError`), so the method **must** have `except DatabaseError: raise` before the `except psycopg2.Error` / `except Exception` catches — otherwise a pool exhaustion would be silently re-wrapped as `QueryError`. The current implementation has this guard in all six `DraftStore` methods.
-
-### `DraftStore.get(provider_draft_id, account_id) → dict | None`
-
-Single-row lookup by composite key `(provider_draft_id, account_id)`. Returns the row dict (via `_row_to_dict`) when found, or `None` when no matching row exists. Handles `psycopg2.errors.InvalidTextRepresentation` gracefully (returns `None` for malformed UUIDs) so the service layer can surface a clean 404 instead of a 500 on bad inputs.
-
-Used by `drafts_service.update_draft` as a **pre-check before the provider call** — a draft that does not exist in the local DB surfaces as `DraftNotFound` (404) without wasting a Gmail/Outlook round trip. The method raises `QueryError` only on truly unexpected SQL/runtime failures.
+**Error handling guard order**: the method follows the capture technique from `database/CLAUDE.md` §7. The `try` block contains `connection.get_connection()` which can raise a `DatabaseError` subclass (`ConnectionPoolError`), so the method **must** have `except DatabaseError: raise` before the `except psycopg2.Error` / `except Exception` catches — otherwise a pool exhaustion would be silently re-wrapped as `QueryError`. The current implementation has this guard in all seven `DraftStore` methods.
 
 ### `DraftStore.update(draft) → dict`
 
@@ -168,9 +162,11 @@ The service layer (`drafts_service.sync_drafts`) calls this method per account a
 
 Returns a single draft row matching the composite PK `(provider_draft_id, account_id)`, or `None` if not found. Uses the `GET_DRAFT` query. Handles `InvalidTextRepresentation` gracefully (returns `None` for malformed UUIDs). Row is mapped through `_row_to_dict`. Raises `QueryError` on other SQL failures or unexpected exceptions.
 
+Used by `drafts_service.update_draft` and `drafts_service.delete_draft` as a **pre-check before the provider call** — a draft that does not exist in the local DB surfaces as `DraftNotFound` (404) without wasting a provider round trip.
+
 ### `DraftStore.delete(provider_draft_id, account_id) → None`
 
-Deletes a single draft row matching the composite PK `(provider_draft_id, account_id)`. Uses the `DELETE_DRAFT` query. Raises `QueryError` on SQL failures or unexpected exceptions.
+Deletes a single draft row matching the composite PK `(provider_draft_id, account_id)`. Uses the `DELETE_DRAFT` query (with `RETURNING provider_draft_id`). Raises `QueryError("Draft row to delete not found.")` when no row matches the composite PK — this mirrors the pattern in `DraftStore.update`. Unlike `get` and `list_*`, this method does **not** have an `InvalidTextRepresentation` guard — a malformed UUID raises `QueryError` (wrapped from the psycopg2 error) rather than returning gracefully. Raises `QueryError` on other SQL failures or unexpected exceptions.
 
 The contract now exposes `create`, `get`, `update`, `delete`, `list_by_account`, `list_by_mailbox`, and `replace_all_for_account` — send methods will be added incrementally as the corresponding drafts endpoints are implemented.
 

@@ -1,8 +1,10 @@
 """
 Integration tests for the drafts endpoints:
-    - POST /mailboxes/{mid}/accounts/{aid}/drafts (create_draft)
-    - GET  /mailboxes/{mid}/drafts                (list_drafts)
-    - POST /mailboxes/{mid}/drafts/sync           (sync_drafts)
+    - POST   /mailboxes/{mid}/accounts/{aid}/drafts                    (create_draft)
+    - PATCH  /mailboxes/{mid}/accounts/{aid}/drafts/{draft_id}         (update_draft)
+    - DELETE /mailboxes/{mid}/accounts/{aid}/drafts/{draft_id}         (delete_draft)
+    - GET    /mailboxes/{mid}/drafts                                   (list_drafts)
+    - POST   /mailboxes/{mid}/drafts/sync                              (sync_drafts)
 
 Exercises the real FastAPI app + real PostgreSQL (transaction-rolled-back)
 with FakeEmailClient replacing provider calls.
@@ -1099,3 +1101,25 @@ def test_delete_draft_provider_error_preserves_db_row(
             ("keep-me", aid),
         )
         assert cur.fetchone()[0] == 1, "Draft row must survive when provider fails"
+
+
+def test_delete_draft_db_delete_error_returns_503(
+    test_client, setup_mailbox_and_account, isolated_db, monkeypatch,
+):
+    """A DbQueryError from draft_store.delete surfaces as 503."""
+    from database.errors import QueryError as DbQueryError
+
+    mid, aid = setup_mailbox_and_account(test_client)
+    _insert_draft(
+        isolated_db, account_id=aid, provider_draft_id="draft-delete-db",
+        subject="to delete",
+    )
+
+    def _raise_db(*_a, **_kw):
+        raise DbQueryError("delete failed")
+
+    monkeypatch.setattr(drafts_service.draft_store, "delete", _raise_db)
+
+    resp = test_client.delete(_delete_draft_url(mid, aid, "draft-delete-db"))
+    assert resp.status_code == 503
+    assert resp.json()["error"]["code"] == "database_query_error"

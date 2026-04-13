@@ -1019,7 +1019,6 @@ class GmailClient(EmailClient):
                 f"Gmail unexpected delete_draft error ({type(exc).__name__}): {exc}"
             ) from exc
 
-
     def fetch_drafts(self) -> list[DraftMetadata]:
         """Fetch the most recent Gmail drafts (capped at _DRAFTS_MAX_TOTAL).
 
