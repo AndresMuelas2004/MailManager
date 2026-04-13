@@ -79,6 +79,10 @@ Adding a new email provider or identity provider impacts multiple layers (Core, 
 For any operation that modifies email state both at the provider and in our database, always call the provider API first. Only update the DB for messages where the provider call succeeded. Never persist a state change locally if the provider rejected or failed the operation. This ensures our DB always reflects the real state of the user's mailbox at the provider.
 **Current exceptions:** Both providers (Gmail and Outlook) use a uniform no-op approach for `delete_messages` -- the provider API is not called and deletion is performed only in the local database. See `core_guide.md` (Trash Management Operations > `delete_messages`) for the detailed rationale.
 
+## Environment
+
+PostgreSQL is installed natively on this machine, not via Docker. Do not attempt to use Docker for database operations.
+
 ## Document Maintenance
 
 Update this file when: architecture layers change, new providers are introduced, commands change, or key identifiers are added. Do not modify any `CLAUDE.md` file.
