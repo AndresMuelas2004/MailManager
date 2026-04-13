@@ -94,28 +94,6 @@ class PgDraftStore(DraftStore):
                 f"Unexpected draft update error ({type(exc).__name__}): {exc}"
             ) from exc
 
-    def delete(self, provider_draft_id: str, account_id: str) -> None:
-        try:
-            with connection.get_connection() as conn:
-                with conn.cursor() as cur:
-                    cur.execute(
-                        queries.DELETE_DRAFT,
-                        {
-                            "provider_draft_id": provider_draft_id,
-                            "account_id": account_id,
-                        },
-                    )
-        except psycopg2.errors.InvalidTextRepresentation:
-            return
-        except DatabaseError:
-            raise
-        except psycopg2.Error as exc:
-            raise QueryError("Failed to delete draft.") from exc
-        except Exception as exc:
-            raise QueryError(
-                f"Unexpected draft delete error ({type(exc).__name__}): {exc}"
-            ) from exc
-
     def list_by_account(self, account_id: str) -> list[dict[str, Any]]:
         try:
             with connection.get_connection() as conn:
