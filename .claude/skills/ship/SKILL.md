@@ -156,7 +156,30 @@ The `/creacion-worktree` skill adds a navigation function to the PowerShell prof
 - **If NOT found**: skip silently — the function may not exist if the worktree was created before this convention.
 
 **Output to chat:**
-> Cleanup done: local branch, remote branch, worktree directory, and PowerShell shortcut removed.
+> Cleanup done: local branch, worktree directory, and PowerShell shortcut removed.
+
+### 2.5 Verify remote branch deletion
+
+The `--delete-branch` flag in step 2.1 is supposed to delete the remote branch, but it can fail silently (e.g., the error about the local branch masks the remote deletion status). This step guarantees the remote branch is gone.
+
+```bash
+git ls-remote --heads origin <branch-name>
+```
+
+- **If the output is empty**: the remote branch was already deleted by `--delete-branch`. Done.
+- **If the output shows the branch**: it was NOT deleted. Force-delete it explicitly:
+  ```bash
+  git push origin --delete <branch-name>
+  ```
+  Then verify again:
+  ```bash
+  git ls-remote --heads origin <branch-name>
+  ```
+  - **If empty now**: deletion confirmed.
+  - **If still present**: **WARN** the user that the remote branch could not be deleted, but continue to the next phase (do not stop).
+
+**Output to chat:**
+> Remote branch `<branch-name>`: deleted (verified) | deleted (required explicit cleanup) | WARNING: could not delete
 
 ---
 
@@ -272,10 +295,10 @@ After all phases complete, output a structured final summary to chat. This is **
 - Squash merge: completed
 - Pull: `git pull origin master` — local master updated to `<short-hash>`
 - Local branch `<branch-name>`: deleted
-- Remote branch `<branch-name>`: deleted (via --delete-branch)
 - Worktree removed: `<worktree-path>` | failed (<reason>)
 - Worktree directory removed: yes | failed (<reason>)
 - PowerShell shortcut: removed | not found (skipped)
+- Remote branch `<branch-name>`: deleted (verified) | deleted (required explicit cleanup) | WARNING: could not delete
 - `git worktree prune`: done
 
 ### Phase 3 — Worktree Selection
@@ -305,7 +328,8 @@ After all phases complete, output a structured final summary to chat. This is **
 ### Conflict types reference (for Phase 4 detail tables):
 - **Type 1 (Additive)**: Both branches add code to the same file but in different sections or functions. Resolution is straightforward — keep both additions. Low risk.
 - **Type 2 (Combinatorial)**: Both branches modify the same function or method. Resolution requires understanding both intents and combining the logic into one coherent implementation. Higher risk — the summary explains exactly what was done so the user can verify.
-- **Type 3 (Unknown)**: The conflict does not fit Type 1 or Type 2 (e.g., delete/modify, rename/rename, binary). The agent aborted the rebase and provided analysis + proposed resolution without executing it. **Always requires manual intervention**.
+- **Type 3 (Semantic Duplication)**: Both branches independently added the same logical construct (function, method, constant, abstract method) to the same file. Git resolved it cleanly or as Type 1, but the result contains duplicate definitions in the same scope. Detected post-rebase by scanning full file contents. Auto-fixed when safe (exact duplicates, reconcilable signatures); flagged for manual intervention when logic diverges.
+- **Type 4 (Unknown)**: The conflict does not fit Type 1, Type 2, or Type 3 (e.g., delete/modify, rename/rename, binary). The agent aborted the rebase and provided analysis + proposed resolution without executing it. **Always requires manual intervention**.
 
 ---
 

@@ -77,11 +77,11 @@ For EACH **affected** test directory (filtered in Phase 1 step 5), launch:
 
 4. **md-reviewer for each affected guide** — `subagent_type: "md-reviewer"`
    - One agent per `*_guide.md` of each affected directory.
-   - Prompt: "Review `{guide_path}` for accuracy, completeness, and clarity by cross-referencing the source code in its directory. Check that all documented contracts, functions, and behaviors match the current implementation."
+   - Prompt: "Read the full content of `{guide_path}`. Then read ONLY the following changed files in this directory (they are the ones with diffs in this commit): {list of changed files in this directory}. Your task is to determine whether the diffs introduce new or modified functionality that is not yet reflected in the guide. Do NOT read or analyze any other file in the directory — only the changed files listed above. If the guide needs updates to accurately describe the new/modified functionality from these diffs, report exactly what should be added or changed. Ignore any pre-existing gaps unrelated to these diffs."
 
 5. **md-reviewer for test guides** (one per **affected** test directory only) — `subagent_type: "md-reviewer"`
    - Only launch for test directories that were identified as affected in Phase 1 step 5.
-   - Prompt: "Review `{test_guide_path}` for accuracy and completeness by cross-referencing the test files and source code."
+   - Prompt: "Read the full content of `{test_guide_path}`. Then read ONLY the following changed test files (they are the ones with diffs in this commit): {list of changed files in this test directory}. Your task is to determine whether the diffs introduce new or modified tests that are not yet reflected in the guide. Do NOT read or analyze any other test file — only the changed files listed above. If the guide needs updates to accurately describe the new/modified test coverage from these diffs, report exactly what should be added or changed. Ignore any pre-existing gaps unrelated to these diffs."
    - Guide paths: `backend/tests/unit/unit_guide.md`, `backend/tests/integration/integration_guide.md`, `backend/tests/e2e/e2e_guide.md`
 
 6. **md-reviewer for extra MDs** (only if `--md` in $ARGUMENTS) — `subagent_type: "md-reviewer"`
