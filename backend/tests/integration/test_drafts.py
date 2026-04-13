@@ -1,8 +1,10 @@
 """
 Integration tests for the drafts endpoints:
-    - POST /mailboxes/{mid}/accounts/{aid}/drafts (create_draft)
-    - GET  /mailboxes/{mid}/drafts                (list_drafts)
-    - POST /mailboxes/{mid}/drafts/sync           (sync_drafts)
+    - POST   /mailboxes/{mid}/accounts/{aid}/drafts                    (create_draft)
+    - PATCH  /mailboxes/{mid}/accounts/{aid}/drafts/{draft_id}         (update_draft)
+    - DELETE /mailboxes/{mid}/accounts/{aid}/drafts/{draft_id}         (delete_draft)
+    - GET    /mailboxes/{mid}/drafts                                   (list_drafts)
+    - POST   /mailboxes/{mid}/drafts/sync                              (sync_drafts)
 
 Exercises the real FastAPI app + real PostgreSQL (transaction-rolled-back)
 with FakeEmailClient replacing provider calls.
@@ -967,3 +969,157 @@ def test_update_draft_silent_auth_failure_returns_409(
     )
     assert resp.status_code == 409
     assert resp.json()["error"]["code"] == "account_not_connected"
+
+
+# DELETE /mailboxes/{mid}/accounts/{aid}/drafts/{draft_id} — delete_draft
+# ------------------------------------------------------------------
+
+
+def _delete_draft_url(mailbox_id: str, account_id: str, draft_id: str) -> str:
+    return f"{_MAILBOX_URL}/{mailbox_id}/accounts/{account_id}/drafts/{draft_id}"
+
+
+def test_delete_draft_happy_path_returns_status_deleted(
+    test_client, setup_mailbox_and_account,
+):
+    """POST a draft, DELETE it, verify 200 + {"status": "deleted"}."""
+    mid, aid = setup_mailbox_and_account(test_client)
+    create_resp = test_client.post(
+        _create_draft_url(mid, aid),
+        json={"subject": "To be deleted", "body_html": "<p>bye</p>"},
+    )
+    assert create_resp.status_code == 200, create_resp.text
+    draft_id = create_resp.json()["provider_draft_id"]
+
+    resp = test_client.delete(_delete_draft_url(mid, aid, draft_id))
+    assert resp.status_code == 200, resp.text
+    assert resp.json() == {"status": "deleted"}
+
+
+def test_delete_draft_persists_deletion_to_db(
+    test_client, setup_mailbox_and_account, isolated_db,
+):
+    """After DELETE, the draft row must be gone from the database."""
+    mid, aid = setup_mailbox_and_account(test_client)
+    create_resp = test_client.post(
+        _create_draft_url(mid, aid),
+        json={"subject": "DB delete check"},
+    )
+    assert create_resp.status_code == 200, create_resp.text
+    draft_id = create_resp.json()["provider_draft_id"]
+
+    resp = test_client.delete(_delete_draft_url(mid, aid, draft_id))
+    assert resp.status_code == 200, resp.text
+
+    with isolated_db.cursor() as cur:
+        cur.execute(
+            "SELECT COUNT(*) FROM drafts WHERE account_id = %s::uuid", (aid,),
+        )
+        assert cur.fetchone()[0] == 0
+
+
+def test_delete_draft_not_found_returns_404(
+    test_client, setup_mailbox_and_account,
+):
+    """DELETE a nonexistent draft_id returns 404 draft_not_found."""
+    mid, aid = setup_mailbox_and_account(test_client)
+    resp = test_client.delete(
+        _delete_draft_url(mid, aid, "nonexistent-draft-id"),
+    )
+    assert resp.status_code == 404
+    assert resp.json()["error"]["code"] == "draft_not_found"
+
+
+def test_delete_draft_account_not_found_returns_404(
+    test_client, setup_mailbox_and_account,
+):
+    """DELETE under a nonexistent account returns 404 account_not_found."""
+    mid, _ = setup_mailbox_and_account(test_client)
+    fake_aid = "00000000-0000-4000-a000-000000000099"
+    resp = test_client.delete(
+        _delete_draft_url(mid, fake_aid, "some-draft"),
+    )
+    assert resp.status_code == 404
+    assert resp.json()["error"]["code"] == "account_not_found"
+
+
+def test_delete_draft_nonexistent_mailbox_returns_404(test_client):
+    """DELETE from a nonexistent mailbox returns 404 mailbox_not_found."""
+    fake_mid = "00000000-0000-4000-a000-000000000099"
+    fake_aid = "00000000-0000-4000-a000-000000000098"
+    resp = test_client.delete(
+        _delete_draft_url(fake_mid, fake_aid, "some-draft"),
+    )
+    assert resp.status_code == 404
+    assert resp.json()["error"]["code"] == "mailbox_not_found"
+
+
+def test_delete_draft_on_foreign_mailbox_forbidden(test_client, isolated_db):
+    """Deleting a draft on a mailbox owned by another user returns 403."""
+    mid = _create_foreign_mailbox(isolated_db)
+    resp = test_client.delete(
+        _delete_draft_url(mid, "some-aid", "some-draft"),
+    )
+    assert resp.status_code == 403
+    assert resp.json()["error"]["code"] == "forbidden"
+
+
+def test_delete_draft_provider_error_preserves_db_row(
+    test_client, setup_mailbox_and_account, monkeypatch, isolated_db,
+):
+    """When the provider fails, the draft row must stay in the DB (Provider-First)."""
+    from core.email.errors import EmailExternalAPIError
+
+    mid, aid = setup_mailbox_and_account(test_client)
+    _insert_draft(
+        isolated_db, account_id=aid, provider_draft_id="keep-me",
+        subject="must survive",
+    )
+
+    def _build_failing(accounts):
+        manager = EmailManager()
+        for acc in accounts:
+            m = str(acc.get("mailbox_id", ""))
+            a = str(acc.get("account_id", ""))
+            label = f"{m}__{a}"
+            manager.add_client(FakeEmailClient(
+                label,
+                auth_return={"access_token": "tok", "refresh_token": "ref"},
+                delete_draft_exc=EmailExternalAPIError("provider down"),
+            ))
+        return manager
+
+    monkeypatch.setattr(drafts_service, "build_manager_for_accounts", _build_failing)
+
+    resp = test_client.delete(_delete_draft_url(mid, aid, "keep-me"))
+    assert resp.status_code == 502
+    assert resp.json()["error"]["code"] == "external_api_error"
+
+    with isolated_db.cursor() as cur:
+        cur.execute(
+            "SELECT COUNT(*) FROM drafts WHERE provider_draft_id = %s AND account_id = %s::uuid",
+            ("keep-me", aid),
+        )
+        assert cur.fetchone()[0] == 1, "Draft row must survive when provider fails"
+
+
+def test_delete_draft_db_delete_error_returns_503(
+    test_client, setup_mailbox_and_account, isolated_db, monkeypatch,
+):
+    """A DbQueryError from draft_store.delete surfaces as 503."""
+    from database.errors import QueryError as DbQueryError
+
+    mid, aid = setup_mailbox_and_account(test_client)
+    _insert_draft(
+        isolated_db, account_id=aid, provider_draft_id="draft-delete-db",
+        subject="to delete",
+    )
+
+    def _raise_db(*_a, **_kw):
+        raise DbQueryError("delete failed")
+
+    monkeypatch.setattr(drafts_service.draft_store, "delete", _raise_db)
+
+    resp = test_client.delete(_delete_draft_url(mid, aid, "draft-delete-db"))
+    assert resp.status_code == 503
+    assert resp.json()["error"]["code"] == "database_query_error"

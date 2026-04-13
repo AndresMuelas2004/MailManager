@@ -223,6 +223,7 @@ Beyond `authenticate`, `authenticate_silent`, and `fetch_email_metadata`, the `E
 - **`fetch_email_content(provider_message_id) → EmailContent`** — fetch the full body (HTML and/or plain text) for a single email. Gmail requires MIME tree traversal and base64url decoding via the private helper `_extract_body_from_payload` because the Gmail API (`format="full"`) returns the raw MIME structure with nested `parts[]` and base64url-encoded bodies. Outlook's Graph API (`$select=body`) returns the decoded HTML/text content directly — no decoding needed. Both raise `EmailNotAuthenticatedError` if not authenticated and `EmailExternalAPIError` on provider failures.
 - **`create_draft(to_recipients, cc_recipients, bcc_recipients, subject, body_html) → DraftMetadata`** — create a draft message at the provider without sending. All fields may be empty (empty drafts are accepted). Gmail builds a `MIMEMultipart("alternative")` message with a single `MIMEText(body_html, "html")` part, base64url-encodes it, and calls `users().drafts().create()`. Outlook builds the JSON payload (`subject`, `body.contentType=HTML`, recipient arrays) and calls `POST /me/messages` **with the `Prefer: IdType="ImmutableId"` extra header**. The header is critical: without it, Outlook returns a mutable ID that changes when the draft is later sent or moved, breaking any subsequent lookups by `provider_draft_id`. The Outlook implementation extends `_graph_request` with a keyword-only `extra_headers` parameter to thread the header through. Both raise `EmailNotAuthenticatedError` if not authenticated and `EmailExternalAPIError` on provider failures.
 - **`update_draft(provider_draft_id, to_recipients, cc_recipients, bcc_recipients, subject, body_html) → DraftMetadata`** — replace an existing draft's content at the provider (full-field replacement; every field is sent and overwrites the previous value). Gmail reuses `_build_draft_raw_message` (the same helper used by `create_draft`) to produce the base64url-encoded MIME payload and calls `users().drafts().update(userId="me", id=provider_draft_id, body={"message": {"raw": ...}})`. Gmail preserves `draft.id` on update — the client returns the same `provider_draft_id` it received. Outlook reuses `_build_draft_graph_payload` and calls `PATCH /me/messages/{id}` **with the `Prefer: IdType="ImmutableId"` header repeated on every call** — the stored `provider_draft_id` is an Immutable ID, so Graph must be told again on each subsequent call to interpret the path parameter correctly. Both raise `EmailNotAuthenticatedError` if not authenticated and `EmailExternalAPIError` on provider failures. Timestamps in the returned `DraftMetadata` are best-effort (Gmail does not return them on update; Outlook does, but the service layer ignores them — the DB is the source of truth for `created_at`/`updated_at`).
+- **`delete_draft(provider_draft_id) → None`** — delete a draft at the provider. Gmail calls `users().drafts().delete(userId="me", id=provider_draft_id)`. Outlook calls `DELETE /me/messages/{provider_draft_id}` with `Prefer: IdType="ImmutableId"`. Both raise `EmailNotAuthenticatedError` if not authenticated and `EmailExternalAPIError` on provider failures.
 - **`get_account_label() → str`** — return the label identifying this account within the app.
 
 ### Data Structures — Email Content
@@ -265,6 +266,10 @@ Both Gmail and Outlook expose `fetch_drafts()` with identical semantics at the s
 
 `_parse_gmail_draft` extracts subject/to/cc/bcc from the Gmail `Message.payload.headers` and the HTML body via `_extract_html_body`. `_parse_outlook_draft` reads `subject`, `body.content`, `toRecipients[].emailAddress.address`, `ccRecipients`, `bccRecipients`, `createdDateTime`, `lastModifiedDateTime` from the Graph Message JSON.
 
+### Manager-level — `EmailManager.delete_draft(account_label, provider_draft_id) → None`
+
+Delegates to the registered client's `delete_draft(provider_draft_id)`. Raises `EmailAccountNotFoundError` if `account_label` is not registered.
+
 ### Manager-level — `EmailManager.fetch_all_drafts() → dict[str, list[DraftMetadata]]`
 
 Iterates every registered client, calls `client.fetch_drafts()`, and returns `{account_label: list[DraftMetadata]}`. Per-account failures are **captured in `self._last_errors`** (never re-raised directly) — same error-aggregation pattern as `fetch_all_email_metadata`. It is the **caller's responsibility** to inspect `get_last_errors()` after calling `fetch_all_drafts()` and decide how to surface them (translate, log, ignore). The core layer only guarantees capture; translation into API-layer errors is not part of this contract.
@@ -273,6 +278,12 @@ Iterates every registered client, calls `client.fetch_drafts()`, and returns `{a
 
 When Outlook moves a message between folders (via `POST /me/messages/{id}/move`), the message receives a **new ID**. The response body contains the moved message object with the updated `id` field. Any code that moves messages between folders must capture this new ID and propagate it to upper layers for database persistence. This applies to spam operations and any future folder-move operations.
 
+## Provider-Specific Behavior — Outlook Message ID URL Encoding
+
+Outlook Immutable IDs are base64-encoded strings that can contain `+`, `/`, and `=` characters, which are not safe in URL path segments. Every call to `_graph_request` that embeds a message or draft ID in the URL path **must** percent-encode that ID with `urllib.parse.quote(id, safe='')` before interpolation. Without encoding, Graph API returns 400 or 404 for any ID containing those characters.
+
+**Extension rule:** Any new Outlook operation embedding an ID in a URL path must apply `urllib.parse.quote(id, safe='')`.
+
 ## Extension
 
 ### New provider checklist
@@ -280,7 +291,7 @@ When Outlook moves a message between folders (via `POST /me/messages/{id}/move`)
 Core layer:
 
 - [ ] Implement `EmailClient` in `backend/core/email/<provider>_client.py`.
-- [ ] Implement all abstract methods: `authenticate`, `authenticate_silent`, `fetch_email_metadata`, `send_email`, `verify_message_existence`, `delete_messages`, `restore_from_trash`, `fetch_messages_metadata`, `move_to_trash`, `update_read_status`, `move_to_spam`, `restore_from_spam`, `fetch_email_content`, `create_draft`, `update_draft`, `fetch_drafts`, `get_account_label`.
+- [ ] Implement all abstract methods: `authenticate`, `authenticate_silent`, `fetch_email_metadata`, `send_email`, `verify_message_existence`, `delete_messages`, `restore_from_trash`, `fetch_messages_metadata`, `move_to_trash`, `update_read_status`, `move_to_spam`, `restore_from_spam`, `fetch_email_content`, `create_draft`, `update_draft`, `delete_draft`, `fetch_drafts`, `get_account_label`.
 - [ ] `fetch_drafts` MUST enforce `_DRAFTS_MAX_TOTAL` (100) — return the most recent drafts according to the provider's timestamp.
 - [ ] Reuse helper functions from `helpers.py`.
 - [ ] Add provider branch in `EmailManager._build_client`.

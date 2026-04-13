@@ -166,7 +166,7 @@ class DraftStore(ABC):
         """
         Return the draft row keyed by (provider_draft_id, account_id),
         or None when no matching row exists. Used as a pre-check before
-        calling the provider on draft-update operations.
+        calling the provider on draft-update or draft-delete operations.
         """
         raise NotImplementedError
 
@@ -207,6 +207,14 @@ class DraftStore(ABC):
         existing rows not present in it. Returns the count of drafts that
         exist for this account after the operation — equals ``len(drafts)``
         on success.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def delete(self, provider_draft_id: str, account_id: str) -> None:
+        """
+        Delete a single draft row by composite PK.
+        Raises QueryError if the row does not exist.
         """
         raise NotImplementedError
 

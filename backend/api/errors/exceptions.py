@@ -167,6 +167,10 @@ class DraftNotFound(ApiError):
     code = "draft_not_found"
 
 
+class DraftDeleteError(ApiError):
+    code = "draft_delete_error"
+
+
 class MailboxOperationError(ApiError):
     code = "mailbox_operation_error"
 

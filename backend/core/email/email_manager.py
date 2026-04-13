@@ -275,6 +275,20 @@ class EmailManager:
                 f"Unexpected update_draft error ({type(exc).__name__}): {exc}"
             ) from exc
 
+    def delete_draft(self, account_label: str, provider_draft_id: str) -> None:
+        """
+        Delete a draft using the client that matches the requested account label.
+        """
+        client = self._get_client_or_raise(account_label)
+        try:
+            client.delete_draft(provider_draft_id)
+        except CoreError:
+            raise
+        except Exception as exc:
+            raise EmailExternalAPIError(
+                f"Unexpected delete_draft error ({type(exc).__name__}): {exc}"
+            ) from exc
+
     def fetch_all_drafts(self) -> dict[str, list[DraftMetadata]]:
         """
         Fetch drafts from every registered client. Returns

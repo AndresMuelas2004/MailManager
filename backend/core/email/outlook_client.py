@@ -650,10 +650,10 @@ class OutlookClient(EmailClient):
 
             draft_id = draft_response.get("id", "")
             try:
-                self._graph_request("POST", f"{GRAPH_BASE_URL}/me/messages/{draft_id}/send")
+                self._graph_request("POST", f"{GRAPH_BASE_URL}/me/messages/{urllib.parse.quote(draft_id, safe='')}/send")
             except EmailExternalAPIError:
                 try:
-                    self._graph_request("DELETE", f"{GRAPH_BASE_URL}/me/messages/{draft_id}")
+                    self._graph_request("DELETE", f"{GRAPH_BASE_URL}/me/messages/{urllib.parse.quote(draft_id, safe='')}")
                 except Exception as exc:
                     logger.warning(
                         "Outlook failed to delete orphan draft %s after send failure: %s",
@@ -792,7 +792,7 @@ class OutlookClient(EmailClient):
         try:
             response = self._graph_request(
                 "PATCH",
-                f"{GRAPH_BASE_URL}/me/messages/{provider_draft_id}",
+                f"{GRAPH_BASE_URL}/me/messages/{urllib.parse.quote(provider_draft_id, safe='')}",
                 body=payload,
                 extra_headers={"Prefer": 'IdType="ImmutableId"'},
             )
@@ -817,6 +817,30 @@ class OutlookClient(EmailClient):
             created_at=created_at,
             updated_at=updated_at,
         )
+
+    def delete_draft(self, provider_draft_id: str) -> None:
+        """Delete a draft in Outlook via DELETE /me/messages/{id}.
+
+        Uses Prefer: IdType="ImmutableId" because the provider_draft_id
+        stored locally was obtained with that header during create_draft.
+        Without it, Graph would interpret the ID as a mutable folder-scoped
+        ID and the request would fail.
+        """
+        if self._access_token is None:
+            raise EmailNotAuthenticatedError("Outlook delete_draft requires authentication.")
+
+        try:
+            self._graph_request(
+                "DELETE",
+                f"{GRAPH_BASE_URL}/me/messages/{urllib.parse.quote(provider_draft_id, safe='')}",
+                extra_headers={"Prefer": 'IdType="ImmutableId"'},
+            )
+        except EmailExternalAPIError:
+            raise
+        except Exception as exc:
+            raise EmailExternalAPIError(
+                f"Outlook unexpected delete_draft error ({type(exc).__name__}): {exc}"
+            ) from exc
 
     def fetch_drafts(self) -> list[DraftMetadata]:
         """Fetch the most recent Outlook drafts (capped at _DRAFTS_MAX_TOTAL).
@@ -957,7 +981,7 @@ class OutlookClient(EmailClient):
             try:
                 response = self._graph_request(
                     "POST",
-                    f"{GRAPH_BASE_URL}/me/messages/{msg_id}/move",
+                    f"{GRAPH_BASE_URL}/me/messages/{urllib.parse.quote(msg_id, safe='')}/move",
                     body={"destinationId": folder},
                 )
                 results[msg_id] = response.get("id", msg_id)
@@ -974,7 +998,7 @@ class OutlookClient(EmailClient):
         for msg_id in message_ids:
             try:
                 response = self._graph_request(
-                    "POST", f"{GRAPH_BASE_URL}/me/messages/{msg_id}/move",
+                    "POST", f"{GRAPH_BASE_URL}/me/messages/{urllib.parse.quote(msg_id, safe='')}/move",
                     body={"destinationId": "deleteditems"},
                 )
                 results[msg_id] = response.get("id", msg_id)
@@ -990,7 +1014,7 @@ class OutlookClient(EmailClient):
         folder_id_to_box = self._resolve_special_folder_ids()
         results: list[EmailMetadata] = []
         for msg_id in message_ids:
-            url = f"{GRAPH_BASE_URL}/me/messages/{msg_id}?$select={_BOOTSTRAP_SELECT_FIELDS}"
+            url = f"{GRAPH_BASE_URL}/me/messages/{urllib.parse.quote(msg_id, safe='')}?$select={_BOOTSTRAP_SELECT_FIELDS}"
             try:
                 msg = self._graph_request("GET", url)
                 parent_folder_id = msg.get("parentFolderId", "")
@@ -1009,7 +1033,7 @@ class OutlookClient(EmailClient):
         updated: list[str] = []
         for msg_id in message_ids:
             try:
-                self._graph_request("PATCH", f"{GRAPH_BASE_URL}/me/messages/{msg_id}", body={"isRead": is_read})
+                self._graph_request("PATCH", f"{GRAPH_BASE_URL}/me/messages/{urllib.parse.quote(msg_id, safe='')}", body={"isRead": is_read})
                 updated.append(msg_id)
             except EmailExternalAPIError:
                 pass  # 404 or other → skip silently (message may not exist)
@@ -1043,7 +1067,7 @@ class OutlookClient(EmailClient):
             try:
                 response = self._graph_request(
                     "POST",
-                    f"{GRAPH_BASE_URL}/me/messages/{msg_id}/move",
+                    f"{GRAPH_BASE_URL}/me/messages/{urllib.parse.quote(msg_id, safe='')}/move",
                     body={"destinationId": destination_id},
                 )
                 new_id = response.get("id", msg_id)
@@ -1059,7 +1083,7 @@ class OutlookClient(EmailClient):
             return []
         existing: list[str] = []
         for msg_id in message_ids:
-            url = f"{GRAPH_BASE_URL}/me/messages/{msg_id}?$select=id"
+            url = f"{GRAPH_BASE_URL}/me/messages/{urllib.parse.quote(msg_id, safe='')}?$select=id"
             try:
                 self._graph_request("GET", url)
                 existing.append(msg_id)
@@ -1074,7 +1098,7 @@ class OutlookClient(EmailClient):
         try:
             response = self._graph_request(
                 "GET",
-                f"{GRAPH_BASE_URL}/me/messages/{provider_message_id}?$select=body",
+                f"{GRAPH_BASE_URL}/me/messages/{urllib.parse.quote(provider_message_id, safe='')}?$select=body",
             )
             body = response.get("body", {})
             content_type = body.get("contentType", "").lower()

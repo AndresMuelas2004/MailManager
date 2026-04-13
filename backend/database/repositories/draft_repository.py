@@ -182,4 +182,24 @@ class PgDraftStore(DraftStore):
         return len(drafts)
 
 
+    def delete(self, provider_draft_id: str, account_id: str) -> None:
+        try:
+            with connection.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        queries.DELETE_DRAFT,
+                        {"provider_draft_id": provider_draft_id, "account_id": account_id},
+                    )
+                    if cur.fetchone() is None:
+                        raise QueryError("Draft row to delete not found.")
+        except DatabaseError:
+            raise
+        except psycopg2.Error as exc:
+            raise QueryError("Failed to delete draft.") from exc
+        except Exception as exc:
+            raise QueryError(
+                f"Unexpected draft delete error ({type(exc).__name__}): {exc}"
+            ) from exc
+
+
 draft_store = PgDraftStore()

@@ -105,7 +105,7 @@ Trash management integration tests first sync emails via the normal sync endpoin
 
 ### Drafts integration coverage
 
-`test_drafts.py` covers all four draft endpoints (POST create + PATCH update + GET list + POST sync).
+`test_drafts.py` covers all five draft endpoints (POST create + PATCH update + DELETE delete + GET list + POST sync).
 
 **POST `/mailboxes/{mid}/accounts/{aid}/drafts`** — 5 tests:
 
@@ -114,6 +114,17 @@ Trash management integration tests first sync emails via the normal sync endpoin
 - Empty body (`{}`) is accepted — `subject`, `body_html`, and recipient arrays default to empty.
 - Nonexistent account returns 404 `account_not_found`.
 - Nonexistent mailbox returns 404 `mailbox_not_found` (ownership check runs first).
+
+**DELETE `/mailboxes/{mid}/accounts/{aid}/drafts/{draft_id}`** — 8 tests:
+
+- Happy path returns `{"status": "deleted"}`.
+- Persisted deletion verified via `isolated_db.cursor()` — the draft row no longer exists in the `drafts` table.
+- Draft not found in local DB returns 404 `draft_not_found`.
+- Nonexistent account returns 404 `account_not_found`.
+- Nonexistent mailbox returns 404 `mailbox_not_found` (ownership check runs first).
+- Foreign mailbox returns 403 `forbidden`.
+- Provider error preserves the local DB row — when the provider call fails, the draft is not deleted locally.
+- `draft_store.delete` raising `QueryError` → 503 `database_query_error`.
 
 **GET `/mailboxes/{mid}/drafts`** — 7 tests (helper: `_list_drafts_url(mailbox_id, account_id=None)`):
 
@@ -160,13 +171,14 @@ The `_patch_drafts_builder` helper overrides `drafts_service.build_manager_for_a
 Core-error translation tests for drafts live in `test_core_error_translation.py`:
 
 - **Create draft** (3 parametrized cases): `create_draft_exc: EmailExternalAPIError → 502`, `auth_silent_exc: EmailAuthError → 409`, `create_draft_exc: RuntimeError → 502`.
+- **Delete draft** (3 parametrized cases): `delete_draft_exc: EmailExternalAPIError → 502 external_api_error`, `auth_silent_exc: EmailAuthError → 409 account_not_connected`, `delete_draft_exc: RuntimeError → 502 external_api_error` (RuntimeError is wrapped by the manager into `EmailExternalAPIError`). Each test seeds a draft row via `_insert_draft_for_delete` so the service pre-check passes.
 - **Sync drafts** (3 parametrized cases): `fetch_drafts_exc: EmailExternalAPIError → 502 external_api_error`, `auth_silent_exc: EmailAuthError → 409 account_not_connected`, `fetch_drafts_exc: RuntimeError → 502 draft_sync_error`. Note: `RuntimeError` from sync is captured in `_last_errors` by `EmailManager.fetch_all_drafts` (not wrapped like `send_email` does) and surfaces as `draft_sync_error` (the fallback passed to `raise_on_silent_auth_errors`), not `external_api_error`.
 
 The GET `list_drafts` endpoint is DB-only and has no provider call path to translate.
 
 **Trap reminder**: when the drafts feature was first added, `conftest.py` needed two updates that any future draft-related endpoint must also respect:
 1. The new `draft_repository` module must be added to the `isolated_db` fixture so it shares the per-test transaction connection (otherwise the `INSERT_DRAFT`, `LIST_DRAFTS_BY_ACCOUNT`, and `LIST_DRAFTS_BY_MAILBOX` queries bypass the rollback and leak data between tests).
-2. The new `drafts_service` module must be added to `_apply_test_monkeypatches` for `build_manager_for_accounts`, `load_wrapped_app_credentials`, `load_wrapped_account_tokens`, and `account_store.upsert_tokens` (otherwise the service hits the real provider APIs — **only relevant for POST and PATCH**; the GET does not use any of these helpers).
+2. The new `drafts_service` module must be added to `_apply_test_monkeypatches` for `build_manager_for_accounts`, `load_wrapped_app_credentials`, `load_wrapped_account_tokens`, and `account_store.upsert_tokens` (otherwise the service hits the real provider APIs — **only relevant for POST, PATCH, and DELETE**; the GET does not use any of these helpers).
 
 ### Email listing integration coverage
 

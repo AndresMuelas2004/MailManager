@@ -793,3 +793,74 @@ def test_sync_drafts_runtime_error_returns_502(
     # The RuntimeError is wrapped in the fallback DraftSyncError by
     # raise_on_silent_auth_errors because it is not a known CoreError subtype.
     assert resp.json()["error"]["code"] == "draft_sync_error"
+
+
+# ==================================================================
+# delete_draft - CoreError during provider delete (translate_core_error)
+# ==================================================================
+
+def _insert_draft_for_delete(isolated_db, *, account_id: str, draft_id: str = "del-draft") -> None:
+    """Seed a draft row so the delete pre-check passes."""
+    with isolated_db.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO drafts (provider_draft_id, account_id, to_recipients,
+                                cc_recipients, bcc_recipients, subject, body_html)
+            VALUES (%s, %s::uuid, %s, %s, %s, %s, %s)
+            """,
+            (draft_id, account_id, ["a@b.com"], [], [], "S", "<p>B</p>"),
+        )
+
+
+@pytest.mark.parametrize(
+    "failing_test_client",
+    [{"delete_draft_exc": EmailExternalAPIError("Provider fail")}],
+    indirect=True,
+)
+def test_delete_draft_external_api_error_returns_502(
+    failing_test_client, setup_mailbox_and_account, isolated_db,
+):
+    """EmailExternalAPIError during delete_draft -> ExternalAPIError (502)."""
+    mid, aid = setup_mailbox_and_account(failing_test_client)
+    _insert_draft_for_delete(isolated_db, account_id=aid)
+    resp = failing_test_client.delete(
+        f"{_MAILBOX_URL}/{mid}/accounts/{aid}/drafts/del-draft",
+    )
+    assert resp.status_code == 502
+    assert resp.json()["error"]["code"] == "external_api_error"
+
+
+@pytest.mark.parametrize(
+    "failing_test_client",
+    [{"auth_silent_exc": EmailAuthError("Refresh token expired.")}],
+    indirect=True,
+)
+def test_delete_draft_silent_auth_failure_returns_409(
+    failing_test_client, setup_mailbox_and_account, isolated_db,
+):
+    """Silent auth failure before delete_draft -> AccountNotConnected (409)."""
+    mid, aid = setup_mailbox_and_account(failing_test_client)
+    _insert_draft_for_delete(isolated_db, account_id=aid)
+    resp = failing_test_client.delete(
+        f"{_MAILBOX_URL}/{mid}/accounts/{aid}/drafts/del-draft",
+    )
+    assert resp.status_code == 409
+    assert resp.json()["error"]["code"] == "account_not_connected"
+
+
+@pytest.mark.parametrize(
+    "failing_test_client",
+    [{"delete_draft_exc": RuntimeError("crash")}],
+    indirect=True,
+)
+def test_delete_draft_runtime_error_returns_502(
+    failing_test_client, setup_mailbox_and_account, isolated_db,
+):
+    """RuntimeError during delete_draft -> manager wraps -> 502 external_api_error."""
+    mid, aid = setup_mailbox_and_account(failing_test_client)
+    _insert_draft_for_delete(isolated_db, account_id=aid)
+    resp = failing_test_client.delete(
+        f"{_MAILBOX_URL}/{mid}/accounts/{aid}/drafts/del-draft",
+    )
+    assert resp.status_code == 502
+    assert resp.json()["error"]["code"] == "external_api_error"

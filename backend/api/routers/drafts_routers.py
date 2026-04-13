@@ -83,3 +83,16 @@ def sync_drafts(
     Both providers cap the fetch at 100 drafts per account (most recent).
     """
     return drafts_service.sync_drafts(mailbox_id, user_id, account_id)
+
+
+@router.delete("/accounts/{account_id}/drafts/{draft_id}")
+def delete_draft(
+    mailbox_id: str,
+    account_id: str,
+    draft_id: str,
+    user_id: str = Depends(require_session),
+) -> dict[str, str]:
+    """
+    Delete a draft at the provider and then from the local database.
+    """
+    return drafts_service.delete_draft(mailbox_id, account_id, draft_id, user_id)
