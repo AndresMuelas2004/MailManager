@@ -7,7 +7,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, Query
 
 from api.routers.routers_helpers import require_session
-from api.schemas.draft import DraftCreate, DraftOut, DraftsSyncResultOut, DraftUpdate
+from api.schemas.draft import DraftCreate, DraftOut, DraftSendOut, DraftsSyncResultOut, DraftUpdate
 from api.services import drafts_service
 
 
@@ -48,6 +48,24 @@ def update_draft(
     """
     return drafts_service.update_draft(
         mailbox_id, account_id, provider_draft_id, payload, user_id,
+    )
+
+
+@router.post(
+    "/accounts/{account_id}/drafts/{provider_draft_id}/send",
+    response_model=DraftSendOut,
+)
+def send_draft(
+    mailbox_id: str,
+    account_id: str,
+    provider_draft_id: str,
+    user_id: str = Depends(require_session),
+) -> DraftSendOut:
+    """
+    Send an existing draft at the provider and remove it from local storage.
+    """
+    return drafts_service.send_draft(
+        mailbox_id, account_id, provider_draft_id, user_id,
     )
 
 

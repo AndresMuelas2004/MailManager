@@ -162,13 +162,13 @@ The service layer (`drafts_service.sync_drafts`) calls this method per account a
 
 Returns a single draft row matching the composite PK `(provider_draft_id, account_id)`, or `None` if not found. Uses the `GET_DRAFT` query. Handles `InvalidTextRepresentation` gracefully (returns `None` for malformed UUIDs). Row is mapped through `_row_to_dict`. Raises `QueryError` on other SQL failures or unexpected exceptions.
 
-Used by `drafts_service.update_draft` and `drafts_service.delete_draft` as a **pre-check before the provider call** — a draft that does not exist in the local DB surfaces as `DraftNotFound` (404) without wasting a provider round trip.
+Used by `drafts_service.update_draft`, `drafts_service.delete_draft`, and `drafts_service.send_draft` as a **pre-check before the provider call** — a draft that does not exist in the local DB surfaces as `DraftNotFound` (404) without wasting a provider round trip.
 
 ### `DraftStore.delete(provider_draft_id, account_id) → None`
 
 Deletes a single draft row matching the composite PK `(provider_draft_id, account_id)`. Uses the `DELETE_DRAFT` query (with `RETURNING provider_draft_id`). Raises `QueryError("Draft row to delete not found.")` when no row matches the composite PK — this mirrors the pattern in `DraftStore.update`. Unlike `get` and `list_*`, this method does **not** have an `InvalidTextRepresentation` guard — a malformed UUID raises `QueryError` (wrapped from the psycopg2 error) rather than returning gracefully. Raises `QueryError` on other SQL failures or unexpected exceptions.
 
-The contract now exposes `create`, `get`, `update`, `delete`, `list_by_account`, `list_by_mailbox`, and `replace_all_for_account` — send methods will be added incrementally as the corresponding drafts endpoints are implemented.
+The contract now exposes `create`, `get`, `update`, `delete`, `list_by_account`, `list_by_mailbox`, and `replace_all_for_account`.
 
 ## Project-Specific Error Hierarchy
 

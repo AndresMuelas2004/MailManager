@@ -16,12 +16,14 @@ from api.errors.exceptions import (
     DraftDeleteError,
     DraftListError,
     DraftNotFound,
+    DraftSendError,
     DraftSyncError,
     DraftUpdateError,
 )
 from api.schemas.draft import (
     DraftCreate,
     DraftOut,
+    DraftSendOut,
     DraftsAccountSyncDetail,
     DraftsSyncResultOut,
     DraftUpdate,
@@ -31,6 +33,7 @@ from api.services.services_helpers import (
     ensure_mailbox_access,
     load_wrapped_account_tokens,
     load_wrapped_app_credentials,
+    persist_email_metadata_batch,
     raise_on_silent_auth_errors,
     translate_core_error,
     translate_database_error,
@@ -485,7 +488,7 @@ def list_drafts(
                 account_id, type(exc).__name__, exc,
             )
             raise DraftListError(
-                "Failed to list drafts for account."
+                "Unexpected failure while listing drafts by account."
             ) from exc
     else:
         try:
@@ -498,30 +501,23 @@ def list_drafts(
                 mailbox_id, type(exc).__name__, exc,
             )
             raise DraftListError(
-                "Failed to list drafts for mailbox."
+                "Unexpected failure while listing drafts across mailbox."
             ) from exc
 
-    try:
-        return [
-            DraftOut(
-                provider_draft_id=row["provider_draft_id"],
-                account_id=str(row["account_id"]),
-                to_recipients=row.get("to_recipients") or [],
-                cc_recipients=row.get("cc_recipients") or [],
-                bcc_recipients=row.get("bcc_recipients") or [],
-                subject=row.get("subject") or "",
-                body_html=row.get("body_html") or "",
-                created_at=row["created_at"],
-                updated_at=row["updated_at"],
-            )
-            for row in rows
-        ]
-    except Exception as exc:
-        logger.warning(
-            "Unexpected error building draft list response (%s): %s",
-            type(exc).__name__, exc,
+    return [
+        DraftOut(
+            provider_draft_id=row["provider_draft_id"],
+            account_id=str(row["account_id"]),
+            to_recipients=row.get("to_recipients") or [],
+            cc_recipients=row.get("cc_recipients") or [],
+            bcc_recipients=row.get("bcc_recipients") or [],
+            subject=row.get("subject") or "",
+            body_html=row.get("body_html") or "",
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
         )
-        raise DraftListError("Failed to construct draft listing response.") from exc
+        for row in rows
+    ]
 
 
 def _build_draft_auth_context(
@@ -699,3 +695,137 @@ def sync_drafts(
             type(exc).__name__, exc,
         )
         raise DraftSyncError("Unexpected failure during draft sync.") from exc
+
+
+def send_draft(
+    mailbox_id: str,
+    account_id: str,
+    provider_draft_id: str,
+    user_id: str,
+) -> DraftSendOut:
+    """
+    Send an existing draft via the provider and clean up the local row.
+    Provider-First: the provider send runs before any DB changes.
+    """
+    ensure_mailbox_access(mailbox_id, user_id)
+
+    # 1. Account lookup
+    try:
+        account = account_store.get(mailbox_id, account_id)
+    except DatabaseError as exc:
+        raise translate_database_error(exc) from exc
+    except Exception as exc:
+        logger.warning(
+            "Unexpected account lookup error during draft send (%s): %s",
+            type(exc).__name__, exc,
+        )
+        raise DraftSendError(
+            "Failed to look up account while sending draft."
+        ) from exc
+    if account is None:
+        raise AccountNotFound(
+            f"Account '{account_id}' not found in mailbox '{mailbox_id}' "
+            "during draft send."
+        )
+
+    # 2. Pre-check: draft exists locally
+    try:
+        existing_draft = draft_store.get(provider_draft_id, account_id)
+    except DatabaseError as exc:
+        raise translate_database_error(exc) from exc
+    except Exception as exc:
+        logger.warning(
+            "Unexpected draft lookup error during draft send (%s): %s",
+            type(exc).__name__, exc,
+        )
+        raise DraftSendError(
+            "Failed to look up draft while sending it."
+        ) from exc
+    if existing_draft is None:
+        raise DraftNotFound(
+            f"Draft '{provider_draft_id}' not found for account "
+            f"'{account_id}' during draft send."
+        )
+
+    # 3. Build manager, silent auth, refresh tokens
+    try:
+        provider = str(account.get("provider") or "").lower()
+        account_label = f"{mailbox_id}__{account_id}"
+        manager = build_manager_for_accounts([account])
+
+        app_credentials = load_wrapped_app_credentials(provider)
+        user_tokens = load_wrapped_account_tokens(
+            mailbox_id, account_id, provider,
+        )
+        auth_payloads: dict[str, tuple[dict[str, Any], dict[str, Any]]] = {
+            account_label: (app_credentials, user_tokens),
+        }
+        label_lookup: dict[str, tuple[str, str, str]] = {
+            account_label: (mailbox_id, account_id, provider),
+        }
+
+        updated_tokens = manager.authenticate_all_silent(auth_payloads)
+        if updated_tokens:
+            _persist_refreshed_tokens(
+                updated_tokens, label_lookup, fallback=DraftSendError,
+            )
+        raise_on_silent_auth_errors(
+            manager.get_last_errors(), fallback=DraftSendError,
+        )
+
+        # 4. Provider-First: send draft (3 retries inside client)
+        try:
+            sent_metadata = manager.send_draft(
+                account_label, provider_draft_id,
+            )
+        except CoreError as exc:
+            raise translate_core_error(
+                exc,
+                fallback=DraftSendError,
+                context={
+                    "account_id": account_id,
+                    "account_label": account_label,
+                    "provider_draft_id": provider_draft_id,
+                },
+            ) from exc
+        except Exception as exc:
+            logger.warning(
+                "Unexpected error during provider draft send (%s): %s",
+                type(exc).__name__, exc,
+            )
+            raise DraftSendError(
+                "Unexpected failure while sending draft at provider."
+            ) from exc
+
+        # 5. Best-effort: delete from drafts table
+        try:
+            draft_store.delete(provider_draft_id, account_id)
+        except Exception as exc:
+            logger.warning(
+                "Draft sent but local draft row deletion failed for '%s' (%s): %s",
+                provider_draft_id, type(exc).__name__, exc,
+            )
+
+        # 6. Best-effort: persist sent metadata to email_metadata
+        sent_metadata.account_id = account_id
+        try:
+            persist_email_metadata_batch(account_id, [sent_metadata])
+        except Exception as exc:
+            logger.warning(
+                "Draft sent but metadata persistence failed for account '%s' (%s): %s",
+                account_id, type(exc).__name__, exc,
+            )
+
+        return DraftSendOut(
+            provider_message_id=sent_metadata.provider_message_id,
+            provider=provider,
+            status="sent",
+        )
+    except ApiError:
+        raise
+    except Exception as exc:
+        logger.warning(
+            "Unexpected draft send error (%s): %s",
+            type(exc).__name__, exc,
+        )
+        raise DraftSendError("Failed to send draft.") from exc

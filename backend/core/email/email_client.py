@@ -173,6 +173,22 @@ class EmailClient(ABC):
         """
 
     @abstractmethod
+    def send_draft(
+        self,
+        provider_draft_id: str,
+    ) -> EmailMetadata:
+        """
+        Send an existing draft via the provider API.
+
+        The draft is identified by its provider-assigned ID. After sending,
+        the provider marks the draft as sent (Gmail deletes it automatically;
+        Outlook transitions the message state).
+
+        Returns metadata of the sent message with ``box="SENT"``.
+        Implementations must retry transient failures up to 3 total attempts.
+        """
+
+    @abstractmethod
     def fetch_drafts(self) -> list[DraftMetadata]:
         """
         Fetch the most recent drafts from the provider as a flat list.

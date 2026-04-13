@@ -3,7 +3,7 @@ Unit tests for draft_repository (PgDraftStore).
 
 Covers the 7 public methods (create, get, update, delete, list_by_account,
 list_by_mailbox, replace_all_for_account) including the DatabaseError
-propagation guard added in Bloque 1.2.
+propagation guard.
 """
 
 from __future__ import annotations

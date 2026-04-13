@@ -46,6 +46,8 @@ _DRAFTS_PAGE_SIZE = 100
 _DRAFTS_MAX_RETRIES = 4
 _DRAFTS_RETRY_DELAY = 1.0  # seconds
 _DRAFTS_MAX_TOTAL = 100
+_SEND_DRAFT_MAX_ATTEMPTS = 3
+_SEND_DRAFT_RETRY_DELAY = 1.0  # seconds
 
 _BOOTSTRAP_SELECT_FIELDS = (
     "id,conversationId,from,subject,receivedDateTime,isRead,parentFolderId"
@@ -841,6 +843,72 @@ class OutlookClient(EmailClient):
             raise EmailExternalAPIError(
                 f"Outlook unexpected delete_draft error ({type(exc).__name__}): {exc}"
             ) from exc
+
+    def send_draft(self, provider_draft_id: str) -> EmailMetadata:
+        """
+        Send an existing Outlook draft via POST /me/messages/{id}/send.
+
+        Uses the ``Prefer: IdType="ImmutableId"`` header because the stored
+        draft ID is an Immutable ID (created with that header). Without it
+        Graph may interpret the path parameter as a mutable ID and fail.
+
+        The ``/send`` endpoint returns 202 (no body). Since the ID is
+        immutable, ``provider_draft_id`` stays the same after send.
+        Retries transient failures up to 3 total attempts.
+        """
+        if self._access_token is None:
+            raise EmailNotAuthenticatedError("Outlook send_draft requires authentication.")
+
+        url = f"{GRAPH_BASE_URL}/me/messages/{urllib.parse.quote(provider_draft_id, safe='')}/send"
+        for attempt in range(1, _SEND_DRAFT_MAX_ATTEMPTS + 1):
+            try:
+                self._graph_request(
+                    "POST", url,
+                    extra_headers={"Prefer": 'IdType="ImmutableId"'},
+                )
+                break
+            except EmailExternalAPIError:
+                if attempt == _SEND_DRAFT_MAX_ATTEMPTS:
+                    raise
+                logger.warning(
+                    "Outlook send_draft attempt %d/%d failed, retrying.",
+                    attempt, _SEND_DRAFT_MAX_ATTEMPTS,
+                )
+                time.sleep(_SEND_DRAFT_RETRY_DELAY)
+            except Exception as exc:
+                raise EmailExternalAPIError(
+                    f"Outlook unexpected send_draft error ({type(exc).__name__}): {exc}"
+                ) from exc
+
+        # With ImmutableId, provider_draft_id == provider_message_id after send.
+        try:
+            fetched = self.fetch_messages_metadata([provider_draft_id])
+            if fetched:
+                result = fetched[0]
+                if not result.from_email or not result.from_name:
+                    profile_email, profile_name = self._fetch_sender_profile()
+                    if not result.from_email:
+                        result.from_email = profile_email
+                    if not result.from_name:
+                        result.from_name = profile_name or profile_email
+                return result
+        except Exception as exc:
+            logger.warning(
+                "Outlook failed to fetch metadata for sent draft %s (%s): %s",
+                provider_draft_id, type(exc).__name__, exc,
+            )
+
+        profile_email, profile_name = self._fetch_sender_profile()
+        return EmailMetadata(
+            provider_message_id=provider_draft_id,
+            thread_id="",
+            from_email=profile_email,
+            from_name=profile_name or profile_email,
+            subject="",
+            received_at=datetime.now(timezone.utc),
+            is_read=True,
+            box="SENT",
+        )
 
     def fetch_drafts(self) -> list[DraftMetadata]:
         """Fetch the most recent Outlook drafts (capped at _DRAFTS_MAX_TOTAL).

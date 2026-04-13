@@ -66,3 +66,11 @@ class DraftsSyncResultOut(BaseModel):
 
     total_synced: int
     accounts: list[DraftsAccountSyncDetail]
+
+
+class DraftSendOut(BaseModel):
+    """Response model for sending a draft."""
+
+    provider_message_id: str
+    provider: str
+    status: str = "sent"

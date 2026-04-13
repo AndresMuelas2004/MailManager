@@ -221,6 +221,25 @@ class EmailManager:
                 f"Unexpected send_email error ({type(exc).__name__}): {exc}"
             ) from exc
 
+    def send_draft(
+        self,
+        account_label: str,
+        provider_draft_id: str,
+    ) -> EmailMetadata:
+        """
+        Send an existing draft using the client that matches the requested
+        account label. Returns metadata of the sent message.
+        """
+        client = self._get_client_or_raise(account_label)
+        try:
+            return client.send_draft(provider_draft_id)
+        except CoreError:
+            raise
+        except Exception as exc:
+            raise EmailExternalAPIError(
+                f"Unexpected send_draft error ({type(exc).__name__}): {exc}"
+            ) from exc
+
     def create_draft(
         self,
         account_label: str,
