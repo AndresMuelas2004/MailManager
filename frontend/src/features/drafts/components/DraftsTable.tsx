@@ -1,16 +1,46 @@
-import { RefreshCw } from "lucide-react";
+import { useMemo } from "react";
+import type { ReactNode } from "react";
+import { RefreshCw, Plus } from "lucide-react";
 
-import { formatShortDate, resolveAccount } from "../../../lib/formatters";
+import { buildAccountMap, formatShortDate, resolveAccount } from "../../../lib/formatters";
 import Spinner from "../../../components/common/Spinner";
+import Checkbox from "../../../components/common/Checkbox";
+import type { HeaderCheckboxState } from "../../../lib/hooks/useSelection";
 import type { DraftOut, AccountOut } from "../../../api/types/dto";
 
 type Props = {
   drafts: DraftOut[];
   accounts: AccountOut[];
   loading: boolean;
+  syncing?: boolean;
+  onSync?: () => void;
+  onNewDraft?: () => void;
+  onRowClick?: (draft: DraftOut) => void;
+  hasSelection?: boolean;
+  isSelected?: (draft: DraftOut) => boolean;
+  onToggle?: (draft: DraftOut) => void;
+  onToggleAll?: () => void;
+  headerCheckboxState?: HeaderCheckboxState;
+  bulkBar?: ReactNode;
 };
 
-export default function DraftsTable({ drafts, accounts, loading }: Props) {
+export default function DraftsTable({
+  drafts,
+  accounts,
+  loading,
+  syncing = false,
+  onSync,
+  onNewDraft,
+  onRowClick,
+  hasSelection = false,
+  isSelected,
+  onToggle,
+  onToggleAll,
+  headerCheckboxState = "unchecked",
+  bulkBar,
+}: Props) {
+  const accountsById = useMemo(() => buildAccountMap(accounts), [accounts]);
+
   if (loading) {
     return (
       <div className="flex h-64 items-center justify-center">
@@ -19,18 +49,57 @@ export default function DraftsTable({ drafts, accounts, loading }: Props) {
     );
   }
 
+  const selectionEnabled = Boolean(isSelected && onToggle && onToggleAll);
+
   return (
     <div className="flex flex-col">
-      {/* Toolbar */}
       <div className="flex h-11 items-center gap-4 border-b border-zinc-200 px-8">
-        <div className="h-[18px] w-[18px] rounded border-[1.5px] border-zinc-300" />
-        <RefreshCw className="h-[18px] w-[18px] text-zinc-500" />
-        <span className="text-[13px] font-medium text-zinc-500">
-          {drafts.length} borradores
-        </span>
+        {hasSelection && bulkBar ? (
+          bulkBar
+        ) : (
+          <>
+            {selectionEnabled ? (
+              <Checkbox
+                state={headerCheckboxState}
+                onClick={onToggleAll!}
+                ariaLabel="Seleccionar los 50 borradores más recientes"
+              />
+            ) : (
+              <div className="h-[18px] w-[18px] rounded border-[1.5px] border-zinc-300" />
+            )}
+            {onSync ? (
+              <button
+                type="button"
+                onClick={onSync}
+                disabled={syncing}
+                className="flex items-center gap-1.5 rounded px-2 py-1 text-[13px] font-medium text-zinc-600 transition-colors hover:bg-zinc-100 disabled:opacity-50"
+                aria-label="Sincronizar borradores"
+              >
+                <RefreshCw
+                  className={`h-[18px] w-[18px] ${syncing ? "animate-spin" : ""}`}
+                />
+                Sincronizar
+              </button>
+            ) : (
+              <RefreshCw className="h-[18px] w-[18px] text-zinc-500" />
+            )}
+            {onNewDraft && (
+              <button
+                type="button"
+                onClick={onNewDraft}
+                className="flex items-center gap-1.5 rounded px-2 py-1 text-[13px] font-medium text-blue-600 transition-colors hover:bg-blue-50"
+              >
+                <Plus className="h-[18px] w-[18px]" />
+                Nuevo borrador
+              </button>
+            )}
+            <span className="text-[13px] font-medium text-zinc-500">
+              {drafts.length} borradores
+            </span>
+          </>
+        )}
       </div>
 
-      {/* Column headers */}
       <div className="flex h-8 items-center gap-3 border-b border-zinc-200 px-8 text-[11px] font-semibold uppercase tracking-wider text-zinc-400">
         <div className="w-[18px]" />
         <div className="w-[120px]">Remitente</div>
@@ -40,24 +109,41 @@ export default function DraftsTable({ drafts, accounts, loading }: Props) {
         <div className="w-16 text-right">Fecha</div>
       </div>
 
-      {/* Rows */}
       {drafts.length === 0 ? (
         <div className="py-16 text-center text-sm text-zinc-400">
           No hay borradores guardados
         </div>
       ) : (
         drafts.map((draft) => {
-          const { providerName, accountEmail } = resolveAccount(draft.account_id, accounts);
-          const toDisplay = draft.to_recipients.length > 0
-            ? draft.to_recipients[0]
-            : "(Sin destinatario)";
+          const { providerName, accountEmail } = resolveAccount(
+            draft.account_id,
+            accountsById,
+          );
+          const toDisplay =
+            draft.to_recipients.length > 0
+              ? draft.to_recipients[0]
+              : "(Sin destinatario)";
+          const checked = isSelected?.(draft) ?? false;
+          const rowBg = checked ? "bg-blue-50" : "bg-white";
+          const clickable = Boolean(onRowClick);
 
           return (
             <div
               key={`${draft.provider_draft_id}-${draft.account_id}`}
-              className="flex h-11 items-center gap-3 border-b border-zinc-100 bg-white px-8"
+              onClick={clickable ? () => onRowClick!(draft) : undefined}
+              className={`flex h-11 items-center gap-3 border-b border-zinc-100 px-8 ${rowBg} ${
+                clickable ? "cursor-pointer hover:bg-zinc-50" : ""
+              }`}
             >
-              <div className="h-[18px] w-[18px] rounded border-[1.5px] border-zinc-300" />
+              {selectionEnabled ? (
+                <Checkbox
+                  state={checked ? "checked" : "unchecked"}
+                  onClick={() => onToggle!(draft)}
+                  ariaLabel="Seleccionar borrador"
+                />
+              ) : (
+                <div className="h-[18px] w-[18px] rounded border-[1.5px] border-zinc-300" />
+              )}
               <div className="w-[120px] truncate text-[13px] text-zinc-900">
                 {providerName}
               </div>
@@ -71,7 +157,7 @@ export default function DraftsTable({ drafts, accounts, loading }: Props) {
                 {draft.subject || "(Sin asunto)"}
               </div>
               <div className="w-16 text-right text-xs text-zinc-900">
-                {formatShortDate(draft.created_at)}
+                {formatShortDate(draft.updated_at)}
               </div>
             </div>
           );

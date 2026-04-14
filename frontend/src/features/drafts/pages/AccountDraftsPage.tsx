@@ -6,7 +6,9 @@ import useDraftsList from "../hooks/useDraftsList";
 import useDraftBulkDelete from "../hooks/useDraftBulkDelete";
 import DraftsTable from "../components/DraftsTable";
 import DraftBulkActionsBar from "../components/DraftBulkActionsBar";
+import AccountTabs from "../../emails/components/AccountTabs";
 import useSelection from "../../../lib/hooks/useSelection";
+import { isGenericLabel } from "../../../lib/providers";
 import type { DraftRef } from "../types";
 import type { DraftOut } from "../../../api/types/dto";
 
@@ -14,10 +16,13 @@ function draftKey(d: DraftOut): string {
   return `${d.account_id}|${d.provider_draft_id}`;
 }
 
-export default function DraftsPage() {
-  const { mailboxId } = useParams<{ mailboxId: string }>();
+export default function AccountDraftsPage() {
+  const { mailboxId, accountId } = useParams<{
+    mailboxId: string;
+    accountId: string;
+  }>();
   const { drafts, accounts, loading, syncing, error, refresh, syncAndRefresh } =
-    useDraftsList(mailboxId!);
+    useDraftsList(mailboxId!, accountId!);
 
   const selection = useSelection<DraftOut>(draftKey);
   const composer = useDraftComposerContext();
@@ -42,6 +47,19 @@ export default function DraftsPage() {
     [drafts, selection],
   );
 
+  const { title, bandejaLabel } = useMemo(() => {
+    const account = accounts.find((a) => a.account_id === accountId);
+    const hasCustomLabel = account
+      ? !isGenericLabel(account.display_label, account.provider)
+      : false;
+    const email = account?.email_address ?? account?.display_label ?? accountId!;
+    const computedTitle =
+      hasCustomLabel && account ? `${account.display_label} - ${email}` : email;
+    const computedBandeja =
+      hasCustomLabel && account ? `Bandeja ${account.display_label}` : `Bandeja ${email}`;
+    return { title: computedTitle, bandejaLabel: computedBandeja };
+  }, [accounts, accountId]);
+
   const bulkBar = (
     <DraftBulkActionsBar
       selectedCount={selectedItems.length}
@@ -52,18 +70,19 @@ export default function DraftsPage() {
   );
 
   const combinedError = error || bulk.error;
+  const basePath = `/m/${mailboxId}/account/${accountId}`;
 
   return (
     <div className="flex h-full flex-col">
-      <div className="flex flex-col gap-2 px-8 pt-8 pb-6">
-        <h1 className="text-[28px] font-bold tracking-tight text-zinc-900">Borradores</h1>
-        <p className="text-[15px] leading-[1.5] text-zinc-500">
-          Borradores guardados de tus cuentas conectadas.
-        </p>
+      <div className="flex flex-col gap-2 px-8 pt-8 pb-2">
+        <h1 className="text-[28px] font-bold tracking-tight text-zinc-900">{title}</h1>
+        <p className="text-[15px] leading-[1.5] text-zinc-500">Borradores de {title}</p>
       </div>
 
+      <AccountTabs basePath={basePath} inboxLabel={bandejaLabel} />
+
       {combinedError && (
-        <div className="px-8 pb-2 text-sm text-red-600">{combinedError.message}</div>
+        <div className="px-8 pt-4 text-sm text-red-600">{combinedError.message}</div>
       )}
 
       <DraftsTable
@@ -72,7 +91,7 @@ export default function DraftsPage() {
         loading={loading}
         syncing={syncing}
         onSync={syncAndRefresh}
-        onNewDraft={() => composer.openForNewDraft()}
+        onNewDraft={() => composer.openForNewDraft({ accountId })}
         onRowClick={(draft) => composer.openForEditDraft(draft)}
         hasSelection={selection.size > 0}
         isSelected={selection.isSelected}

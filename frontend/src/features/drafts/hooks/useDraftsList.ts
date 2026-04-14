@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import { listDrafts, syncDrafts } from "../../../api/endpoints/drafts";
 import { listAccounts } from "../../../api/endpoints/accounts";
@@ -10,23 +10,52 @@ type UseDraftsListReturn = {
   drafts: DraftOut[];
   accounts: AccountOut[];
   loading: boolean;
+  syncing: boolean;
   error: UiError | null;
+  refresh: () => Promise<void>;
+  syncAndRefresh: () => Promise<void>;
 };
 
-export default function useDraftsList(mailboxId: string): UseDraftsListReturn {
+export default function useDraftsList(
+  mailboxId: string,
+  accountId?: string,
+): UseDraftsListReturn {
   const [drafts, setDrafts] = useState<DraftOut[]>([]);
   const [accounts, setAccounts] = useState<AccountOut[]>([]);
   const [loading, setLoading] = useState(true);
+  const [syncing, setSyncing] = useState(false);
   const [error, setError] = useState<UiError | null>(null);
+
+  const refresh = useCallback(async () => {
+    try {
+      const fresh = await listDrafts(mailboxId, accountId);
+      setDrafts(fresh);
+    } catch (err) {
+      setError(toUiError(err));
+    }
+  }, [mailboxId, accountId]);
+
+  const syncAndRefresh = useCallback(async () => {
+    setError(null);
+    setSyncing(true);
+    try {
+      await syncDrafts(mailboxId, accountId);
+      const fresh = await listDrafts(mailboxId, accountId);
+      setDrafts(fresh);
+    } catch (err) {
+      setError(toUiError(err));
+    } finally {
+      setSyncing(false);
+    }
+  }, [mailboxId, accountId]);
 
   useEffect(() => {
     let cancelled = false;
 
     async function load() {
       try {
-        // Step 1: GET cached data immediately
         const [cachedDrafts, accountList] = await Promise.all([
-          listDrafts(mailboxId),
+          listDrafts(mailboxId, accountId),
           listAccounts(mailboxId),
         ]);
         if (cancelled) return;
@@ -34,11 +63,10 @@ export default function useDraftsList(mailboxId: string): UseDraftsListReturn {
         setAccounts(accountList);
         setLoading(false);
 
-        // Step 2: Sync in background, then refresh
-        await syncDrafts(mailboxId).catch(() => {});
+        await syncDrafts(mailboxId, accountId).catch(() => {});
         if (cancelled) return;
 
-        const freshDrafts = await listDrafts(mailboxId);
+        const freshDrafts = await listDrafts(mailboxId, accountId);
         if (!cancelled) setDrafts(freshDrafts);
       } catch (err) {
         if (!cancelled) {
@@ -49,8 +77,10 @@ export default function useDraftsList(mailboxId: string): UseDraftsListReturn {
     }
 
     load();
-    return () => { cancelled = true; };
-  }, [mailboxId]);
+    return () => {
+      cancelled = true;
+    };
+  }, [mailboxId, accountId]);
 
-  return { drafts, accounts, loading, error };
+  return { drafts, accounts, loading, syncing, error, refresh, syncAndRefresh };
 }
