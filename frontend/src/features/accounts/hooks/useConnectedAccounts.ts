@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
 
-import { listAccounts, createAccount, connectAccount } from "../../../api/endpoints/accounts";
+import { listAccounts, createAccount, connectAccount, deleteAccount } from "../../../api/endpoints/accounts";
 import { syncEmailMetadata, listEmails } from "../../../api/endpoints/emails";
 import { syncDrafts } from "../../../api/endpoints/drafts";
 import { toUiError } from "../../../api/client/errors";
+import { getProviderMeta } from "../../../lib/providers";
 import type { AccountOut, EmailMetadataOut } from "../../../api/types/dto";
 import type { UiError } from "../../../api/client/errors";
 
@@ -23,6 +24,7 @@ type UseConnectedAccountsReturn = {
   canAdd: boolean;
   addingAccount: boolean;
   addAccount: () => Promise<void>;
+  removeAccount: (accountId: string) => Promise<void>;
   error: UiError | null;
 };
 
@@ -52,28 +54,30 @@ export default function useConnectedAccounts(mailboxId: string): UseConnectedAcc
         setEntries(initialEntries);
         setLoading(false);
 
-        for (const account of accounts) {
-          try {
-            const emails = await listEmails(mailboxId, "ALL_MAIL", account.account_id);
-            if (cancelled) return;
-            setEntries((prev) =>
-              prev.map((e) =>
-                e.account.account_id === account.account_id
-                  ? { ...e, emails: emails.slice(0, 3), status: "ready" as const }
-                  : e,
-              ),
-            );
-          } catch {
-            if (cancelled) return;
-            setEntries((prev) =>
-              prev.map((e) =>
-                e.account.account_id === account.account_id
-                  ? { ...e, status: "ready" as const }
-                  : e,
-              ),
-            );
-          }
-        }
+        await Promise.all(
+          accounts.map(async (account) => {
+            try {
+              const emails = await listEmails(mailboxId, "ALL_MAIL", account.account_id);
+              if (cancelled) return;
+              setEntries((prev) =>
+                prev.map((e) =>
+                  e.account.account_id === account.account_id
+                    ? { ...e, emails: emails.slice(0, 3), status: "ready" as const }
+                    : e,
+                ),
+              );
+            } catch {
+              if (cancelled) return;
+              setEntries((prev) =>
+                prev.map((e) =>
+                  e.account.account_id === account.account_id
+                    ? { ...e, status: "ready" as const }
+                    : e,
+                ),
+              );
+            }
+          }),
+        );
       } catch {
         if (!cancelled) setLoading(false);
       }
@@ -88,7 +92,7 @@ export default function useConnectedAccounts(mailboxId: string): UseConnectedAcc
     setError(null);
     setAddingAccount(true);
 
-    const providerLabel = selectedProvider === "gmail" ? "Gmail" : "Outlook";
+    const providerLabel = getProviderMeta(selectedProvider).label;
     const label = displayLabel.trim() || providerLabel;
 
     try {
@@ -102,19 +106,15 @@ export default function useConnectedAccounts(mailboxId: string): UseConnectedAcc
       setSelectedProvider("");
       setDisplayLabel("");
 
-      await connectAccount(mailboxId, account.account_id);
+      const connectResponse = await connectAccount(mailboxId, account.account_id);
 
-      const accounts = await listAccounts(mailboxId);
-      const updatedAccount = accounts.find((a) => a.account_id === account.account_id);
-      if (updatedAccount) {
-        setEntries((prev) =>
-          prev.map((e) =>
-            e.account.account_id === account.account_id
-              ? { ...e, account: updatedAccount }
-              : e,
-          ),
-        );
-      }
+      setEntries((prev) =>
+        prev.map((e) =>
+          e.account.account_id === account.account_id
+            ? { ...e, account: { ...e.account, email_address: connectResponse.email_address } }
+            : e,
+        ),
+      );
 
       const [syncResult] = await Promise.all([
         syncEmailMetadata(mailboxId, account.account_id),
@@ -153,6 +153,16 @@ export default function useConnectedAccounts(mailboxId: string): UseConnectedAcc
     }
   }, [canAdd, mailboxId, selectedProvider, displayLabel]);
 
+  const removeAccount = useCallback(async (accountId: string) => {
+    setError(null);
+    try {
+      await deleteAccount(mailboxId, accountId);
+      setEntries((prev) => prev.filter((e) => e.account.account_id !== accountId));
+    } catch (err) {
+      setError(toUiError(err));
+    }
+  }, [mailboxId]);
+
   return {
     entries,
     loading,
@@ -163,6 +173,7 @@ export default function useConnectedAccounts(mailboxId: string): UseConnectedAcc
     canAdd,
     addingAccount,
     addAccount,
+    removeAccount,
     error,
   };
 }
