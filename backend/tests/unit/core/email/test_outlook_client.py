@@ -2021,3 +2021,104 @@ class TestFetchDrafts:
         assert draft.bcc_recipients == []
         assert draft.created_at == datetime(2024, 1, 1, 10, 0, 0, tzinfo=timezone.utc)
         assert draft.updated_at == datetime(2024, 1, 2, 11, 0, 0, tzinfo=timezone.utc)
+
+
+# ── fetch_email_content + cid resolution ────────────────────────────
+
+
+class TestFetchEmailContentInlineImages:
+    def _make_authed_client(self):
+        client = OutlookClient(account_label="mb__outlook")
+        client._access_token = "tok"
+        return client
+
+    def test_html_with_attachments_resolves_cid(self):
+        client = self._make_authed_client()
+        responses = [
+            {
+                "body": {"contentType": "html", "content": '<img src="cid:logo@x">'},
+                "hasAttachments": True,
+            },
+            {
+                "value": [
+                    {
+                        "isInline": True,
+                        "contentId": "logo@x",
+                        "contentType": "image/png",
+                        "contentBytes": "QUFB",
+                    },
+                ],
+            },
+        ]
+        client._graph_request = MagicMock(side_effect=responses)
+        content = client.fetch_email_content("mid")
+        assert 'src="data:image/png;base64,QUFB"' in content.html_body
+        assert client._graph_request.call_count == 2
+
+    def test_has_attachments_false_skips_second_call(self):
+        client = self._make_authed_client()
+        client._graph_request = MagicMock(
+            return_value={
+                "body": {"contentType": "html", "content": "<p>hi</p>"},
+                "hasAttachments": False,
+            },
+        )
+        content = client.fetch_email_content("mid")
+        assert content.html_body == "<p>hi</p>"
+        assert client._graph_request.call_count == 1
+
+    def test_plain_text_skips_cid_resolution(self):
+        client = self._make_authed_client()
+        client._graph_request = MagicMock(
+            return_value={
+                "body": {"contentType": "text", "content": "plain"},
+                "hasAttachments": True,
+            },
+        )
+        content = client.fetch_email_content("mid")
+        assert content.html_body is None
+        assert content.text_body == "plain"
+        assert client._graph_request.call_count == 1
+
+    def test_attachments_fetch_error_soft_fallback(self):
+        client = self._make_authed_client()
+        side = [
+            {
+                "body": {"contentType": "html", "content": '<img src="cid:logo">'},
+                "hasAttachments": True,
+            },
+            EmailExternalAPIError("graph blew up"),
+        ]
+
+        def fake(*args, **kwargs):
+            value = side.pop(0)
+            if isinstance(value, Exception):
+                raise value
+            return value
+
+        client._graph_request = MagicMock(side_effect=fake)
+        content = client.fetch_email_content("mid")
+        # Soft fallback: cid reference kept intact, no propagation
+        assert 'src="cid:logo"' in content.html_body
+
+    def test_non_image_inline_attachment_skipped(self):
+        client = self._make_authed_client()
+        responses = [
+            {
+                "body": {"contentType": "html", "content": '<img src="cid:doc">'},
+                "hasAttachments": True,
+            },
+            {
+                "value": [
+                    {
+                        "isInline": True,
+                        "contentId": "doc",
+                        "contentType": "application/pdf",
+                        "contentBytes": "QUFB",
+                    },
+                ],
+            },
+        ]
+        client._graph_request = MagicMock(side_effect=responses)
+        content = client.fetch_email_content("mid")
+        assert 'src="cid:doc"' in content.html_body

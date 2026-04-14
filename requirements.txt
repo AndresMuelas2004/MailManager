@@ -29,7 +29,9 @@ MarkupSafe==3.0.3
 oauthlib==3.3.1
 packaging==25.0
 pluggy==1.6.0
+premailer>=3.10.0
 proto-plus==1.26.1
+tinycss2>=1.5.0
 protobuf==6.33.1
 psycopg2-binary==2.9.11
 python-dotenv==1.2.1

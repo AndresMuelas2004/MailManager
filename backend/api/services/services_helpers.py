@@ -670,17 +670,74 @@ _RAW_TEXT_BLOCK_PATTERN = re.compile(
     re.DOTALL | re.IGNORECASE,
 )
 
+# CSS properties safe to preserve inside ``style="..."`` attributes. The list
+# covers the vocabulary actually used by real email templates (layout, colors,
+# typography, spacing, simple borders) without opening the door to properties
+# that pull in remote resources or execute logic.
+_SANITIZE_ALLOWED_CSS_PROPERTIES = frozenset({
+    "align-items", "background", "background-color", "background-image",
+    "background-position", "background-repeat", "background-size", "border",
+    "border-bottom", "border-bottom-color", "border-bottom-left-radius",
+    "border-bottom-right-radius", "border-bottom-style", "border-bottom-width",
+    "border-collapse", "border-color", "border-left", "border-left-color",
+    "border-left-style", "border-left-width", "border-radius", "border-right",
+    "border-right-color", "border-right-style", "border-right-width",
+    "border-spacing", "border-style", "border-top", "border-top-color",
+    "border-top-left-radius", "border-top-right-radius", "border-top-style",
+    "border-top-width", "border-width", "bottom", "box-shadow", "box-sizing",
+    "caption-side", "clear", "color", "display", "empty-cells", "float",
+    "font", "font-family", "font-size", "font-stretch", "font-style",
+    "font-variant", "font-weight", "height", "justify-content", "left",
+    "letter-spacing", "line-height", "list-style", "list-style-position",
+    "list-style-type", "margin", "margin-bottom", "margin-left", "margin-right",
+    "margin-top", "max-height", "max-width", "min-height", "min-width",
+    "mso-line-height-rule", "mso-table-lspace", "mso-table-rspace", "opacity",
+    "outline", "overflow", "overflow-wrap", "overflow-x", "overflow-y",
+    "padding", "padding-bottom", "padding-left", "padding-right", "padding-top",
+    "page-break-after", "page-break-before", "position", "right",
+    "table-layout", "text-align", "text-decoration", "text-indent",
+    "text-overflow", "text-shadow", "text-transform", "top", "vertical-align",
+    "visibility", "white-space", "width", "word-break", "word-spacing",
+    "word-wrap", "z-index",
+})
+
+_SANITIZE_ALLOWED_CSS_SVG_PROPERTIES = frozenset()
+
 
 def sanitize_email_html(html: str) -> str:
-    """Sanitize email HTML to remove dangerous tags, attributes and protocols."""
+    """Sanitize email HTML to remove dangerous tags, attributes and protocols.
+
+    Inlines CSS rules from <style> blocks into element ``style`` attributes
+    before the regex/bleach pass so the visual styling survives. Only
+    inlinable rules are kept; @media / @font-face blocks are dropped with the
+    residual <style> tag. If the inliner fails on malformed HTML, the content
+    still goes through bleach (email renders flat but no 500).
+    """
     if not html or html.isspace():
         return html
+    try:
+        from premailer import transform  # lazy import — avoids startup cost
+        html = transform(
+            html,
+            keep_style_tags=False,
+            remove_classes=False,
+            cssutils_logging_level="CRITICAL",
+            disable_validation=True,
+        )
+    except Exception as exc:
+        logger.warning("premailer failed (%s): %s", type(exc).__name__, exc)
     html = _RAW_TEXT_BLOCK_PATTERN.sub("", html)
+    from bleach.css_sanitizer import CSSSanitizer  # lazy import — optional dep
+    css_sanitizer = CSSSanitizer(
+        allowed_css_properties=_SANITIZE_ALLOWED_CSS_PROPERTIES,
+        allowed_svg_properties=_SANITIZE_ALLOWED_CSS_SVG_PROPERTIES,
+    )
     return bleach.clean(
         html,
         tags=_SANITIZE_ALLOWED_TAGS,
         attributes=_SANITIZE_ALLOWED_ATTRIBUTES,
         protocols=_SANITIZE_ALLOWED_PROTOCOLS,
+        css_sanitizer=css_sanitizer,
         strip=True,
     )
 

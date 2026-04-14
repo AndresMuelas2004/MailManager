@@ -22,6 +22,7 @@ from .errors import (
     EmailRefreshFailedError,
 )
 from .helpers import (
+    inline_cid_images,
     parse_expiry,
     unwrap_app_credentials,
     unwrap_user_tokens,
@@ -1164,22 +1165,63 @@ class OutlookClient(EmailClient):
         if self._access_token is None:
             raise EmailNotAuthenticatedError("Outlook fetch_email_content requires authentication.")
         try:
+            escaped_id = urllib.parse.quote(provider_message_id, safe="")
             response = self._graph_request(
                 "GET",
-                f"{GRAPH_BASE_URL}/me/messages/{urllib.parse.quote(provider_message_id, safe='')}?$select=body",
+                f"{GRAPH_BASE_URL}/me/messages/{escaped_id}?$select=body,hasAttachments",
             )
             body = response.get("body", {})
             content_type = body.get("contentType", "").lower()
             content = body.get("content")
-            if content_type == "html":
-                return EmailContent(html_body=content, text_body=None)
-            return EmailContent(html_body=None, text_body=content)
+            if content_type != "html":
+                return EmailContent(html_body=None, text_body=content)
+            if content and response.get("hasAttachments"):
+                cid_map = self._fetch_inline_image_cids(escaped_id)
+                if cid_map:
+                    content = inline_cid_images(content, cid_map)
+            return EmailContent(html_body=content, text_body=None)
         except EmailExternalAPIError:
             raise
         except Exception as exc:
             raise EmailExternalAPIError(
                 f"Outlook unexpected fetch_email_content error ({type(exc).__name__}): {exc}"
             ) from exc
+
+    def _fetch_inline_image_cids(self, escaped_message_id: str) -> dict[str, str]:
+        """Return a ``Content-ID → data URL`` map for inline image attachments.
+
+        Graph does not resolve ``cid:`` automatically. Inline images come as
+        separate attachments flagged ``isInline=true`` with a ``contentId``
+        populated and ``contentBytes`` already in standard base64. Failures
+        soft-fallback to an empty map / partial map — a broken inline image
+        is better than losing the whole email.
+        """
+        cid_map: dict[str, str] = {}
+        try:
+            response = self._graph_request(
+                "GET",
+                f"{GRAPH_BASE_URL}/me/messages/{escaped_message_id}/attachments"
+                "?$select=contentType,contentBytes,contentId,isInline",
+            )
+        except EmailExternalAPIError as exc:
+            logger.warning("Outlook inline attachments fetch failed: %s", exc)
+            return cid_map
+        except Exception as exc:
+            logger.warning(
+                "Outlook inline attachments unexpected error (%s): %s",
+                type(exc).__name__, exc,
+            )
+            return cid_map
+        for attachment in response.get("value") or []:
+            if not attachment.get("isInline"):
+                continue
+            cid = (attachment.get("contentId") or "").strip().strip("<>").strip()
+            content_type = (attachment.get("contentType") or "").lower()
+            content_bytes = attachment.get("contentBytes")
+            if not cid or not content_bytes or not content_type.startswith("image/"):
+                continue
+            cid_map[cid] = f"data:{content_type};base64,{content_bytes}"
+        return cid_map
 
     def get_account_label(self) -> str:
         """

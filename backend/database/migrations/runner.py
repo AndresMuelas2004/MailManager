@@ -266,8 +266,12 @@ _DDL_STATEMENTS = [
     );
     """,
     "CREATE INDEX IF NOT EXISTS idx_drafts_account_id ON drafts(account_id);",
+    # Migration 0014: one-shot cache invalidation after fixing the email HTML
+    # pipeline (CSS inlining + cid: image resolution). Safe on fresh setups
+    # where the table is already empty.
+    "TRUNCATE TABLE email_content;",
     "DELETE FROM alembic_version;",
-    "INSERT INTO alembic_version(version_num) VALUES ('0013_email_content_shared_pk_fk');",
+    "INSERT INTO alembic_version(version_num) VALUES ('0014_invalidate_email_content_cache');",
 ]
 
 

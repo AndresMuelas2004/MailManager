@@ -1791,3 +1791,125 @@ class TestFetchDrafts:
         assert draft.cc_recipients == ["e@f.com"]
         assert draft.bcc_recipients == []
         assert "body-d1" in draft.body_html
+
+
+# ── fetch_email_content + cid resolution ────────────────────────────
+
+
+def _b64url(raw: bytes) -> str:
+    return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+
+class TestFetchEmailContentCidResolution:
+    def _build_client_with_payload(self, payload: dict) -> GmailClient:
+        client = GmailClient(account_label="mb__acct")
+        service = MagicMock()
+        service.users.return_value.messages.return_value.get.return_value.execute.return_value = {
+            "payload": payload,
+        }
+        client.service = service
+        return client
+
+    def test_collects_inline_image_with_inline_data(self):
+        image_bytes = b"\x89PNG fake"
+        payload = {
+            "mimeType": "multipart/related",
+            "parts": [
+                {
+                    "mimeType": "text/html",
+                    "body": {"data": _b64url(b'<img src="cid:logo@x">')},
+                },
+                {
+                    "mimeType": "image/png",
+                    "headers": [{"name": "Content-ID", "value": "<logo@x>"}],
+                    "body": {"data": _b64url(image_bytes)},
+                },
+            ],
+        }
+        client = self._build_client_with_payload(payload)
+        content = client.fetch_email_content("msg1")
+        assert content.html_body is not None
+        assert "cid:" not in content.html_body
+        assert "data:image/png;base64," in content.html_body
+
+    def test_fetches_attachment_when_data_missing(self):
+        image_bytes = b"jpeg-bytes"
+        payload = {
+            "mimeType": "multipart/related",
+            "parts": [
+                {
+                    "mimeType": "text/html",
+                    "body": {"data": _b64url(b'<img src="cid:banner">')},
+                },
+                {
+                    "mimeType": "image/jpeg",
+                    "headers": [{"name": "content-id", "value": "banner"}],
+                    "body": {"attachmentId": "att-1"},
+                },
+            ],
+        }
+        client = self._build_client_with_payload(payload)
+        (
+            client.service.users.return_value.messages.return_value
+            .attachments.return_value.get.return_value.execute.return_value
+        ) = {"data": _b64url(image_bytes)}
+        content = client.fetch_email_content("msg1")
+        assert "data:image/jpeg;base64," in content.html_body
+
+    def test_skips_image_without_content_id(self):
+        payload = {
+            "mimeType": "multipart/related",
+            "parts": [
+                {
+                    "mimeType": "text/html",
+                    "body": {"data": _b64url(b'<p>hi</p>')},
+                },
+                {
+                    "mimeType": "image/png",
+                    "headers": [],
+                    "body": {"data": _b64url(b"x")},
+                },
+            ],
+        }
+        client = self._build_client_with_payload(payload)
+        content = client.fetch_email_content("msg1")
+        assert "<p>hi</p>" in content.html_body
+
+    def test_soft_fallback_on_attachment_fetch_error(self):
+        from googleapiclient.errors import HttpError
+
+        class _FakeResp:
+            status = 500
+            reason = "err"
+
+        payload = {
+            "mimeType": "multipart/related",
+            "parts": [
+                {
+                    "mimeType": "text/html",
+                    "body": {"data": _b64url(b'<img src="cid:broken">')},
+                },
+                {
+                    "mimeType": "image/png",
+                    "headers": [{"name": "Content-ID", "value": "<broken>"}],
+                    "body": {"attachmentId": "att-err"},
+                },
+            ],
+        }
+        client = self._build_client_with_payload(payload)
+        (
+            client.service.users.return_value.messages.return_value
+            .attachments.return_value.get.return_value.execute.side_effect
+        ) = HttpError(resp=_FakeResp(), content=b"boom")
+        content = client.fetch_email_content("msg1")
+        # Soft fallback: the cid: reference is left intact, no exception raised
+        assert 'src="cid:broken"' in content.html_body
+
+    def test_no_inline_images_leaves_html_untouched(self):
+        payload = {
+            "mimeType": "text/html",
+            "body": {"data": _b64url(b'<p>plain html</p>')},
+        }
+        client = self._build_client_with_payload(payload)
+        content = client.fetch_email_content("msg1")
+        assert content.html_body == "<p>plain html</p>"

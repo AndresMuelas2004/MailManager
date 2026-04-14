@@ -11,6 +11,7 @@ from pydantic import SecretStr
 from core.email.errors import EmailInvalidTokenDataError
 from core.email.helpers import (
     http_error_detail,
+    inline_cid_images,
     parse_expiry,
     unwrap_app_credentials,
     unwrap_user_tokens,
@@ -164,3 +165,41 @@ class TestWrapAccountTokens:
     def test_string_input_raises_invalid_token_data(self):
         with pytest.raises(EmailInvalidTokenDataError):
             wrap_account_tokens("not-a-dict")
+
+
+# ── inline_cid_images ──────────────────────────────────────────────
+
+
+class TestInlineCidImages:
+    def test_replaces_double_quoted_src(self):
+        html = '<img src="cid:logo@x">'
+        out = inline_cid_images(html, {"logo@x": "data:image/png;base64,AAA"})
+        assert out == '<img src="data:image/png;base64,AAA">'
+
+    def test_replaces_single_quoted_src(self):
+        html = "<img src='cid:logo@x'>"
+        out = inline_cid_images(html, {"logo@x": "data:image/png;base64,AAA"})
+        assert 'src="data:image/png;base64,AAA"' in out
+
+    def test_replaces_with_angle_brackets(self):
+        html = '<img src="cid:<logo@x>">'
+        out = inline_cid_images(html, {"logo@x": "data:image/png;base64,AAA"})
+        assert 'src="data:image/png;base64,AAA"' in out
+
+    def test_replaces_background_attr(self):
+        html = '<td background="cid:bg@x">hi</td>'
+        out = inline_cid_images(html, {"bg@x": "data:image/jpeg;base64,BBB"})
+        assert 'background="data:image/jpeg;base64,BBB"' in out
+
+    def test_leaves_unmapped_cid_alone(self):
+        html = '<img src="cid:missing"><img src="cid:known">'
+        out = inline_cid_images(html, {"known": "data:image/png;base64,ZZZ"})
+        assert 'src="cid:missing"' in out
+        assert 'src="data:image/png;base64,ZZZ"' in out
+
+    def test_empty_html_returns_empty(self):
+        assert inline_cid_images("", {"x": "data:image/png;base64,AAA"}) == ""
+
+    def test_empty_map_returns_html_unchanged(self):
+        html = '<img src="cid:x">'
+        assert inline_cid_images(html, {}) == html

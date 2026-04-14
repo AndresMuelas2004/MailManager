@@ -89,7 +89,7 @@ Stores the full HTML/text body of individual emails in a separate `email_content
 - **`get(account_id, provider_message_id) → dict | None`** — returns `{html_body, text_body, fetched_at}` or `None` if not cached. Handles `InvalidTextRepresentation` gracefully (returns `None` for invalid UUIDs).
 - **`upsert(account_id, provider_message_id, html_body, text_body) → None`** — inserts or updates the cached content. Uses `ON CONFLICT ... DO UPDATE` to overwrite `html_body`, `text_body`, and set `fetched_at = now()`.
 
-No delete methods in the contract — deletion happens transitively via `ON DELETE CASCADE` from `email_metadata` (and indirectly from `accounts`), or via inline SQL in cleanup scripts (`Scripts/cli_utilities/clear_email_content.py`).
+No delete methods in the contract — deletion happens transitively via `ON DELETE CASCADE` from `email_metadata` (and indirectly from `accounts`), or via inline SQL in cleanup scripts (`Scripts/cli_utilities/clear_email_content.py`). A third invalidation mechanism exists for pipeline-level changes: a data-only Alembic migration (no schema alteration) that executes `TRUNCATE TABLE email_content;`. This pattern is used when a fix to the email HTML pipeline (e.g. CSS inlining, `cid:` image resolution) makes every previously cached HTML stale and all rows must be re-fetched from the provider on next view. The migration's `downgrade()` is intentionally a no-op — the cleared rows cannot be re-inflated without re-fetching from the provider, and the cache-aside pattern in `get_email_full_content` already handles repopulation transparently. Migration `0014_invalidate_email_content_cache` is the canonical example.
 
 #### Shared primary key pattern (migration 0013)
 
@@ -192,7 +192,7 @@ DatabaseError
 
 ### Adding a new provider or migration
 
-Whenever a new Alembic migration is created in `migrations/versions/`, **`migrations/runner.py` must be updated in the same change**: add the equivalent DDL to `_DDL_STATEMENTS` and advance the stamp at the bottom to the new migration name. Forgetting this step silently breaks any environment that relies on the fallback runner (local setup without Alembic, some CI configurations).
+Whenever a new Alembic migration is created in `migrations/versions/`, **`migrations/runner.py` must be updated in the same change**: add the equivalent DDL to `_DDL_STATEMENTS` and advance the stamp at the bottom to the new migration name. Forgetting this step silently breaks any environment that relies on the fallback runner (local setup without Alembic, some CI configurations). Data-only migrations (no schema change) also belong here — e.g. migration 0014 adds `TRUNCATE TABLE email_content;` right before the stamp line.
 
 **Provider-specific changes** (only when adding a new email provider):
 

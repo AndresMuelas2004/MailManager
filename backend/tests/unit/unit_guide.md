@@ -91,10 +91,23 @@ These helpers centralize the monkeypatching so individual test functions stay co
 
 - `TestGetEmailFullContent` in `test_emails_service.py`: 8 tests covering DB hit, DB miss with provider fetch, HTML sanitization, account not found, core error translation, best-effort persist failure, `EmailNotFound` when the metadata pre-check returns `False`, and `DatabaseError` during the pre-check translated via `translate_database_error`. See the `_patch_get_content_common` description above for the patch set (note that `email_metadata_store.exists` is monkeypatched to `True` by default).
 - `test_email_metadata_repository.py` also covers `PgEmailMetadataStore.exists` with 6 tests: row present → `True`, row absent → `False`, malformed UUID (`InvalidTextRepresentation`) → `False`, psycopg2 error → `QueryError`, generic exception → `QueryError`, and `ConnectionPoolError` propagation.
-- `test_sanitize.py`: tests for `sanitize_email_html` -- strips scripts, preserves safe tags, strips event handlers, blocks javascript href, allows mailto/cid protocols, handles empty/whitespace input, strips onerror on img, strips style tag.
+- `test_sanitize.py`: 14 tests for `sanitize_email_html` -- strips scripts, preserves safe tags, strips event handlers, blocks javascript href, allows mailto href, allows `cid:` img src, handles empty/whitespace input, strips `onerror` on img, inlines `<style>` rules onto elements via premailer (`test_inlines_style_tag_into_attributes`), inlines class selectors (`test_inlines_class_selectors`), strips dangerous `url(javascript:...)` from inlined CSS (`test_strips_dangerous_css_url`), falls back to bleach-only sanitization when `premailer.transform` raises (`test_premailer_failure_falls_back`), and verifies that CSS inlining does not corrupt `cid:` img src references (`test_inlining_does_not_break_cid_img_src`).
 - `test_email_content_repository.py`: 10 tests for `PgEmailContentStore` (get/upsert with error wrapping, InvalidTextRepresentation handling).
 - `TestGetEmailContent` and `TestPersistEmailContent` in `test_services_helpers.py`: 3 tests each covering happy path, DatabaseError translation, and generic exception fallback.
 - `EmailManager.fetch_email_content` delegation is covered by 4 standalone functions in `test_email_manager_extended.py`: happy path, account not found, CoreError passthrough, unexpected exception wrapping.
+- `GmailClient.fetch_email_content` CID resolution is covered by `TestFetchEmailContentCidResolution` in `test_gmail_client.py` (5 tests): inline image with `body.data` is base64-decoded and substituted into the HTML; attachment-backed image (no `body.data`, only `attachmentId`) is fetched via `attachments().get()` and inlined; image part without a `Content-ID` header is skipped without error; attachment fetch `HttpError 500` is a soft fallback — the `cid:` reference is left intact and no exception propagates; HTML with no inline images is returned untouched.
+- `OutlookClient.fetch_email_content` inline image resolution is covered by `TestFetchEmailContentInlineImages` in `test_outlook_client.py` (5 tests): HTML email with `hasAttachments: true` triggers a second Graph call to fetch attachments and `cid:` references are substituted with `data:` URLs; `hasAttachments: false` skips the second call entirely; plain-text emails skip CID resolution (no `html_body`, `text_body` preserved); attachments-fetch error is a soft fallback — the `cid:` reference is kept intact; non-image inline attachment (e.g. `application/pdf`) is skipped and leaves the `cid:` reference intact.
+
+### Core email helpers coverage (`test_helpers.py`)
+
+`test_helpers.py` covers the shared utility functions in `core/email/helpers.py`:
+
+- **`TestHttpErrorDetail`** (2 tests): extracts status and reason from an `HttpError`-like object; returns `("unknown", "unknown")` when attributes are absent.
+- **`TestParseExpiry`** (10 tests): `None` → `None`; naive `datetime` returned as-is; aware `datetime` converted to UTC-naive; Unix timestamp as `int` and `float`; ISO string with and without `Z` suffix; empty string → `None`; invalid string → `EmailInvalidExpiryError`; unsupported type → `EmailInvalidExpiryError`.
+- **`TestUnwrapAppCredentials`** (3 tests): plain dict unchanged; `SecretStr` values unwrapped; `None` → `{}`.
+- **`TestUnwrapUserTokens`** (3 tests): both token fields unwrapped; plain strings unchanged; `None` → `{}`.
+- **`TestWrapAccountTokens`** (4 tests): access and refresh tokens wrapped in `SecretStr`; `None` refresh not wrapped; non-dict inputs raise `EmailInvalidTokenDataError`.
+- **`TestInlineCidImages`** (7 tests): double-quoted `src` replaced; single-quoted `src` replaced; angle-bracket form of Content-ID resolved; `background` attribute replaced; unmapped CID left intact; empty HTML returns empty; empty map returns HTML unchanged.
 
 ### Drafts coverage
 

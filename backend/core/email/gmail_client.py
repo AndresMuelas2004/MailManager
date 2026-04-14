@@ -34,6 +34,7 @@ from .errors import (
 )
 from .helpers import (
     http_error_detail,
+    inline_cid_images,
     parse_expiry,
     unwrap_app_credentials,
     unwrap_user_tokens,
@@ -1520,8 +1521,93 @@ class GmailClient(EmailClient):
             raise EmailExternalAPIError(
                 f"Gmail unexpected fetch_email_content error ({type(exc).__name__}): {exc}"
             ) from exc
-        html_body, text_body = self._extract_body_from_payload(response.get("payload", {}))
+        payload = response.get("payload", {})
+        html_body, text_body = self._extract_body_from_payload(payload)
+        if html_body:
+            cid_map = self._extract_cid_attachments(payload, provider_message_id)
+            if cid_map:
+                html_body = inline_cid_images(html_body, cid_map)
         return EmailContent(html_body=html_body, text_body=text_body)
+
+    def _extract_cid_attachments(
+        self, payload: dict[str, Any], provider_message_id: str,
+    ) -> dict[str, str]:
+        """Collect ``Content-ID → data URL`` map from inline image parts.
+
+        Walks the MIME tree looking for ``image/*`` parts with a Content-ID
+        header. When the part carries ``body.data`` inline it is decoded
+        directly; otherwise the attachment is fetched via
+        ``attachments().get()`` using the referenced ``attachmentId``.
+        Per-image failures soft-fallback to skipping the CID (the HTML will
+        keep the original ``cid:`` reference — a broken inline image is
+        better than losing the whole email).
+        """
+        cid_map: dict[str, str] = {}
+
+        def _content_id(part: dict[str, Any]) -> str | None:
+            for header in part.get("headers", []) or []:
+                if (header.get("name") or "").lower() == "content-id":
+                    raw = (header.get("value") or "").strip()
+                    if raw:
+                        return raw.strip("<>").strip()
+            return None
+
+        def _walk(part: dict[str, Any]) -> None:
+            mime_type = (part.get("mimeType") or "").lower()
+            if mime_type.startswith("multipart/"):
+                for sub in part.get("parts", []) or []:
+                    _walk(sub)
+                return
+            if not mime_type.startswith("image/"):
+                return
+            cid = _content_id(part)
+            if not cid:
+                return
+            body = part.get("body") or {}
+            data_b64url = body.get("data")
+            try:
+                if data_b64url:
+                    raw_bytes = base64.urlsafe_b64decode(data_b64url + "==")
+                else:
+                    attachment_id = body.get("attachmentId")
+                    if not attachment_id:
+                        return
+                    attachment = (
+                        self.service.users()
+                        .messages()
+                        .attachments()
+                        .get(userId="me", messageId=provider_message_id, id=attachment_id)
+                        .execute()
+                    )
+                    attachment_data = attachment.get("data")
+                    if not attachment_data:
+                        return
+                    raw_bytes = base64.urlsafe_b64decode(attachment_data + "==")
+            except HttpError as exc:
+                status, reason = http_error_detail(exc)
+                logger.warning(
+                    "Gmail inline image fetch failed for cid=%s (HTTP %s: %s)",
+                    cid, status, reason,
+                )
+                return
+            except (binascii.Error, UnicodeDecodeError) as exc:
+                logger.warning("Gmail inline image decode failed for cid=%s: %s", cid, exc)
+                return
+            except Exception as exc:
+                logger.warning(
+                    "Gmail inline image unexpected error for cid=%s (%s): %s",
+                    cid, type(exc).__name__, exc,
+                )
+                return
+            data_url = f"data:{mime_type};base64,{base64.b64encode(raw_bytes).decode('ascii')}"
+            cid_map[cid] = data_url
+
+        if "parts" in payload:
+            for part in payload["parts"]:
+                _walk(part)
+        else:
+            _walk(payload)
+        return cid_map
 
     @staticmethod
     def _extract_body_from_payload(payload: dict[str, Any]) -> tuple[str | None, str | None]:

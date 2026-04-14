@@ -63,8 +63,53 @@ def test_strips_onerror_on_img():
     assert "<img " in result
 
 
-def test_strips_style_tag():
-    html = "<style>body{color:red}</style>"
+def test_inlines_style_tag_into_attributes():
+    html = "<html><head><style>p{color:red}</style></head><body><p>hi</p></body></html>"
     result = sanitize_email_html(html)
     assert "<style>" not in result
     assert "</style>" not in result
+    # premailer inlines the rule onto the <p> tag
+    assert "color:red" in result.replace(" ", "")
+
+
+def test_inlines_class_selectors():
+    html = (
+        "<html><head><style>.btn{background:#1a73e8;color:#fff}</style></head>"
+        "<body><a class=\"btn\" href=\"https://example.com\">click</a></body></html>"
+    )
+    result = sanitize_email_html(html)
+    assert "<style>" not in result
+    normalized = result.replace(" ", "").lower()
+    assert "background:#1a73e8" in normalized
+    assert "color:#fff" in normalized
+
+
+def test_strips_dangerous_css_url():
+    html = (
+        "<html><head><style>a{background:url(javascript:alert(1))}</style></head>"
+        "<body><a href=\"https://example.com\">x</a></body></html>"
+    )
+    result = sanitize_email_html(html)
+    assert "javascript:" not in result
+
+
+def test_premailer_failure_falls_back(monkeypatch):
+    def boom(*_args, **_kwargs):
+        raise RuntimeError("simulated premailer failure")
+
+    import premailer
+    monkeypatch.setattr(premailer, "transform", boom)
+    html = "<p>hello</p><script>alert(1)</script>"
+    result = sanitize_email_html(html)
+    # Falls back to bleach-only: script stripped, content preserved
+    assert "<script>" not in result
+    assert "<p>hello</p>" in result
+
+
+def test_inlining_does_not_break_cid_img_src():
+    html = (
+        "<html><head><style>img{border:0}</style></head>"
+        "<body><img src=\"cid:logo@x\"></body></html>"
+    )
+    result = sanitize_email_html(html)
+    assert 'src="cid:logo@x"' in result

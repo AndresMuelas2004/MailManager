@@ -7,6 +7,7 @@ and are shared by all EmailClient subclasses.
 
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
 from typing import Any
 
@@ -125,3 +126,30 @@ def wrap_account_tokens(token_data: dict[str, Any]) -> dict[str, Any]:
     if "refresh_token" in payload and payload["refresh_token"] is not None:
         payload["refresh_token"] = SecretStr(str(payload.get("refresh_token")))
     return payload
+
+
+_CID_REF_PATTERN = re.compile(
+    r"""(?P<attr>src|background)\s*=\s*(?P<quote>["']?)cid:<?(?P<cid>[^"'>\s]+?)>?(?P=quote)""",
+    re.IGNORECASE,
+)
+
+
+def inline_cid_images(html: str, cid_map: dict[str, str]) -> str:
+    """Replace ``src="cid:<id>"`` references with data URLs from ``cid_map``.
+
+    Tolerant to single/double/no quotes and to optional angle brackets around
+    the CID. Unmapped CIDs are left untouched (soft fallback — a broken inline
+    image is better than losing the whole email).
+    """
+    if not html or not cid_map:
+        return html
+
+    def _replace(match: re.Match[str]) -> str:
+        cid = match.group("cid").strip()
+        data_url = cid_map.get(cid)
+        if data_url is None:
+            return match.group(0)
+        attr = match.group("attr")
+        return f'{attr}="{data_url}"'
+
+    return _CID_REF_PATTERN.sub(_replace, html)
