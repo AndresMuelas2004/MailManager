@@ -1,15 +1,7 @@
 import { useState } from "react";
 import { NavLink } from "react-router-dom";
-import {
-  Inbox,
-  Send,
-  ShieldAlert,
-  FileEdit,
-  Trash2,
-  Link,
-  Settings,
-  ChevronDown,
-} from "lucide-react";
+import { Inbox, Send, Link, Settings, ChevronDown } from "lucide-react";
+import type { ComponentType } from "react";
 
 import MailboxDropdown from "./MailboxDropdown";
 import SettingsDropdown from "./SettingsDropdown";
@@ -19,10 +11,17 @@ type MailboxItem = {
   display_name: string | null;
 };
 
+type NavItem = {
+  icon: ComponentType<{ className?: string }>;
+  label: string;
+  path: string;
+};
+
 type Props = {
   mailboxId: string;
   mailboxName: string;
   mailboxes: MailboxItem[];
+  navItems: NavItem[];
   onMailboxSelect: (mailboxId: string) => void;
   onMailboxCreate: (displayName: string) => void;
   onCompose: () => void;
@@ -30,18 +29,11 @@ type Props = {
   onDeleteAccount: () => void;
 };
 
-const navItems = [
-  { icon: Send, label: "Enviados", path: "sent" },
-  { icon: Inbox, label: "Bandeja unificada", path: "inbox" },
-  { icon: ShieldAlert, label: "Spam", path: "spam" },
-  { icon: FileEdit, label: "Borradores", path: "drafts" },
-  { icon: Trash2, label: "Papelera de reciclaje", path: "trash" },
-];
-
 export default function Sidebar({
   mailboxId,
   mailboxName,
   mailboxes,
+  navItems,
   onMailboxSelect,
   onMailboxCreate,
   onCompose,
@@ -54,7 +46,6 @@ export default function Sidebar({
 
   return (
     <aside className="flex w-[260px] shrink-0 flex-col gap-1 border-r border-zinc-200 bg-white px-4 py-6">
-      {/* Logo */}
       <div className="flex items-center gap-2.5 px-2 pb-5">
         <div className="h-8 w-8 shrink-0 overflow-hidden rounded-lg">
           <img src="/logo.png" alt="MailManager" className="h-full w-full object-cover" />
@@ -62,11 +53,10 @@ export default function Sidebar({
         <span className="text-lg font-bold tracking-tight text-zinc-900">MailManager</span>
       </div>
 
-      {/* Mailbox selector */}
       <div className="relative">
         <button
           type="button"
-          onClick={() => setDropdownOpen(!dropdownOpen)}
+          onClick={() => setDropdownOpen((v) => !v)}
           className="flex h-11 w-full items-center justify-between rounded-[10px] bg-zinc-100 px-3"
         >
           <div className="flex items-center gap-2.5">
@@ -88,7 +78,6 @@ export default function Sidebar({
         )}
       </div>
 
-      {/* Navigation */}
       <nav className="mt-1 flex flex-col gap-0.5">
         {navItems.map(({ icon: Icon, label, path }) => (
           <NavLink
@@ -108,7 +97,6 @@ export default function Sidebar({
         ))}
       </nav>
 
-      {/* Divider + Accounts section */}
       <div className="my-2 h-px bg-zinc-200" />
       <p className="px-3 text-[11px] font-semibold tracking-wider text-zinc-400">
         CUENTAS CONECTADAS
@@ -127,10 +115,8 @@ export default function Sidebar({
         Cuentas conectadas
       </NavLink>
 
-      {/* Spacer */}
       <div className="flex-1" />
 
-      {/* Compose button */}
       <div className="flex justify-center py-4">
         <button
           type="button"
@@ -141,11 +127,10 @@ export default function Sidebar({
         </button>
       </div>
 
-      {/* Settings */}
       <div className="relative px-1 py-2">
         <button
           type="button"
-          onClick={() => setSettingsOpen(!settingsOpen)}
+          onClick={() => setSettingsOpen((v) => !v)}
           className="text-zinc-400 hover:text-zinc-600"
         >
           <Settings className="h-5 w-5" />

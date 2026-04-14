@@ -1,20 +1,20 @@
-import { useCallback, useState } from "react";
+import { useCallback } from "react";
 import { Outlet, useNavigate, useParams } from "react-router-dom";
 
 import { useAuth } from "../providers/AuthContext";
-import { deleteAccount } from "../../api/endpoints/auth";
-import useMailboxList from "../../features/mailboxes/hooks/useMailboxList";
-import useComposeEmail from "../../features/emails/hooks/useComposeEmail";
+import { useDraftComposerContext } from "../providers/DraftComposerContext";
+import useCurrentUser from "../../lib/hooks/useCurrentUser";
+import useMailboxList from "../../lib/hooks/useMailboxList";
 import Sidebar from "../../components/ui/Sidebar";
-import ComposeOverlay from "../../components/ui/ComposeOverlay";
+import { MAILBOX_NAV_ITEMS } from "./mailboxNavItems";
 
-export default function MailboxLayout() {
-  const { mailboxId } = useParams<{ mailboxId: string }>();
+function MailboxShell({ mailboxId }: { mailboxId: string }) {
   const navigate = useNavigate();
   const { logout } = useAuth();
-  const [composeOpen, setComposeOpen] = useState(false);
+  const { openForNewEmail } = useDraftComposerContext();
 
-  const { mailboxes, currentMailboxName, handleCreate } = useMailboxList(mailboxId!);
+  const { mailboxes, currentMailboxName, handleCreate } = useMailboxList(mailboxId);
+  const { deleteCurrentUser } = useCurrentUser();
 
   const handleLogout = useCallback(async () => {
     await logout();
@@ -22,15 +22,10 @@ export default function MailboxLayout() {
   }, [logout, navigate]);
 
   const handleDeleteAccount = useCallback(async () => {
-    try {
-      await deleteAccount();
-      await logout();
-    } catch { /* logout anyway */ }
+    await deleteCurrentUser();
+    await logout();
     navigate("/login", { replace: true });
-  }, [logout, navigate]);
-
-  const closeCompose = useCallback(() => setComposeOpen(false), []);
-  const compose = useComposeEmail(mailboxId!, closeCompose);
+  }, [deleteCurrentUser, logout, navigate]);
 
   const handleMailboxSelect = useCallback(
     (id: string) => navigate(`/m/${id}/accounts`),
@@ -45,41 +40,29 @@ export default function MailboxLayout() {
     [handleCreate, navigate],
   );
 
-  if (!mailboxId) return null;
-
   return (
     <div className="flex min-h-screen bg-[#F9FAFB]">
       <Sidebar
         mailboxId={mailboxId}
         mailboxName={currentMailboxName}
         mailboxes={mailboxes}
+        navItems={MAILBOX_NAV_ITEMS}
         onMailboxSelect={handleMailboxSelect}
         onMailboxCreate={handleMailboxCreate}
-        onCompose={() => setComposeOpen(true)}
+        onCompose={openForNewEmail}
         onLogout={handleLogout}
         onDeleteAccount={handleDeleteAccount}
       />
       <div className="relative flex-1">
         <Outlet />
-        {composeOpen && (
-          <ComposeOverlay
-            accounts={compose.accounts}
-            selectedAccountId={compose.selectedAccountId}
-            onSelectedAccountChange={compose.setSelectedAccountId}
-            to={compose.to}
-            onToChange={compose.setTo}
-            subject={compose.subject}
-            onSubjectChange={compose.setSubject}
-            body={compose.body}
-            onBodyChange={compose.setBody}
-            canSend={compose.canSend}
-            sending={compose.sending}
-            error={compose.error}
-            onSend={compose.handleSend}
-            onClose={closeCompose}
-          />
-        )}
       </div>
     </div>
   );
+}
+
+export default function MailboxLayout() {
+  const { mailboxId } = useParams<{ mailboxId: string }>();
+  if (!mailboxId) return null;
+
+  return <MailboxShell mailboxId={mailboxId} />;
 }
