@@ -25,6 +25,7 @@
   - `backend/tests/unit/`
   - `backend/tests/integration/`
   - `backend/tests/e2e/`
+  - `frontend/`
 
   **Hard rule**: these layer rules are non-negotiable and override any conflicting project-specific guidance.
 
