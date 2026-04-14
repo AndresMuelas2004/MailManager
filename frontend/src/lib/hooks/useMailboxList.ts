@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 
-import { listMailboxes, createMailbox } from "../../../api/endpoints/mailboxes";
-import type { MailboxOut } from "../../../api/types/dto";
+import { listMailboxes, createMailbox } from "../../api/endpoints/mailboxes";
+import type { MailboxOut } from "../../api/types/dto";
 
 type UseMailboxListReturn = {
   mailboxes: MailboxOut[];
@@ -18,7 +18,7 @@ export default function useMailboxList(currentMailboxId: string): UseMailboxList
       .then((list) => { if (!cancelled) setMailboxes(list); })
       .catch(() => {});
     return () => { cancelled = true; };
-  }, [currentMailboxId]);
+  }, []);
 
   const currentMailbox = mailboxes.find((m) => m.mailbox_id === currentMailboxId);
   const currentMailboxName = currentMailbox?.display_name ?? "";
