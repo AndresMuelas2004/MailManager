@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import { listEmails, syncEmailMetadata } from "../../../api/endpoints/emails";
 import { listAccounts } from "../../../api/endpoints/accounts";
@@ -11,26 +11,38 @@ type UseEmailListReturn = {
   emails: EmailMetadataOut[];
   accounts: AccountOut[];
   loading: boolean;
+  syncing: boolean;
   error: UiError | null;
+  refresh: () => Promise<void>;
 };
 
 export default function useEmailList(
   mailboxId: string,
   box: EmailBox,
+  accountId?: string,
 ): UseEmailListReturn {
   const [emails, setEmails] = useState<EmailMetadataOut[]>([]);
   const [accounts, setAccounts] = useState<AccountOut[]>([]);
   const [loading, setLoading] = useState(true);
+  const [syncing, setSyncing] = useState(false);
   const [error, setError] = useState<UiError | null>(null);
+
+  const refresh = useCallback(async () => {
+    try {
+      const fresh = await listEmails(mailboxId, box, accountId);
+      setEmails(fresh);
+    } catch (err) {
+      setError(toUiError(err));
+    }
+  }, [mailboxId, box, accountId]);
 
   useEffect(() => {
     let cancelled = false;
 
     async function load() {
       try {
-        // Step 1: GET cached data immediately
         const [cachedEmails, accountList] = await Promise.all([
-          listEmails(mailboxId, box),
+          listEmails(mailboxId, box, accountId),
           listAccounts(mailboxId),
         ]);
         if (cancelled) return;
@@ -38,23 +50,30 @@ export default function useEmailList(
         setAccounts(accountList);
         setLoading(false);
 
-        // Step 2: Sync in background, then refresh
-        await syncEmailMetadata(mailboxId).catch(() => {});
-        if (cancelled) return;
+        setSyncing(true);
+        await syncEmailMetadata(mailboxId, accountId).catch(() => {});
+        if (cancelled) {
+          setSyncing(false);
+          return;
+        }
 
-        const freshEmails = await listEmails(mailboxId, box);
-        if (!cancelled) setEmails(freshEmails);
+        const freshEmails = await listEmails(mailboxId, box, accountId);
+        if (!cancelled) {
+          setEmails(freshEmails);
+          setSyncing(false);
+        }
       } catch (err) {
         if (!cancelled) {
           setError(toUiError(err));
           setLoading(false);
+          setSyncing(false);
         }
       }
     }
 
     load();
     return () => { cancelled = true; };
-  }, [mailboxId, box]);
+  }, [mailboxId, box, accountId]);
 
-  return { emails, accounts, loading, error };
+  return { emails, accounts, loading, syncing, error, refresh };
 }
