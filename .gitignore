@@ -66,3 +66,6 @@ frontend/dist/
 #Personal things
 Ignore/
 TldrawDiagrams/
+
+# Browser automation sessions
+.browser-sessions/
