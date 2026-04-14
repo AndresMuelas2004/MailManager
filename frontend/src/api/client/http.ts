@@ -47,6 +47,7 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
     method: options.method ?? "GET",
     headers,
     signal: options.signal,
+    credentials: "include",
   };
 
   if (options.body !== undefined) {

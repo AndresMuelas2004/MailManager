@@ -54,14 +54,18 @@ Note: the `POST /mailboxes/{mailbox_id}/accounts/{account_id}/drafts/{provider_d
 
 ## Frontend
 
-Stack: React + Vite + TypeScript + Tailwind. Structure:
+Stack: React + Vite + TypeScript + Tailwind + lucide-react (icons). Structure:
 
 - `src/api/` — HTTP client (`client/`), typed endpoints (`endpoints/`), DTOs (`types/`).
-- `src/app/` — Layout, providers, routing.
-- `src/pages/` — Page components.
+- `src/app/` — Layout, providers (AuthProvider, AuthContext), routing (RequireAuth guard).
+- `src/features/auth/` — Login page with Google Identity Services integration (implemented).
+- `src/features/` — Other features scaffolded (mailboxes, accounts, emails, drafts, users).
+- `src/components/` — Shared components (scaffolded).
+- `src/types/` — TypeScript declarations (GIS types).
 - `src/lib/` — Shared constants and utilities.
 - `src/styles/` — Global CSS.
-- `src/features/`, `src/components/` — scaffolded (empty).
+
+External dependency: Google Identity Services script loaded via `<script>` tag in `index.html`. Requires `VITE_GOOGLE_CLIENT_ID` env var matching the backend's `GOOGLE_CLIENT_ID`.
 
 ## Docker
 
