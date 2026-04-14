@@ -3,6 +3,7 @@ import { createBrowserRouter, RouterProvider } from "react-router-dom";
 import AppShell from "../layout/AppShell";
 import RequireAuth from "./RequireAuth";
 import LoginPage from "../../features/auth/pages/LoginPage";
+import CreateMailboxPage from "../../features/mailboxes/pages/CreateMailboxPage";
 
 const router = createBrowserRouter([
   {
@@ -15,7 +16,9 @@ const router = createBrowserRouter([
     children: [
       {
         element: <AppShell />,
-        children: [],
+        children: [
+          { index: true, element: <CreateMailboxPage /> },
+        ],
       },
     ],
   },

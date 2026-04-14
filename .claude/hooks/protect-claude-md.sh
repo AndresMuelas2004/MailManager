@@ -9,21 +9,25 @@ file_path = tool_input.get('file_path', '').replace('\\\\', '/')
 
 # Only applies to CLAUDE.md files
 if not file_path.upper().endswith('CLAUDE.MD'):
-    # For Bash, check if the command references a CLAUDE.md file
+    # For Bash, check if the command modifies a CLAUDE.md file directly
+    # (git commands are allowed — the protection is against editing content, not committing)
     if tool_name == 'Bash':
         command = tool_input.get('command', '')
         if 'CLAUDE.md' in command or 'claude.md' in command:
-            write_indicators = ['>', 'sed -i', 'tee ', 'mv ', 'cp ', 'rm ', 'del ']
-            for indicator in write_indicators:
-                if indicator in command:
-                    print(json.dumps({
-                        'hookSpecificOutput': {
-                            'hookEventName': 'PreToolUse',
-                            'permissionDecision': 'deny',
-                            'reason': f'Bash command appears to modify a CLAUDE.md file via \"{indicator.strip()}\". All CLAUDE.md files in this project are protected.'
-                        }
-                    }))
-                    sys.exit(0)
+            stripped = command.strip().lstrip('!').strip()
+            is_git = stripped.startswith('git ')
+            if not is_git:
+                write_indicators = [' > ', ' >> ', 'sed -i', 'tee ', 'mv ', 'cp ', 'rm ', 'del ']
+                for indicator in write_indicators:
+                    if indicator in command:
+                        print(json.dumps({
+                            'hookSpecificOutput': {
+                                'hookEventName': 'PreToolUse',
+                                'permissionDecision': 'deny',
+                                'reason': f'Bash command appears to modify a CLAUDE.md file via \"{indicator.strip()}\". All CLAUDE.md files in this project are protected.'
+                            }
+                        }))
+                        sys.exit(0)
     sys.exit(0)
 
 # Resolve project root to scope protection to this repo only
