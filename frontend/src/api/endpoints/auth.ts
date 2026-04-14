@@ -16,6 +16,6 @@ export function logout(): Promise<{ message: string }> {
   return request<{ message: string }>("/auth/logout", { method: "POST" });
 }
 
-export function deleteAccount(): Promise<{ message: string }> {
+export function deleteMe(): Promise<{ message: string }> {
   return request<{ message: string }>("/auth/me", { method: "DELETE" });
 }

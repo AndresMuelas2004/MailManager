@@ -1,10 +1,10 @@
-export type ErrorDetail = {
+type ErrorDetail = {
   code: string;
   message: string;
   detail?: Record<string, unknown>;
 };
 
-export type ErrorResponse = {
+type ErrorResponse = {
   error: ErrorDetail;
 };
 
