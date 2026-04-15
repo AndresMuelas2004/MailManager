@@ -133,23 +133,49 @@ _CID_REF_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
+# Matches ``url(cid:<id>)`` inside CSS values — e.g. ``style="background-image:url(cid:…)"``
+# produced by premailer when it inlines CSS rules from <style> blocks.
+_CID_URL_FUNC_PATTERN = re.compile(
+    r"""url\(\s*(?P<quote>["']?)cid:<?(?P<cid>[^"'>)\s]+?)>?(?P=quote)\s*\)""",
+    re.IGNORECASE,
+)
 
-def inline_cid_images(html: str, cid_map: dict[str, str]) -> str:
-    """Replace ``src="cid:<id>"`` references with data URLs from ``cid_map``.
 
-    Tolerant to single/double/no quotes and to optional angle brackets around
-    the CID. Unmapped CIDs are left untouched (soft fallback — a broken inline
-    image is better than losing the whole email).
+def _cid_replacer(cid_map: dict[str, str], formatter):
+    """Build a regex ``sub`` replacer that resolves ``cid:<id>`` references.
+
+    ``formatter(match, data_url)`` receives the match and the resolved data URL
+    and returns the replacement string. Unmapped CIDs fall through to the
+    original match text (soft fallback — broken image beats lost email).
     """
-    if not html or not cid_map:
-        return html
-
     def _replace(match: re.Match[str]) -> str:
         cid = match.group("cid").strip()
         data_url = cid_map.get(cid)
         if data_url is None:
             return match.group(0)
-        attr = match.group("attr")
-        return f'{attr}="{data_url}"'
+        return formatter(match, data_url)
+    return _replace
 
-    return _CID_REF_PATTERN.sub(_replace, html)
+
+def inline_cid_images(html: str, cid_map: dict[str, str]) -> str:
+    """Replace ``cid:<id>`` references with data URLs from ``cid_map``.
+
+    Handles two forms:
+    - HTML attributes: ``src="cid:…"`` / ``background="cid:…"``.
+    - CSS ``url(cid:…)`` inside ``style="…"`` (after premailer CSS inlining).
+
+    Tolerant to single/double/no quotes and optional angle brackets around
+    the CID. Unmapped CIDs are left untouched (soft fallback).
+    """
+    if not html or not cid_map:
+        return html
+
+    html = _CID_REF_PATTERN.sub(
+        _cid_replacer(cid_map, lambda m, url: f'{m.group("attr")}="{url}"'),
+        html,
+    )
+    html = _CID_URL_FUNC_PATTERN.sub(
+        _cid_replacer(cid_map, lambda _m, url: f'url("{url}")'),
+        html,
+    )
+    return html

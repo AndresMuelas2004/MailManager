@@ -203,3 +203,24 @@ class TestInlineCidImages:
     def test_empty_map_returns_html_unchanged(self):
         html = '<img src="cid:x">'
         assert inline_cid_images(html, {}) == html
+
+    def test_resolves_url_func_in_css_style(self):
+        html = '<div style="background-image:url(cid:bg@x)">hi</div>'
+        out = inline_cid_images(html, {"bg@x": "data:image/png;base64,AAAA"})
+        assert "cid:bg@x" not in out
+        assert 'url("data:image/png;base64,AAAA")' in out
+
+    def test_url_func_soft_fallback_when_cid_unknown(self):
+        html = '<div style="background-image:url(cid:unknown)">hi</div>'
+        out = inline_cid_images(html, {"other": "data:image/png;base64,AAA"})
+        assert "cid:unknown" in out
+
+    def test_url_func_with_double_quotes(self):
+        html = '<div style=\'background-image:url("cid:bg@x")\'>hi</div>'
+        out = inline_cid_images(html, {"bg@x": "data:image/png;base64,AAAA"})
+        assert 'url("data:image/png;base64,AAAA")' in out
+
+    def test_url_func_with_angle_brackets_and_whitespace(self):
+        html = '<div style="background-image: url( cid:<bg@x> )">hi</div>'
+        out = inline_cid_images(html, {"bg@x": "data:image/png;base64,AAAA"})
+        assert 'url("data:image/png;base64,AAAA")' in out

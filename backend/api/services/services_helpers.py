@@ -670,6 +670,20 @@ _RAW_TEXT_BLOCK_PATTERN = re.compile(
     re.DOTALL | re.IGNORECASE,
 )
 
+# Outlook wraps its desktop-optimized layout in MSO/IE conditional comments
+# (``<!--[if mso | IE]>…<![endif]-->``). Bleach's default ``strip_comments=True``
+# removes them wholesale, taking the real desktop layout with them and leaving
+# only the non-MSO mobile fallback (placeholders like ``<table width="4%">``
+# that collapse to a few pixels). We unwrap the *content* of these conditionals
+# before bleach so the desktop layout survives and gets sanitized normally.
+# The pattern also matches the ``[if !mso]><!-- … --><![endif]`` variant used
+# for non-MSO fallbacks; unwrapping both is safe (the surrounding comment
+# boundaries are what bleach was going to strip).
+_MSO_CONDITIONAL_PATTERN = re.compile(
+    r"<!--\s*\[if[^\]]*\]>(.*?)<!\[endif\]-->",
+    re.DOTALL | re.IGNORECASE,
+)
+
 # CSS properties safe to preserve inside ``style="..."`` attributes. The list
 # covers the vocabulary actually used by real email templates (layout, colors,
 # typography, spacing, simple borders) without opening the door to properties
@@ -715,6 +729,10 @@ def sanitize_email_html(html: str) -> str:
     """
     if not html or html.isspace():
         return html
+    # Unwrap MSO/IE conditional comments BEFORE premailer so lxml parses their
+    # content as regular markup. Doing it after premailer is too late — lxml
+    # discards conditional comment blocks when it serialises the tree back out.
+    html = _MSO_CONDITIONAL_PATTERN.sub(lambda m: m.group(1), html)
     try:
         from premailer import transform  # lazy import — avoids startup cost
         html = transform(

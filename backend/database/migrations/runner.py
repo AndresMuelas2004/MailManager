@@ -274,8 +274,13 @@ _DDL_STATEMENTS = [
     # ``data:`` URLs through the sanitizer so inline-image ``src``
     # attributes survive bleach. Safe on fresh setups (no-op if empty).
     "TRUNCATE TABLE email_content;",
+    # Migration 0016: third one-shot cache invalidation after MSO/IE
+    # conditional unwrap in the sanitizer, ``url(cid:…)`` CSS resolution
+    # in ``inline_cid_images``, and charset detection in Gmail's body
+    # decoder. Safe on fresh setups (no-op if empty).
+    "TRUNCATE TABLE email_content;",
     "DELETE FROM alembic_version;",
-    "INSERT INTO alembic_version(version_num) VALUES ('0015_invalidate_email_content_cache_data_urls');",
+    "INSERT INTO alembic_version(version_num) VALUES ('0016_invalidate_email_content_cache_mso');",
 ]
 
 

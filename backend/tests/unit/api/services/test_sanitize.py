@@ -119,3 +119,36 @@ def test_inlining_does_not_break_cid_img_src():
     )
     result = sanitize_email_html(html)
     assert 'src="cid:logo@x"' in result
+
+
+def test_unwraps_mso_conditional_desktop_layout():
+    html = (
+        '<!--[if mso | IE]>'
+        '<table width="600"><tr><td>DESKTOP</td></tr></table>'
+        '<![endif]-->'
+        '<table width="4%"><tr><td>MOBILE</td></tr></table>'
+    )
+    result = sanitize_email_html(html)
+    assert "DESKTOP" in result
+    assert 'width="600"' in result
+    # The mobile placeholder is still there — we don't try to dedupe.
+    # The goal is to recover the desktop layout.
+    assert "MOBILE" in result
+
+
+def test_unwraps_non_mso_conditional():
+    html = (
+        "<!--[if !mso]><!-->"
+        "<p>FALLBACK</p>"
+        "<!--<![endif]-->"
+    )
+    result = sanitize_email_html(html)
+    assert "FALLBACK" in result
+
+
+def test_mso_unwrap_ignores_malformed_conditional():
+    # No closing <![endif]--> → the regex doesn't match; bleach then strips
+    # the residual comment start. The inner tag survives intact.
+    html = "<!--[if mso]><table>broken"
+    result = sanitize_email_html(html)
+    assert "<!--" not in result

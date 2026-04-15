@@ -1913,3 +1913,78 @@ class TestFetchEmailContentCidResolution:
         client = self._build_client_with_payload(payload)
         content = client.fetch_email_content("msg1")
         assert content.html_body == "<p>plain html</p>"
+
+
+# ── _extract_body_from_payload + charset detection ──────────────────
+
+
+class TestExtractBodyFromPayloadCharset:
+    def test_respects_content_type_charset_iso_8859_1(self):
+        latin1_bytes = "España".encode("iso-8859-1")
+        payload = {
+            "mimeType": "multipart/alternative",
+            "parts": [{
+                "mimeType": "text/html",
+                "headers": [
+                    {"name": "Content-Type", "value": 'text/html; charset="ISO-8859-1"'},
+                ],
+                "body": {"data": _b64url(latin1_bytes)},
+            }],
+        }
+        html_body, _ = GmailClient._extract_body_from_payload(payload)
+        assert html_body == "España"
+
+    def test_defaults_to_utf8_when_no_charset_header(self):
+        utf8_bytes = "España".encode("utf-8")
+        payload = {
+            "mimeType": "multipart/alternative",
+            "parts": [{
+                "mimeType": "text/html",
+                "body": {"data": _b64url(utf8_bytes)},
+            }],
+        }
+        html_body, _ = GmailClient._extract_body_from_payload(payload)
+        assert html_body == "España"
+
+    def test_unknown_charset_falls_back_to_utf8(self):
+        payload = {
+            "mimeType": "multipart/alternative",
+            "parts": [{
+                "mimeType": "text/html",
+                "headers": [
+                    {"name": "Content-Type", "value": 'text/html; charset="Made-Up-1-1"'},
+                ],
+                "body": {"data": _b64url(b"hello")},
+            }],
+        }
+        html_body, _ = GmailClient._extract_body_from_payload(payload)
+        assert html_body == "hello"
+
+    def test_invalid_bytes_replaced_not_dropped(self):
+        # Single stray 0xFF byte is not valid UTF-8. With errors="replace"
+        # it becomes U+FFFD instead of returning None.
+        payload = {
+            "mimeType": "multipart/alternative",
+            "parts": [{
+                "mimeType": "text/html",
+                "body": {"data": _b64url(b"ok\xffdone")},
+            }],
+        }
+        html_body, _ = GmailClient._extract_body_from_payload(payload)
+        assert html_body is not None
+        assert html_body.startswith("ok")
+        assert html_body.endswith("done")
+
+    def test_charset_header_case_insensitive(self):
+        payload = {
+            "mimeType": "multipart/alternative",
+            "parts": [{
+                "mimeType": "text/plain",
+                "headers": [
+                    {"name": "content-type", "value": 'text/plain; CHARSET=iso-8859-15'},
+                ],
+                "body": {"data": _b64url("euro€".encode("iso-8859-15"))},
+            }],
+        }
+        _, text_body = GmailClient._extract_body_from_payload(payload)
+        assert text_body == "euro€"
