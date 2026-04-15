@@ -48,6 +48,12 @@ def test_allows_cid_img_src():
     assert 'src="cid:image001"' in result
 
 
+def test_allows_data_url_img_src():
+    html = '<img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUg==" alt="logo">'
+    result = sanitize_email_html(html)
+    assert 'src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUg=="' in result
+
+
 def test_empty_string_returns_empty():
     assert sanitize_email_html("") == ""
 

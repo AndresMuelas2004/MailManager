@@ -656,7 +656,7 @@ _SANITIZE_ALLOWED_ATTRIBUTES = {
     "ol": ["start", "type"],
 }
 
-_SANITIZE_ALLOWED_PROTOCOLS = ["http", "https", "mailto", "cid"]
+_SANITIZE_ALLOWED_PROTOCOLS = ["http", "https", "mailto", "cid", "data"]
 
 # Raw-text HTML elements whose contents must be stripped together with their
 # tags. bleach's ``strip=True`` only removes the tags of disallowed elements

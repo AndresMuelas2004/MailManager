@@ -270,8 +270,12 @@ _DDL_STATEMENTS = [
     # pipeline (CSS inlining + cid: image resolution). Safe on fresh setups
     # where the table is already empty.
     "TRUNCATE TABLE email_content;",
+    # Migration 0015: second one-shot cache invalidation after allowing
+    # ``data:`` URLs through the sanitizer so inline-image ``src``
+    # attributes survive bleach. Safe on fresh setups (no-op if empty).
+    "TRUNCATE TABLE email_content;",
     "DELETE FROM alembic_version;",
-    "INSERT INTO alembic_version(version_num) VALUES ('0014_invalidate_email_content_cache');",
+    "INSERT INTO alembic_version(version_num) VALUES ('0015_invalidate_email_content_cache_data_urls');",
 ]
 
 
