@@ -11,7 +11,8 @@ Operational limits enforced by MailManager. These values are hardcoded in the ba
 | Emails per sync (bootstrap) | **500 per account** | On first sync (bootstrap), the app fetches at most the 500 most recent emails from the provider. Older emails are not retrievable. |
 | Incremental sync event threshold | **100 events** (Gmail only) | If a Gmail incremental sync detects more than 100 combined events (new, deleted, label changes), it aborts and falls back to a full bootstrap sync. |
 | Email content | **Fetched on demand** | Full HTML/text body is not fetched during sync. It is retrieved from the provider when the user opens an email, then cached locally. |
-| Email deletion | **Local only** | Deleting emails removes them from the local database only. No provider API call is made (uniform no-op across Gmail and Outlook). |
+| Email deletion | **Local only — sole exception to the Provider-First Rule** | Deleting emails is the **only operation that intentionally breaks the Provider-First Rule**. No provider API call is ever made (uniform no-op across Gmail and Outlook). The email is **not removed from the user's real mailbox** at the provider — it is only soft-deleted from the application's local database (`box` set to `DELETED`). Once deleted, the email will **never appear again in MailManager**, unless the user goes into the original client (Gmail/Outlook) and restores it manually from there; in that case, the next sync will pick it up again and it will reappear in the app. |
+| Attachments | **Not supported** | Sending emails and creating/updating drafts do not accept attachments. The `EmailClient` send/draft APIs only accept text fields (subject, body, recipients). No attachment handling exists in the core, providers (Gmail/Outlook), API, or frontend. |
 
 ## Drafts
 
