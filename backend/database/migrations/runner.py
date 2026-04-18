@@ -266,21 +266,17 @@ _DDL_STATEMENTS = [
     );
     """,
     "CREATE INDEX IF NOT EXISTS idx_drafts_account_id ON drafts(account_id);",
-    # Migration 0014: one-shot cache invalidation after fixing the email HTML
-    # pipeline (CSS inlining + cid: image resolution). Safe on fresh setups
-    # where the table is already empty.
-    "TRUNCATE TABLE email_content;",
-    # Migration 0015: second one-shot cache invalidation after allowing
-    # ``data:`` URLs through the sanitizer so inline-image ``src``
-    # attributes survive bleach. Safe on fresh setups (no-op if empty).
-    "TRUNCATE TABLE email_content;",
-    # Migration 0016: third one-shot cache invalidation after MSO/IE
-    # conditional unwrap in the sanitizer, ``url(cid:…)`` CSS resolution
-    # in ``inline_cid_images``, and charset detection in Gmail's body
-    # decoder. Safe on fresh setups (no-op if empty).
+    # One-shot cache invalidations covering migrations 0014–0019. Each of
+    # those migrations truncated ``email_content`` to drop HTML cached under
+    # an older rendering pipeline (CSS inlining, ``cid:``/``data:`` images,
+    # MSO unwrap, charset normalisation, geometry mirroring, ``<style>``
+    # preservation, head-only tag scrub, Outlook-hidden discard, etc.). For a
+    # fresh bootstrap the table is empty, so a single TRUNCATE replaces all
+    # of them — the per-migration TRUNCATE statements still live in the
+    # individual Alembic files and run for incremental upgrades.
     "TRUNCATE TABLE email_content;",
     "DELETE FROM alembic_version;",
-    "INSERT INTO alembic_version(version_num) VALUES ('0016_invalidate_email_content_cache_mso');",
+    "INSERT INTO alembic_version(version_num) VALUES ('0019_invalidate_email_content_cache_pipeline_refactor');",
 ]
 
 

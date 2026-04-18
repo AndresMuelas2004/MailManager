@@ -27,7 +27,7 @@ function wrapPlainText(text: string): string {
 }
 
 function wrapHtmlEmail(html: string): string {
-  return `<!doctype html><html><head><meta charset="utf-8"><base target="_blank"><style>html,body{margin:0;padding:0;font-family:system-ui,-apple-system,Segoe UI,sans-serif;color:#18181b;background:#fff}img{max-width:100%;height:auto}</style></head><body>${html}</body></html>`;
+  return `<!doctype html><html><head><meta charset="utf-8"><base target="_blank"><style>html,body{margin:0;font-family:system-ui,-apple-system,Segoe UI,sans-serif;color:#18181b;background:#fff;overflow:auto}body{padding:16px}img{max-width:100%;height:auto}</style></head><body>${html}</body></html>`;
 }
 
 export default function EmailViewer({
@@ -119,7 +119,7 @@ export default function EmailViewer({
           </div>
         )}
       </div>
-      <div className="flex flex-1 flex-col overflow-hidden bg-white">{body}</div>
+      <div className="flex flex-1 flex-col overflow-auto bg-white">{body}</div>
     </Modal>
   );
 }
