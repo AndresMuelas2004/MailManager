@@ -5,13 +5,13 @@ Shared helpers used across service modules.
 from __future__ import annotations
 
 import logging
-import re
 from typing import Any, Iterable
 
 logger = logging.getLogger(__name__)
 
-import bleach
 from pydantic import SecretStr
+
+from api.services.email_html_pipeline import prepare_email_html as sanitize_email_html
 
 from auth import (
     AuthError,
@@ -636,129 +636,6 @@ def update_sync_cursor(
 # ---------------------------------------------------------------------------
 # Email content helpers
 # ---------------------------------------------------------------------------
-
-_SANITIZE_ALLOWED_TAGS = [
-    "a", "abbr", "b", "blockquote", "br", "center", "code", "dd", "del",
-    "div", "dl", "dt", "em", "font", "h1", "h2", "h3", "h4", "h5", "h6",
-    "hr", "i", "img", "ins", "li", "mark", "ol", "p", "pre", "q", "s",
-    "small", "span", "strong", "sub", "sup", "table", "tbody", "td",
-    "tfoot", "th", "thead", "tr", "u", "ul", "wbr",
-]
-
-_SANITIZE_ALLOWED_ATTRIBUTES = {
-    "*": ["class", "id", "style", "dir", "lang", "title", "align", "valign"],
-    "a": ["href", "target", "rel"],
-    "img": ["src", "alt", "width", "height", "border"],
-    "td": ["colspan", "rowspan", "width", "height", "align", "valign", "bgcolor"],
-    "th": ["colspan", "rowspan", "width", "height", "align", "valign", "bgcolor"],
-    "table": ["border", "cellpadding", "cellspacing", "width", "align", "bgcolor"],
-    "font": ["color", "size", "face"],
-    "ol": ["start", "type"],
-}
-
-_SANITIZE_ALLOWED_PROTOCOLS = ["http", "https", "mailto", "cid", "data"]
-
-# Raw-text HTML elements whose contents must be stripped together with their
-# tags. bleach's ``strip=True`` only removes the tags of disallowed elements
-# but preserves their text contents, which is unsafe for <script> and <style>
-# because the inner text is executable/interpreted by the browser. We remove
-# these blocks with a regex before handing the HTML to bleach. The alternation
-# ``</\1\s*>|\Z`` also matches unterminated blocks that extend to EOF, so a
-# malformed ``<script>alert(1)`` without a closing tag is still removed.
-_RAW_TEXT_BLOCK_PATTERN = re.compile(
-    r"<(script|style)\b[^>]*>.*?(?:</\1\s*>|\Z)",
-    re.DOTALL | re.IGNORECASE,
-)
-
-# Outlook wraps its desktop-optimized layout in MSO/IE conditional comments
-# (``<!--[if mso | IE]>…<![endif]-->``). Bleach's default ``strip_comments=True``
-# removes them wholesale, taking the real desktop layout with them and leaving
-# only the non-MSO mobile fallback (placeholders like ``<table width="4%">``
-# that collapse to a few pixels). We unwrap the *content* of these conditionals
-# before bleach so the desktop layout survives and gets sanitized normally.
-# The pattern also matches the ``[if !mso]><!-- … --><![endif]`` variant used
-# for non-MSO fallbacks; unwrapping both is safe (the surrounding comment
-# boundaries are what bleach was going to strip).
-_MSO_CONDITIONAL_PATTERN = re.compile(
-    r"<!--\s*\[if[^\]]*\]>(.*?)<!\[endif\]-->",
-    re.DOTALL | re.IGNORECASE,
-)
-
-# CSS properties safe to preserve inside ``style="..."`` attributes. The list
-# covers the vocabulary actually used by real email templates (layout, colors,
-# typography, spacing, simple borders) without opening the door to properties
-# that pull in remote resources or execute logic.
-_SANITIZE_ALLOWED_CSS_PROPERTIES = frozenset({
-    "align-items", "background", "background-color", "background-image",
-    "background-position", "background-repeat", "background-size", "border",
-    "border-bottom", "border-bottom-color", "border-bottom-left-radius",
-    "border-bottom-right-radius", "border-bottom-style", "border-bottom-width",
-    "border-collapse", "border-color", "border-left", "border-left-color",
-    "border-left-style", "border-left-width", "border-radius", "border-right",
-    "border-right-color", "border-right-style", "border-right-width",
-    "border-spacing", "border-style", "border-top", "border-top-color",
-    "border-top-left-radius", "border-top-right-radius", "border-top-style",
-    "border-top-width", "border-width", "bottom", "box-shadow", "box-sizing",
-    "caption-side", "clear", "color", "display", "empty-cells", "float",
-    "font", "font-family", "font-size", "font-stretch", "font-style",
-    "font-variant", "font-weight", "height", "justify-content", "left",
-    "letter-spacing", "line-height", "list-style", "list-style-position",
-    "list-style-type", "margin", "margin-bottom", "margin-left", "margin-right",
-    "margin-top", "max-height", "max-width", "min-height", "min-width",
-    "mso-line-height-rule", "mso-table-lspace", "mso-table-rspace", "opacity",
-    "outline", "overflow", "overflow-wrap", "overflow-x", "overflow-y",
-    "padding", "padding-bottom", "padding-left", "padding-right", "padding-top",
-    "page-break-after", "page-break-before", "position", "right",
-    "table-layout", "text-align", "text-decoration", "text-indent",
-    "text-overflow", "text-shadow", "text-transform", "top", "vertical-align",
-    "visibility", "white-space", "width", "word-break", "word-spacing",
-    "word-wrap", "z-index",
-})
-
-_SANITIZE_ALLOWED_CSS_SVG_PROPERTIES = frozenset()
-
-
-def sanitize_email_html(html: str) -> str:
-    """Sanitize email HTML to remove dangerous tags, attributes and protocols.
-
-    Inlines CSS rules from <style> blocks into element ``style`` attributes
-    before the regex/bleach pass so the visual styling survives. Only
-    inlinable rules are kept; @media / @font-face blocks are dropped with the
-    residual <style> tag. If the inliner fails on malformed HTML, the content
-    still goes through bleach (email renders flat but no 500).
-    """
-    if not html or html.isspace():
-        return html
-    # Unwrap MSO/IE conditional comments BEFORE premailer so lxml parses their
-    # content as regular markup. Doing it after premailer is too late — lxml
-    # discards conditional comment blocks when it serialises the tree back out.
-    html = _MSO_CONDITIONAL_PATTERN.sub(lambda m: m.group(1), html)
-    try:
-        from premailer import transform  # lazy import — avoids startup cost
-        html = transform(
-            html,
-            keep_style_tags=False,
-            remove_classes=False,
-            cssutils_logging_level="CRITICAL",
-            disable_validation=True,
-        )
-    except Exception as exc:
-        logger.warning("premailer failed (%s): %s", type(exc).__name__, exc)
-    html = _RAW_TEXT_BLOCK_PATTERN.sub("", html)
-    from bleach.css_sanitizer import CSSSanitizer  # lazy import — optional dep
-    css_sanitizer = CSSSanitizer(
-        allowed_css_properties=_SANITIZE_ALLOWED_CSS_PROPERTIES,
-        allowed_svg_properties=_SANITIZE_ALLOWED_CSS_SVG_PROPERTIES,
-    )
-    return bleach.clean(
-        html,
-        tags=_SANITIZE_ALLOWED_TAGS,
-        attributes=_SANITIZE_ALLOWED_ATTRIBUTES,
-        protocols=_SANITIZE_ALLOWED_PROTOCOLS,
-        css_sanitizer=css_sanitizer,
-        strip=True,
-    )
-
 
 def get_email_content(
     account_id: str,

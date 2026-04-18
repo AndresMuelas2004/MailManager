@@ -34,6 +34,7 @@ from .errors import (
     EmailRefreshFailedError,
 )
 from .helpers import (
+    decode_mime_body,
     http_error_detail,
     inline_cid_images,
     parse_expiry,
@@ -1614,30 +1615,21 @@ class GmailClient(EmailClient):
     def _extract_body_from_payload(payload: dict[str, Any]) -> tuple[str | None, str | None]:
         # Gmail returns the raw MIME tree (nested parts[] with base64url-encoded bodies)
         # instead of decoded content like Outlook does. This function recursively traverses
-        # that tree to find and decode the text/html and text/plain parts, honouring the
-        # charset declared in each part's Content-Type header (falls back to UTF-8).
+        # that tree to find and decode the text/html and text/plain parts. Charset handling
+        # lives in ``decode_mime_body`` (shared helper) — UTF-8-first with validated fallback
+        # to the declared charset, which prevents mojibake on senders that mislabel UTF-8
+        # bodies as iso-8859-1 / windows-1252.
         html_body: str | None = None
         text_body: str | None = None
 
-        def _charset_of(part: dict[str, Any]) -> str:
+        def _charset_of(part: dict[str, Any]) -> str | None:
             for header in part.get("headers", []) or []:
                 if (header.get("name") or "").lower() == "content-type":
                     value = header.get("value") or ""
                     match = re.search(r'charset\s*=\s*"?([^";\s]+)"?', value, re.IGNORECASE)
                     if match:
                         return match.group(1).strip()
-            return "utf-8"
-
-        def _decode_body_data(data: str, charset: str) -> str | None:
-            try:
-                raw = base64.urlsafe_b64decode(data + "==")
-            except binascii.Error:
-                return None
-            try:
-                return raw.decode(charset, errors="replace")
-            except LookupError:
-                # Unknown/invalid charset — fall back to UTF-8 with replacement.
-                return raw.decode("utf-8", errors="replace")
+            return None
 
         def _traverse(part: dict[str, Any]) -> None:
             nonlocal html_body, text_body
@@ -1651,11 +1643,11 @@ class GmailClient(EmailClient):
                 return
             charset = _charset_of(part)
             if mime_type == "text/html" and html_body is None:
-                decoded = _decode_body_data(body_data, charset)
+                decoded = decode_mime_body(body_data, charset)
                 if decoded is not None:
                     html_body = decoded
             elif mime_type == "text/plain" and text_body is None:
-                decoded = _decode_body_data(body_data, charset)
+                decoded = decode_mime_body(body_data, charset)
                 if decoded is not None:
                     text_body = decoded
 

@@ -7,6 +7,9 @@ and are shared by all EmailClient subclasses.
 
 from __future__ import annotations
 
+import base64
+import binascii
+import logging
 import re
 from datetime import datetime, timezone
 from typing import Any
@@ -18,6 +21,8 @@ from .errors import (
     EmailInvalidExpiryError,
     EmailInvalidTokenDataError,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def http_error_detail(exc: Any) -> tuple[str, str]:
@@ -126,6 +131,49 @@ def wrap_account_tokens(token_data: dict[str, Any]) -> dict[str, Any]:
     if "refresh_token" in payload and payload["refresh_token"] is not None:
         payload["refresh_token"] = SecretStr(str(payload.get("refresh_token")))
     return payload
+
+
+def decode_mime_body(data_b64url: str, charset_hint: str | None) -> str | None:
+    """Decode a base64url-encoded MIME body into a Python str.
+
+    Gmail returns each MIME part's body as ``base64url`` bytes plus a declared
+    ``charset`` taken from the part's ``Content-Type`` header. That declaration
+    is unreliable: senders frequently mislabel UTF-8 bytes as ``iso-8859-1`` or
+    ``windows-1252`` (a common bug in older mail clients). Trusting the hint
+    blindly produces mojibake — UTF-8 byte sequences like ``C3 A9`` (``é``)
+    get re-interpreted as Latin-1 and rendered as ``Ã©``.
+
+    Strategy (UTF-8-first with validated fallback):
+    1. **Try UTF-8 strict.** Real UTF-8 bodies always decode without error.
+       A legitimate Latin-1 body with any non-ASCII byte ≥ 0x80 will fail
+       on UTF-8 continuation-byte validation, so we cannot misdecode it here.
+    2. **Fallback to the declared charset** (if any, and if it isn't UTF-8
+       itself). Covers correctly-labelled Latin-1 / Windows-1252 / Big5 / etc.
+    3. **Last resort: UTF-8 with ``errors="replace"``.** Preserves the ASCII
+       portion of the body even when both prior attempts fail.
+
+    Returns ``None`` only if the base64 payload itself is invalid.
+    """
+    try:
+        raw = base64.urlsafe_b64decode(data_b64url + "==")
+    except binascii.Error:
+        return None
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError:
+        pass
+    hint = (charset_hint or "").strip().lower()
+    if hint and hint not in {"utf-8", "utf8"}:
+        try:
+            decoded = raw.decode(hint, errors="replace")
+            logger.debug(
+                "decode_mime_body: UTF-8 strict failed; decoded with declared charset=%s",
+                hint,
+            )
+            return decoded
+        except LookupError:
+            pass
+    return raw.decode("utf-8", errors="replace")
 
 
 _CID_REF_PATTERN = re.compile(
