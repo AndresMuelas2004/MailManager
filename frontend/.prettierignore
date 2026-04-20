@@ -1,0 +1,7 @@
+dist
+dist-ssr
+node_modules
+package-lock.json
+*.lock
+*.md
+public
