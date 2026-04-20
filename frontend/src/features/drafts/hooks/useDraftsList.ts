@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { listDrafts, syncDrafts } from '../../../api/endpoints/drafts';
 import { listAccounts } from '../../../api/endpoints/accounts';
 import { toUiError } from '../../../api/client/errors';
-import type { DraftOut, AccountOut } from '../../../api/types/dto';
+import type { AccountOut, DraftOut } from '../../../api/types/dto';
 import type { UiError } from '../../../api/client/errors';
 
 type UseDraftsListReturn = {
@@ -17,67 +18,58 @@ type UseDraftsListReturn = {
 };
 
 export default function useDraftsList(mailboxId: string, accountId?: string): UseDraftsListReturn {
-  const [drafts, setDrafts] = useState<DraftOut[]>([]);
-  const [accounts, setAccounts] = useState<AccountOut[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [syncing, setSyncing] = useState(false);
-  const [error, setError] = useState<UiError | null>(null);
+  const queryClient = useQueryClient();
+  const draftsKey = ['drafts', mailboxId, accountId ?? null] as const;
+  const accountsKey = ['accounts', mailboxId] as const;
 
-  const refresh = useCallback(async () => {
-    try {
-      const fresh = await listDrafts(mailboxId, accountId);
-      setDrafts(fresh);
-    } catch (err) {
-      setError(toUiError(err));
-    }
-  }, [mailboxId, accountId]);
+  const draftsQuery = useQuery({
+    queryKey: draftsKey,
+    queryFn: () => listDrafts(mailboxId, accountId),
+    enabled: mailboxId.length > 0,
+  });
 
-  const syncAndRefresh = useCallback(async () => {
-    setError(null);
-    setSyncing(true);
-    try {
-      await syncDrafts(mailboxId, accountId);
-      const fresh = await listDrafts(mailboxId, accountId);
-      setDrafts(fresh);
-    } catch (err) {
-      setError(toUiError(err));
-    } finally {
-      setSyncing(false);
-    }
-  }, [mailboxId, accountId]);
+  const accountsQuery = useQuery({
+    queryKey: accountsKey,
+    queryFn: () => listAccounts(mailboxId),
+    enabled: mailboxId.length > 0,
+  });
+
+  const syncMutation = useMutation({
+    mutationFn: () => syncDrafts(mailboxId, accountId),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['drafts', mailboxId] }),
+  });
 
   useEffect(() => {
-    let cancelled = false;
-
-    async function load() {
-      try {
-        const [cachedDrafts, accountList] = await Promise.all([
-          listDrafts(mailboxId, accountId),
-          listAccounts(mailboxId),
-        ]);
-        if (cancelled) return;
-        setDrafts(cachedDrafts);
-        setAccounts(accountList);
-        setLoading(false);
-
-        await syncDrafts(mailboxId, accountId).catch(() => {});
-        if (cancelled) return;
-
-        const freshDrafts = await listDrafts(mailboxId, accountId);
-        if (!cancelled) setDrafts(freshDrafts);
-      } catch (err) {
-        if (!cancelled) {
-          setError(toUiError(err));
-          setLoading(false);
-        }
-      }
-    }
-
-    load();
-    return () => {
-      cancelled = true;
-    };
+    if (mailboxId.length === 0) return;
+    syncMutation.mutate();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mailboxId, accountId]);
 
-  return { drafts, accounts, loading, syncing, error, refresh, syncAndRefresh };
+  const refresh = useCallback(async () => {
+    await queryClient.invalidateQueries({ queryKey: draftsKey });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [queryClient, mailboxId, accountId]);
+
+  const syncAndRefresh = useCallback(async () => {
+    await syncMutation.mutateAsync();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mailboxId, accountId]);
+
+  const error = draftsQuery.error
+    ? toUiError(draftsQuery.error)
+    : accountsQuery.error
+      ? toUiError(accountsQuery.error)
+      : syncMutation.error
+        ? toUiError(syncMutation.error)
+        : null;
+
+  return {
+    drafts: draftsQuery.data ?? [],
+    accounts: accountsQuery.data ?? [],
+    loading: draftsQuery.isLoading || accountsQuery.isLoading,
+    syncing: syncMutation.isPending || (draftsQuery.isFetching && !draftsQuery.isLoading),
+    error,
+    refresh,
+    syncAndRefresh,
+  };
 }
