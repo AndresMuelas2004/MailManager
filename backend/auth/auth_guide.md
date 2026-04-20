@@ -1,7 +1,12 @@
-> **Permanent rule (do not remove unless the user explicitly asks):**
-> This document should only contain information that Claude cannot deduce from reading the code,
-> or that would be complex / context-expensive to deduce. Information easily derived from the code
-> does not need to be here.
+> **Permanent rule — read before editing this file.**
+>
+> This file is loaded into context on every Claude session. A line here only justifies its tokens if it cannot be reconstructed by reading the code.
+>
+> **Before writing or keeping a line, ask: could I rebuild this by opening the relevant file(s) for ~30 seconds?**
+> - **YES → delete it.** The code is the source of truth. Catalogs of what modules / functions / tests do, paraphrases of names or bodies, exhaustive kwarg / field / config enumerations, flow tables that mirror existing file or symbol names, and step-by-step recipes for code that is itself readable all fall here. Delete them on sight.
+> - **NO → keep it.** Silent traps when extending the layer, cross-file asymmetries (siblings that don't behave alike), ordering / lifecycle rules whose violation breaks everything, invariants whose silent regression would slip through review, historical decisions whose rationale isn't in the code, and fixed identifiers (UUIDs, seeded data, magic constants) that cannot be recomputed — those earn their tokens.
+>
+> **When updating this file, re-read every section and delete anything that has since migrated into the code.** Staleness is worse than silence.
 
 # Auth Layer Guide
 
@@ -11,36 +16,30 @@
 
 **Authority rule**: the code of this layer must respect what is documented here. If there is a discrepancy between this guide and existing code, this guide is the reference — fix the code, not the guide. When new functionality is added, update this guide at the end of the task to reflect the new reality.
 
-## Design Decisions
+## Traps
 
-### Claim validation stays in the service layer
+### `TransportError` must be caught **before** `GoogleAuthError`
 
-`verify_google_token` only verifies cryptographic validity and provider issuance. Business-logic checks (missing `sub`, missing `email`) are done in the service layer (`auth_service.google_login`), which raises `Unauthorized`. This separation keeps the auth layer reusable and free of API concerns.
+`google.auth.exceptions.TransportError` is a **subclass** of `GoogleAuthError`. Its handler must come first. Swap the order and network failures get misclassified as provider rejections — users see 401 "invalid token" when the real problem is that Google's verification endpoint is unreachable (which should surface as 502 via `AuthTokenNetworkError`).
 
-### Settings are loaded per call
+### Never-double-wrap guard — conditional, currently unneeded
 
-`get_auth_settings()` is called on each service invocation (not cached globally), so env var changes take effect immediately without restart.
-
-## Behavioral Contracts — Traps to Avoid
-
-### TransportError must be caught before GoogleAuthError
-
-In `google_auth/google.py`, `TransportError` is a subclass of `GoogleAuthError`. It **must** be caught first — otherwise it gets swallowed by the `GoogleAuthError` handler and misclassified as a provider rejection instead of a network error.
-
-### Never-double-wrap rule for future providers
-
-The current `google.py` calls only `id_token.verify_oauth2_token(...)` — a Google library function that cannot raise `AuthError` subclasses, so no guard is needed. If a future provider module calls an internal helper that raises `AuthTokenError` subclasses from inside a `try` block, that module **must** add the re-raise guard:
+The guard pattern described in `auth/CLAUDE.md` §7 rule 6 is only required when code inside a `try` block can raise an `AuthError` subclass. The current `google.py` does not need it: `id_token.verify_oauth2_token(...)` is a Google library call that cannot produce `AuthError`. A future provider whose `verify_*_token` helper internally calls something that raises `AuthTokenError` **must** add:
 
 ```python
-except AuthTokenError:    # Guard: re-raise before generic catch
+except AuthTokenError:  # re-raise before the generic catch
     raise
 ```
 
-## Extension
+Otherwise the `except Exception` below re-wraps our own typed error as `AuthTokenInvalidError`, losing the network/provider/format classification.
 
-### New identity provider checklist (project-specific additions)
+### Claim validation lives in the service, not in the auth layer
 
-Beyond `CLAUDE.md` § 9:
+`verify_google_token` only verifies cryptographic validity and provider issuance. Business-logic checks (`sub` present, `email` present, etc.) belong in `auth_service.google_login`, which raises `Unauthorized`. This separation keeps the auth layer reusable across endpoints and free of API concerns.
 
-- The existing `AuthTokenError` subclasses (`AuthTokenNetworkError`, `AuthTokenInvalidError`, `AuthTokenProviderError`) are provider-agnostic. Only create new subclasses if a provider introduces a failure mode that needs a different HTTP response.
-- Update this guide (capture technique ordering) with the new provider's exception ordering.
+## Extension — new identity provider
+
+See the general checklist in `auth/CLAUDE.md` §9. Project-specific additions:
+
+- The existing `AuthTokenError` subclasses (`AuthTokenNetworkError`, `AuthTokenInvalidError`, `AuthTokenProviderError`) are provider-agnostic. Only create a new subclass when a provider introduces a failure mode that needs a different HTTP response or client-side handling.
+- When adding a new provider module, update the "TransportError must be caught first" trap above with that provider's specific subclass relationship (or confirm it doesn't apply).

@@ -1,3 +1,13 @@
+> **Permanent rule — read before editing this file.**
+>
+> This file is loaded into context on every Claude session. A line here only justifies its tokens if it cannot be reconstructed by reading the code.
+>
+> **Before writing or keeping a line, ask: could I rebuild this by opening the relevant file(s) for ~30 seconds?**
+> - **YES → delete it.** The code is the source of truth. Catalogs of what modules / functions / tests do, paraphrases of names or bodies, exhaustive kwarg / field / config enumerations, flow tables that mirror existing file or symbol names, and step-by-step recipes for code that is itself readable all fall here. Delete them on sight.
+> - **NO → keep it.** Silent traps when extending the layer, cross-file asymmetries (siblings that don't behave alike), ordering / lifecycle rules whose violation breaks everything, invariants whose silent regression would slip through review, historical decisions whose rationale isn't in the code, and fixed identifiers (UUIDs, seeded data, magic constants) that cannot be recomputed — those earn their tokens.
+>
+> **When updating this file, re-read every section and delete anything that has since migrated into the code.** Staleness is worse than silence.
+
 # Frontend Guide — Project-Specific (maintained by Claude)
 
 This file contains details specific to MailManager's frontend. Update it when the project changes (new features, new routes, architectural shifts). Do not modify `CLAUDE.md`.
