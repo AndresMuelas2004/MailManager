@@ -1,7 +1,10 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
-import { listMailboxes, createMailbox } from '../../api/endpoints/mailboxes';
+import { createMailbox, listMailboxes } from '../../api/endpoints/mailboxes';
 import type { MailboxOut } from '../../api/types/dto';
+
+export const MAILBOXES_QUERY_KEY = ['mailboxes'] as const;
 
 type UseMailboxListReturn = {
   mailboxes: MailboxOut[];
@@ -10,32 +13,35 @@ type UseMailboxListReturn = {
 };
 
 export default function useMailboxList(currentMailboxId: string): UseMailboxListReturn {
-  const [mailboxes, setMailboxes] = useState<MailboxOut[]>([]);
+  const queryClient = useQueryClient();
 
-  useEffect(() => {
-    let cancelled = false;
-    listMailboxes()
-      .then((list) => {
-        if (!cancelled) setMailboxes(list);
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  const { data: mailboxes = [] } = useQuery({
+    queryKey: MAILBOXES_QUERY_KEY,
+    queryFn: listMailboxes,
+  });
+
+  const createMutation = useMutation({
+    mutationFn: (displayName: string) => createMailbox({ display_name: displayName }),
+    onSuccess: (created) => {
+      queryClient.setQueryData<MailboxOut[]>(MAILBOXES_QUERY_KEY, (prev) =>
+        prev ? [...prev, created] : [created],
+      );
+    },
+  });
+
+  const handleCreate = useCallback(
+    async (displayName: string): Promise<MailboxOut | null> => {
+      try {
+        return await createMutation.mutateAsync(displayName);
+      } catch {
+        return null;
+      }
+    },
+    [createMutation],
+  );
 
   const currentMailbox = mailboxes.find((m) => m.mailbox_id === currentMailboxId);
   const currentMailboxName = currentMailbox?.display_name ?? '';
-
-  const handleCreate = useCallback(async (displayName: string): Promise<MailboxOut | null> => {
-    try {
-      const created = await createMailbox({ display_name: displayName });
-      setMailboxes((prev) => [...prev, created]);
-      return created;
-    } catch {
-      return null;
-    }
-  }, []);
 
   return { mailboxes, currentMailboxName, handleCreate };
 }
