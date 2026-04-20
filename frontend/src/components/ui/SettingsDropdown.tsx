@@ -1,7 +1,7 @@
-import { useState } from "react";
-import { LogOut, Trash2 } from "lucide-react";
+import { useState } from 'react';
+import { LogOut, Trash2 } from 'lucide-react';
 
-import ConfirmPopover from "../common/ConfirmPopover";
+import ConfirmPopover from '../common/ConfirmPopover';
 
 type Props = {
   onLogout: () => void;

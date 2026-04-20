@@ -1,11 +1,11 @@
-import { useCallback, useState } from "react";
+import { useCallback, useState } from 'react';
 
-import { listAccounts } from "../../../api/endpoints/accounts";
-import type { AccountOut, DraftOut } from "../../../api/types/dto";
-import type { UiError } from "../../../api/client/errors";
-import type { ComposerMode } from "../../../lib/types";
-import useComposerForm from "./useComposerForm";
-import useDraftPersistence from "./useDraftPersistence";
+import { listAccounts } from '../../../api/endpoints/accounts';
+import type { AccountOut, DraftOut } from '../../../api/types/dto';
+import type { UiError } from '../../../api/client/errors';
+import type { ComposerMode } from '../../../lib/types';
+import useComposerForm from './useComposerForm';
+import useDraftPersistence from './useDraftPersistence';
 
 type OpenNewDraftArgs = {
   accountId?: string;
@@ -43,24 +43,19 @@ type UseDraftComposerReturn = {
   setRefreshCallback: (fn: (() => void | Promise<void>) | null) => void;
 };
 
-export default function useDraftComposer(
-  mailboxId: string | null,
-): UseDraftComposerReturn {
+export default function useDraftComposer(mailboxId: string | null): UseDraftComposerReturn {
   const [mode, setMode] = useState<ComposerMode | null>(null);
   const [accounts, setAccounts] = useState<AccountOut[]>([]);
   const [providerDraftId, setProviderDraftIdState] = useState<string | null>(null);
-  const [refreshCallback, setRefreshCallbackState] = useState<
-    (() => void | Promise<void>) | null
-  >(null);
+  const [refreshCallback, setRefreshCallbackState] = useState<(() => void | Promise<void>) | null>(
+    null,
+  );
   const form = useComposerForm();
   const persistence = useDraftPersistence();
 
-  const setRefreshCallback = useCallback(
-    (fn: (() => void | Promise<void>) | null) => {
-      setRefreshCallbackState(() => fn);
-    },
-    [],
-  );
+  const setRefreshCallback = useCallback((fn: (() => void | Promise<void>) | null) => {
+    setRefreshCallbackState(() => fn);
+  }, []);
 
   const triggerRefresh = useCallback(async () => {
     if (refreshCallback) {
@@ -94,7 +89,7 @@ export default function useDraftComposer(
   const openForNewEmail = useCallback(() => {
     if (!mailboxId) return;
     resetAll();
-    setMode("new_email");
+    setMode('new_email');
     loadAccountsIfNeeded().then((accs) => {
       if (accs.length > 0 && !form.accountId) {
         form.setAccountId(accs[0].account_id);
@@ -106,7 +101,7 @@ export default function useDraftComposer(
     (args?: OpenNewDraftArgs) => {
       if (!mailboxId) return;
       resetAll();
-      setMode("new_draft");
+      setMode('new_draft');
       const preset = args?.accountId;
       loadAccountsIfNeeded().then((accs) => {
         if (preset && accs.some((a) => a.account_id === preset)) {
@@ -123,7 +118,7 @@ export default function useDraftComposer(
     (draft: DraftOut) => {
       if (!mailboxId) return;
       resetAll();
-      setMode("edit_draft");
+      setMode('edit_draft');
       form.seedFromDraft(draft);
       setProviderDraftIdState(draft.provider_draft_id);
       persistence.setProviderDraftId(draft.provider_draft_id);
@@ -156,11 +151,7 @@ export default function useDraftComposer(
 
   const handleSaveDraft = useCallback(async () => {
     if (!mailboxId || !form.accountId) return;
-    const ok = await persistence.saveDraftNow(
-      mailboxId,
-      form.accountId,
-      form.buildDraftPayload(),
-    );
+    const ok = await persistence.saveDraftNow(mailboxId, form.accountId, form.buildDraftPayload());
     if (ok) {
       close();
       await triggerRefresh();
@@ -188,9 +179,9 @@ export default function useDraftComposer(
     const currentAccountId = form.accountId;
 
     const shouldPersist =
-      (currentMode === "new_email" || currentMode === "new_draft")
+      currentMode === 'new_email' || currentMode === 'new_draft'
         ? form.hasAnyContent()
-        : currentMode === "edit_draft"
+        : currentMode === 'edit_draft'
           ? form.isDirty()
           : false;
 
@@ -204,18 +195,18 @@ export default function useDraftComposer(
   }, [close, form, mailboxId, mode, persistence, triggerRefresh]);
 
   const canSendEmail =
-    mode === "new_email" &&
+    mode === 'new_email' &&
     form.accountId.length > 0 &&
     form.parseRecipients(form.to).length > 0 &&
     !persistence.sending;
 
   const canSaveDraft =
-    (mode === "new_draft" || mode === "edit_draft") &&
+    (mode === 'new_draft' || mode === 'edit_draft') &&
     form.accountId.length > 0 &&
     !persistence.saving;
 
   const canSendDraft =
-    mode === "edit_draft" &&
+    mode === 'edit_draft' &&
     form.accountId.length > 0 &&
     providerDraftId !== null &&
     form.parseRecipients(form.to).length > 0 &&

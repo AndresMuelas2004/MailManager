@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect } from 'react';
 
 type Props = {
   title: string;
@@ -12,17 +12,17 @@ type Props = {
 export default function ConfirmModal({
   title,
   description,
-  confirmLabel = "Eliminar",
-  cancelLabel = "Cancelar",
+  confirmLabel = 'Eliminar',
+  cancelLabel = 'Cancelar',
   onCancel,
   onConfirm,
 }: Props) {
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") onCancel();
+      if (event.key === 'Escape') onCancel();
     }
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
   }, [onCancel]);
 
   return (

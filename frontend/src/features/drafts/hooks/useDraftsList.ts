@@ -1,10 +1,10 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from 'react';
 
-import { listDrafts, syncDrafts } from "../../../api/endpoints/drafts";
-import { listAccounts } from "../../../api/endpoints/accounts";
-import { toUiError } from "../../../api/client/errors";
-import type { DraftOut, AccountOut } from "../../../api/types/dto";
-import type { UiError } from "../../../api/client/errors";
+import { listDrafts, syncDrafts } from '../../../api/endpoints/drafts';
+import { listAccounts } from '../../../api/endpoints/accounts';
+import { toUiError } from '../../../api/client/errors';
+import type { DraftOut, AccountOut } from '../../../api/types/dto';
+import type { UiError } from '../../../api/client/errors';
 
 type UseDraftsListReturn = {
   drafts: DraftOut[];
@@ -16,10 +16,7 @@ type UseDraftsListReturn = {
   syncAndRefresh: () => Promise<void>;
 };
 
-export default function useDraftsList(
-  mailboxId: string,
-  accountId?: string,
-): UseDraftsListReturn {
+export default function useDraftsList(mailboxId: string, accountId?: string): UseDraftsListReturn {
   const [drafts, setDrafts] = useState<DraftOut[]>([]);
   const [accounts, setAccounts] = useState<AccountOut[]>([]);
   const [loading, setLoading] = useState(true);

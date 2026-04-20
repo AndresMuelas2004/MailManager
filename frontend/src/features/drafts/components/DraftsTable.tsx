@@ -1,12 +1,12 @@
-import { useMemo } from "react";
-import type { ReactNode } from "react";
-import { RefreshCw, Plus } from "lucide-react";
+import { useMemo } from 'react';
+import type { ReactNode } from 'react';
+import { RefreshCw, Plus } from 'lucide-react';
 
-import { buildAccountMap, formatShortDate, resolveAccount } from "../../../lib/formatters";
-import Spinner from "../../../components/common/Spinner";
-import Checkbox from "../../../components/common/Checkbox";
-import type { HeaderCheckboxState } from "../../../lib/hooks/useSelection";
-import type { DraftOut, AccountOut } from "../../../api/types/dto";
+import { buildAccountMap, formatShortDate, resolveAccount } from '../../../lib/formatters';
+import Spinner from '../../../components/common/Spinner';
+import Checkbox from '../../../components/common/Checkbox';
+import type { HeaderCheckboxState } from '../../../lib/hooks/useSelection';
+import type { DraftOut, AccountOut } from '../../../api/types/dto';
 
 type Props = {
   drafts: DraftOut[];
@@ -36,7 +36,7 @@ export default function DraftsTable({
   isSelected,
   onToggle,
   onToggleAll,
-  headerCheckboxState = "unchecked",
+  headerCheckboxState = 'unchecked',
   bulkBar,
 }: Props) {
   const accountsById = useMemo(() => buildAccountMap(accounts), [accounts]);
@@ -75,9 +75,7 @@ export default function DraftsTable({
                 className="flex items-center gap-1.5 rounded px-2 py-1 text-[13px] font-medium text-zinc-600 transition-colors hover:bg-zinc-100 disabled:opacity-50"
                 aria-label="Sincronizar borradores"
               >
-                <RefreshCw
-                  className={`h-[18px] w-[18px] ${syncing ? "animate-spin" : ""}`}
-                />
+                <RefreshCw className={`h-[18px] w-[18px] ${syncing ? 'animate-spin' : ''}`} />
                 Sincronizar
               </button>
             ) : (
@@ -110,21 +108,14 @@ export default function DraftsTable({
       </div>
 
       {drafts.length === 0 ? (
-        <div className="py-16 text-center text-sm text-zinc-400">
-          No hay borradores guardados
-        </div>
+        <div className="py-16 text-center text-sm text-zinc-400">No hay borradores guardados</div>
       ) : (
         drafts.map((draft) => {
-          const { providerName, accountEmail } = resolveAccount(
-            draft.account_id,
-            accountsById,
-          );
+          const { providerName, accountEmail } = resolveAccount(draft.account_id, accountsById);
           const toDisplay =
-            draft.to_recipients.length > 0
-              ? draft.to_recipients[0]
-              : "(Sin destinatario)";
+            draft.to_recipients.length > 0 ? draft.to_recipients[0] : '(Sin destinatario)';
           const checked = isSelected?.(draft) ?? false;
-          const rowBg = checked ? "bg-blue-50" : "bg-white";
+          const rowBg = checked ? 'bg-blue-50' : 'bg-white';
           const clickable = Boolean(onRowClick);
 
           return (
@@ -132,29 +123,23 @@ export default function DraftsTable({
               key={`${draft.provider_draft_id}-${draft.account_id}`}
               onClick={clickable ? () => onRowClick!(draft) : undefined}
               className={`flex h-11 items-center gap-3 border-b border-zinc-100 px-8 ${rowBg} ${
-                clickable ? "cursor-pointer hover:bg-zinc-50" : ""
+                clickable ? 'cursor-pointer hover:bg-zinc-50' : ''
               }`}
             >
               {selectionEnabled ? (
                 <Checkbox
-                  state={checked ? "checked" : "unchecked"}
+                  state={checked ? 'checked' : 'unchecked'}
                   onClick={() => onToggle!(draft)}
                   ariaLabel="Seleccionar borrador"
                 />
               ) : (
                 <div className="h-[18px] w-[18px] rounded border-[1.5px] border-zinc-300" />
               )}
-              <div className="w-[120px] truncate text-[13px] text-zinc-900">
-                {providerName}
-              </div>
-              <div className="w-[170px] truncate text-xs text-zinc-900">
-                {toDisplay}
-              </div>
-              <div className="w-[170px] truncate text-xs text-zinc-900">
-                {accountEmail}
-              </div>
+              <div className="w-[120px] truncate text-[13px] text-zinc-900">{providerName}</div>
+              <div className="w-[170px] truncate text-xs text-zinc-900">{toDisplay}</div>
+              <div className="w-[170px] truncate text-xs text-zinc-900">{accountEmail}</div>
               <div className="flex-1 truncate text-[13px] text-zinc-900">
-                {draft.subject || "(Sin asunto)"}
+                {draft.subject || '(Sin asunto)'}
               </div>
               <div className="w-16 text-right text-xs text-zinc-900">
                 {formatShortDate(draft.updated_at)}

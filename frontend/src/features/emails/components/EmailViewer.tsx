@@ -1,10 +1,10 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef } from 'react';
 
-import Modal from "../../../components/common/Modal";
-import Spinner from "../../../components/common/Spinner";
-import useEmailContent from "../hooks/useEmailContent";
-import { buildAccountMap, formatDate, resolveAccount } from "../../../lib/formatters";
-import type { EmailMetadataOut, AccountOut } from "../../../api/types/dto";
+import Modal from '../../../components/common/Modal';
+import Spinner from '../../../components/common/Spinner';
+import useEmailContent from '../hooks/useEmailContent';
+import { buildAccountMap, formatDate, resolveAccount } from '../../../lib/formatters';
+import type { EmailMetadataOut, AccountOut } from '../../../api/types/dto';
 
 type Props = {
   mailboxId: string;
@@ -15,10 +15,7 @@ type Props = {
 };
 
 function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
+  return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
 function wrapPlainText(text: string): string {
@@ -30,13 +27,7 @@ function wrapHtmlEmail(html: string): string {
   return `<!doctype html><html><head><meta charset="utf-8"><base target="_blank"><style>html,body{margin:0;font-family:system-ui,-apple-system,Segoe UI,sans-serif;color:#18181b;background:#fff;overflow:auto}body{padding:16px}img{max-width:100%;height:auto}</style></head><body>${html}</body></html>`;
 }
 
-export default function EmailViewer({
-  mailboxId,
-  email,
-  accounts,
-  onClose,
-  onRead,
-}: Props) {
+export default function EmailViewer({ mailboxId, email, accounts, onClose, onRead }: Props) {
   const { content, loading, error } = useEmailContent(mailboxId, {
     account_id: email.account_id,
     provider_message_id: email.provider_message_id,
@@ -50,12 +41,13 @@ export default function EmailViewer({
     onRead(email).catch(() => {});
   }, [email, onRead]);
 
-  const { providerName, accountEmail } = resolveAccount(email.account_id, buildAccountMap(accounts));
-  const fromLabel = email.from_name
-    ? `${email.from_name} <${email.from_email}>`
-    : email.from_email;
+  const { providerName, accountEmail } = resolveAccount(
+    email.account_id,
+    buildAccountMap(accounts),
+  );
+  const fromLabel = email.from_name ? `${email.from_name} <${email.from_email}>` : email.from_email;
 
-  const subject = email.subject ?? "(Sin asunto)";
+  const subject = email.subject ?? '(Sin asunto)';
 
   let body: React.ReactNode;
   if (loading) {

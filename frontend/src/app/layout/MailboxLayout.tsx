@@ -1,12 +1,12 @@
-import { useCallback } from "react";
-import { Outlet, useNavigate, useParams } from "react-router-dom";
+import { useCallback } from 'react';
+import { Outlet, useNavigate, useParams } from 'react-router-dom';
 
-import { useAuth } from "../providers/AuthContext";
-import { useDraftComposerContext } from "../providers/DraftComposerContext";
-import useCurrentUser from "../../lib/hooks/useCurrentUser";
-import useMailboxList from "../../lib/hooks/useMailboxList";
-import Sidebar from "../../components/ui/Sidebar";
-import { MAILBOX_NAV_ITEMS } from "./mailboxNavItems";
+import { useAuth } from '../providers/AuthContext';
+import { useDraftComposerContext } from '../providers/DraftComposerContext';
+import useCurrentUser from '../../lib/hooks/useCurrentUser';
+import useMailboxList from '../../lib/hooks/useMailboxList';
+import Sidebar from '../../components/ui/Sidebar';
+import { MAILBOX_NAV_ITEMS } from './mailboxNavItems';
 
 function MailboxShell({ mailboxId }: { mailboxId: string }) {
   const navigate = useNavigate();
@@ -18,13 +18,13 @@ function MailboxShell({ mailboxId }: { mailboxId: string }) {
 
   const handleLogout = useCallback(async () => {
     await logout();
-    navigate("/login", { replace: true });
+    navigate('/login', { replace: true });
   }, [logout, navigate]);
 
   const handleDeleteAccount = useCallback(async () => {
     await deleteCurrentUser();
     await logout();
-    navigate("/login", { replace: true });
+    navigate('/login', { replace: true });
   }, [deleteCurrentUser, logout, navigate]);
 
   const handleMailboxSelect = useCallback(

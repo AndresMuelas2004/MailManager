@@ -1,10 +1,10 @@
-import { useState } from "react";
-import { NavLink } from "react-router-dom";
-import { Inbox, Send, Link, Settings, ChevronDown } from "lucide-react";
-import type { ComponentType } from "react";
+import { useState } from 'react';
+import { NavLink } from 'react-router-dom';
+import { Inbox, Send, Link, Settings, ChevronDown } from 'lucide-react';
+import type { ComponentType } from 'react';
 
-import MailboxDropdown from "./MailboxDropdown";
-import SettingsDropdown from "./SettingsDropdown";
+import MailboxDropdown from './MailboxDropdown';
+import SettingsDropdown from './SettingsDropdown';
 
 type MailboxItem = {
   mailbox_id: string;
@@ -62,7 +62,7 @@ export default function Sidebar({
           <div className="flex items-center gap-2.5">
             <Inbox className="h-[18px] w-[18px] text-blue-600" />
             <span className="text-sm font-semibold text-zinc-900">
-              {mailboxName || "Cargando..."}
+              {mailboxName || 'Cargando...'}
             </span>
           </div>
           <ChevronDown className="h-4 w-4 text-zinc-500" />
@@ -72,8 +72,14 @@ export default function Sidebar({
           <MailboxDropdown
             mailboxes={mailboxes}
             currentMailboxId={mailboxId}
-            onSelect={(id) => { setDropdownOpen(false); onMailboxSelect(id); }}
-            onCreate={(name) => { setDropdownOpen(false); onMailboxCreate(name); }}
+            onSelect={(id) => {
+              setDropdownOpen(false);
+              onMailboxSelect(id);
+            }}
+            onCreate={(name) => {
+              setDropdownOpen(false);
+              onMailboxCreate(name);
+            }}
           />
         )}
       </div>
@@ -85,9 +91,7 @@ export default function Sidebar({
             to={`${base}/${path}`}
             className={({ isActive }) =>
               `flex h-10 items-center gap-3 rounded-lg px-3 text-sm font-medium ${
-                isActive
-                  ? "bg-blue-50 text-blue-600"
-                  : "text-zinc-500 hover:bg-zinc-50"
+                isActive ? 'bg-blue-50 text-blue-600' : 'text-zinc-500 hover:bg-zinc-50'
               }`
             }
           >
@@ -105,9 +109,7 @@ export default function Sidebar({
         to={`${base}/accounts`}
         className={({ isActive }) =>
           `flex h-10 items-center gap-3 rounded-lg px-3 text-sm font-semibold ${
-            isActive
-              ? "bg-blue-50 text-blue-600"
-              : "text-zinc-500 hover:bg-zinc-50"
+            isActive ? 'bg-blue-50 text-blue-600' : 'text-zinc-500 hover:bg-zinc-50'
           }`
         }
       >
@@ -137,8 +139,14 @@ export default function Sidebar({
         </button>
         {settingsOpen && (
           <SettingsDropdown
-            onLogout={() => { setSettingsOpen(false); onLogout(); }}
-            onDeleteAccount={() => { setSettingsOpen(false); onDeleteAccount(); }}
+            onLogout={() => {
+              setSettingsOpen(false);
+              onLogout();
+            }}
+            onDeleteAccount={() => {
+              setSettingsOpen(false);
+              onDeleteAccount();
+            }}
           />
         )}
       </div>

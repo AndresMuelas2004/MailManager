@@ -1,5 +1,5 @@
-import EmailViewer from "./EmailViewer";
-import type { EmailMetadataOut, AccountOut } from "../../../api/types/dto";
+import EmailViewer from './EmailViewer';
+import type { EmailMetadataOut, AccountOut } from '../../../api/types/dto';
 
 type Props = {
   mailboxId: string;
@@ -9,13 +9,7 @@ type Props = {
   onRead: (email: EmailMetadataOut) => Promise<void>;
 };
 
-export default function ViewerMount({
-  mailboxId,
-  openedEmail,
-  accounts,
-  onClose,
-  onRead,
-}: Props) {
+export default function ViewerMount({ mailboxId, openedEmail, accounts, onClose, onRead }: Props) {
   if (!openedEmail) return null;
   return (
     <EmailViewer

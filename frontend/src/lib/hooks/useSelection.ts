@@ -1,6 +1,6 @@
-import { useCallback, useState } from "react";
+import { useCallback, useState } from 'react';
 
-export type HeaderCheckboxState = "checked" | "indeterminate" | "unchecked";
+export type HeaderCheckboxState = 'checked' | 'indeterminate' | 'unchecked';
 
 const DEFAULT_TOP_N = 50;
 
@@ -47,21 +47,18 @@ export default function useSelection<T>(
     [keyOf, topN],
   );
 
-  const isSelected = useCallback(
-    (item: T) => selectedKeys.has(keyOf(item)),
-    [selectedKeys, keyOf],
-  );
+  const isSelected = useCallback((item: T) => selectedKeys.has(keyOf(item)), [selectedKeys, keyOf]);
 
   const headerState = useCallback(
     (items: T[]): HeaderCheckboxState => {
-      if (selectedKeys.size === 0) return "unchecked";
+      if (selectedKeys.size === 0) return 'unchecked';
       const visible = items.slice(0, topN);
       let matched = 0;
       for (const item of visible) {
         if (selectedKeys.has(keyOf(item))) matched++;
       }
-      if (matched === visible.length && matched === selectedKeys.size) return "checked";
-      return "indeterminate";
+      if (matched === visible.length && matched === selectedKeys.size) return 'checked';
+      return 'indeterminate';
     },
     [selectedKeys, keyOf, topN],
   );

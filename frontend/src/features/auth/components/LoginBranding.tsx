@@ -1,4 +1,4 @@
-import { Inbox, Shield, FolderOpen } from "lucide-react";
+import { Inbox, Shield, FolderOpen } from 'lucide-react';
 
 export default function LoginBranding() {
   return (
@@ -6,11 +6,7 @@ export default function LoginBranding() {
       <div className="flex flex-col items-center gap-6">
         <div className="flex items-center gap-3">
           <div className="h-[52px] w-[52px] shrink-0 overflow-hidden rounded-[14px]">
-            <img
-              src="/logo.png"
-              alt="MailManager logo"
-              className="h-full w-full object-cover"
-            />
+            <img src="/logo.png" alt="MailManager logo" className="h-full w-full object-cover" />
           </div>
           <h1 className="text-[38px] font-extrabold tracking-tight">MailManager</h1>
         </div>
@@ -29,9 +25,7 @@ export default function LoginBranding() {
         </li>
         <li className="flex items-center gap-3">
           <Shield className="h-[22px] w-[22px] shrink-0 text-white" />
-          <span className="text-[15px] text-white/[0.87]">
-            Autenticación segura con Google
-          </span>
+          <span className="text-[15px] text-white/[0.87]">Autenticación segura con Google</span>
         </li>
         <li className="flex items-center gap-3">
           <FolderOpen className="h-[22px] w-[22px] shrink-0 text-white" />

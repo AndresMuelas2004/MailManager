@@ -1,14 +1,10 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useRef, useState } from 'react';
 
-import {
-  createDraft,
-  updateDraft,
-  sendDraft,
-} from "../../../api/endpoints/drafts";
-import { sendEmail } from "../../../api/endpoints/emails";
-import { toUiError } from "../../../api/client/errors";
-import type { UiError } from "../../../api/client/errors";
-import type { DraftPayload } from "./useComposerForm";
+import { createDraft, updateDraft, sendDraft } from '../../../api/endpoints/drafts';
+import { sendEmail } from '../../../api/endpoints/emails';
+import { toUiError } from '../../../api/client/errors';
+import type { UiError } from '../../../api/client/errors';
+import type { DraftPayload } from './useComposerForm';
 
 export type UseDraftPersistenceReturn = {
   sending: boolean;
@@ -79,10 +75,10 @@ export default function useDraftPersistence(): UseDraftPersistenceReturn {
       } catch (err) {
         const uiErr = toUiError(err);
         const isRecipientError =
-          uiErr.code === "recipients_missing" || uiErr.code === "email_send_error";
+          uiErr.code === 'recipients_missing' || uiErr.code === 'email_send_error';
         setError({
           ...uiErr,
-          message: isRecipientError ? "Destinatario no encontrado" : uiErr.message,
+          message: isRecipientError ? 'Destinatario no encontrado' : uiErr.message,
         });
         return false;
       } finally {

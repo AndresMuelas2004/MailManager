@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useState } from 'react';
 
 import {
   moveToTrash,
@@ -6,10 +6,10 @@ import {
   markAsSpam,
   restoreFromSpam,
   trashAction,
-} from "../../../api/endpoints/emails";
-import { toUiError } from "../../../api/client/errors";
-import type { EmailItemRef } from "../../../api/types/dto";
-import type { UiError } from "../../../api/client/errors";
+} from '../../../api/endpoints/emails';
+import { toUiError } from '../../../api/client/errors';
+import type { EmailItemRef } from '../../../api/types/dto';
+import type { UiError } from '../../../api/client/errors';
 
 type Params = {
   mailboxId: string;
@@ -24,10 +24,7 @@ export type UseEmailBulkActionsReturn = {
   setReadStatusItems: (items: EmailItemRef[], isRead: boolean) => Promise<void>;
   spamItems: (items: EmailItemRef[]) => Promise<void>;
   restoreFromSpamItems: (items: EmailItemRef[]) => Promise<void>;
-  trashActionItems: (
-    items: EmailItemRef[],
-    action: "delete" | "restore",
-  ) => Promise<void>;
+  trashActionItems: (items: EmailItemRef[], action: 'delete' | 'restore') => Promise<void>;
 };
 
 export default function useEmailBulkActions({
@@ -77,7 +74,7 @@ export default function useEmailBulkActions({
   );
 
   const trashActionItems = useCallback(
-    (items: EmailItemRef[], action: "delete" | "restore") =>
+    (items: EmailItemRef[], action: 'delete' | 'restore') =>
       run(() => trashAction(mailboxId, action, items)),
     [mailboxId, run],
   );

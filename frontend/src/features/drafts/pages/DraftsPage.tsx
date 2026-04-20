@@ -1,14 +1,14 @@
-import { useEffect, useMemo } from "react";
-import { useParams } from "react-router-dom";
+import { useEffect, useMemo } from 'react';
+import { useParams } from 'react-router-dom';
 
-import { useDraftComposerContext } from "../../../app/providers/DraftComposerContext";
-import useDraftsList from "../hooks/useDraftsList";
-import useDraftBulkDelete from "../hooks/useDraftBulkDelete";
-import DraftsTable from "../components/DraftsTable";
-import DraftBulkActionsBar from "../components/DraftBulkActionsBar";
-import useSelection from "../../../lib/hooks/useSelection";
-import type { DraftRef } from "../types";
-import type { DraftOut } from "../../../api/types/dto";
+import { useDraftComposerContext } from '../../../app/providers/DraftComposerContext';
+import useDraftsList from '../hooks/useDraftsList';
+import useDraftBulkDelete from '../hooks/useDraftBulkDelete';
+import DraftsTable from '../components/DraftsTable';
+import DraftBulkActionsBar from '../components/DraftBulkActionsBar';
+import useSelection from '../../../lib/hooks/useSelection';
+import type { DraftRef } from '../types';
+import type { DraftOut } from '../../../api/types/dto';
 
 function draftKey(d: DraftOut): string {
   return `${d.account_id}|${d.provider_draft_id}`;
@@ -16,8 +16,9 @@ function draftKey(d: DraftOut): string {
 
 export default function DraftsPage() {
   const { mailboxId } = useParams<{ mailboxId: string }>();
-  const { drafts, accounts, loading, syncing, error, refresh, syncAndRefresh } =
-    useDraftsList(mailboxId!);
+  const { drafts, accounts, loading, syncing, error, refresh, syncAndRefresh } = useDraftsList(
+    mailboxId!,
+  );
 
   const selection = useSelection<DraftOut>(draftKey);
   const composer = useDraftComposerContext();

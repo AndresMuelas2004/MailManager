@@ -1,5 +1,5 @@
-import AuthProvider from "./AuthProvider";
-import AppRouter from "../routes/router";
+import AuthProvider from './AuthProvider';
+import AppRouter from '../routes/router';
 
 export default function Providers() {
   return (

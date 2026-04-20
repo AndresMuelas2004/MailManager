@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { Inbox, Plus, Check } from "lucide-react";
+import { useState } from 'react';
+import { Inbox, Plus, Check } from 'lucide-react';
 
 type MailboxItem = {
   mailbox_id: string;
@@ -13,15 +13,20 @@ type Props = {
   onCreate: (displayName: string) => void;
 };
 
-export default function MailboxDropdown({ mailboxes, currentMailboxId, onSelect, onCreate }: Props) {
+export default function MailboxDropdown({
+  mailboxes,
+  currentMailboxId,
+  onSelect,
+  onCreate,
+}: Props) {
   const [creating, setCreating] = useState(false);
-  const [newName, setNewName] = useState("");
+  const [newName, setNewName] = useState('');
 
   function handleCreate() {
     const trimmed = newName.trim();
     if (trimmed.length === 0) return;
     onCreate(trimmed);
-    setNewName("");
+    setNewName('');
     setCreating(false);
   }
 
@@ -36,9 +41,7 @@ export default function MailboxDropdown({ mailboxes, currentMailboxId, onSelect,
         >
           <Inbox className="h-4 w-4 text-blue-600" />
           <span className="flex-1 text-zinc-900">{m.display_name}</span>
-          {m.mailbox_id === currentMailboxId && (
-            <Check className="h-4 w-4 text-blue-600" />
-          )}
+          {m.mailbox_id === currentMailboxId && <Check className="h-4 w-4 text-blue-600" />}
         </button>
       ))}
 
@@ -50,7 +53,9 @@ export default function MailboxDropdown({ mailboxes, currentMailboxId, onSelect,
             type="text"
             value={newName}
             onChange={(e) => setNewName(e.target.value)}
-            onKeyDown={(e) => { if (e.key === "Enter") handleCreate(); }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') handleCreate();
+            }}
             placeholder="Nombre de la bandeja"
             autoFocus
             className="h-8 flex-1 rounded-lg border border-zinc-200 px-2 text-sm text-zinc-900 placeholder:text-zinc-400 focus:border-blue-600 focus:outline-none"

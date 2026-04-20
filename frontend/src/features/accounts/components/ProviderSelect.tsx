@@ -1,7 +1,7 @@
-import { useState } from "react";
-import { ChevronDown, Mail } from "lucide-react";
+import { useState } from 'react';
+import { ChevronDown, Mail } from 'lucide-react';
 
-import { PROVIDER_OPTIONS, getProviderMeta } from "../../../lib/providers";
+import { PROVIDER_OPTIONS, getProviderMeta } from '../../../lib/providers';
 
 type Props = {
   value: string;
@@ -37,7 +37,10 @@ export default function ProviderSelect({ value, onChange }: Props) {
             <button
               key={p.id}
               type="button"
-              onClick={() => { onChange(p.id); setOpen(false); }}
+              onClick={() => {
+                onChange(p.id);
+                setOpen(false);
+              }}
               className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm hover:bg-zinc-50"
             >
               <Mail className={`h-4 w-4 ${p.accentTextClass}`} />

@@ -1,6 +1,6 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useRef, useState } from 'react';
 
-import type { DraftOut } from "../../../api/types/dto";
+import type { DraftOut } from '../../../api/types/dto';
 
 export type ComposerSnapshot = {
   accountId: string;
@@ -46,13 +46,13 @@ export type UseComposerFormReturn = {
 
 function parseRecipientsImpl(value: string): string[] {
   return value
-    .split(",")
+    .split(',')
     .map((r) => r.trim())
     .filter(Boolean);
 }
 
 function joinRecipients(items: string[]): string {
-  return items.join(", ");
+  return items.join(', ');
 }
 
 function snapshotsDiffer(a: ComposerSnapshot, b: ComposerSnapshot): boolean {
@@ -66,21 +66,21 @@ function snapshotsDiffer(a: ComposerSnapshot, b: ComposerSnapshot): boolean {
 }
 
 export default function useComposerForm(): UseComposerFormReturn {
-  const [accountId, setAccountId] = useState("");
-  const [to, setTo] = useState("");
-  const [cc, setCc] = useState("");
-  const [bcc, setBcc] = useState("");
-  const [subject, setSubject] = useState("");
-  const [body, setBody] = useState("");
+  const [accountId, setAccountId] = useState('');
+  const [to, setTo] = useState('');
+  const [cc, setCc] = useState('');
+  const [bcc, setBcc] = useState('');
+  const [subject, setSubject] = useState('');
+  const [body, setBody] = useState('');
   const snapshotRef = useRef<ComposerSnapshot | null>(null);
 
   const reset = useCallback(() => {
-    setAccountId("");
-    setTo("");
-    setCc("");
-    setBcc("");
-    setSubject("");
-    setBody("");
+    setAccountId('');
+    setTo('');
+    setCc('');
+    setBcc('');
+    setSubject('');
+    setBody('');
     snapshotRef.current = null;
   }, []);
 

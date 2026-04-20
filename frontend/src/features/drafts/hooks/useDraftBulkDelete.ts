@@ -1,9 +1,9 @@
-import { useCallback, useState } from "react";
+import { useCallback, useState } from 'react';
 
-import { deleteDraft } from "../../../api/endpoints/drafts";
-import { toUiError } from "../../../api/client/errors";
-import type { UiError } from "../../../api/client/errors";
-import type { DraftRef } from "../types";
+import { deleteDraft } from '../../../api/endpoints/drafts';
+import { toUiError } from '../../../api/client/errors';
+import type { UiError } from '../../../api/client/errors';
+import type { DraftRef } from '../types';
 
 type Params = {
   mailboxId: string;
@@ -31,23 +31,21 @@ export default function useDraftBulkDelete({
       const confirmMsg =
         items.length > 1
           ? `¿Eliminar ${items.length} borradores? Esta acción no se puede deshacer.`
-          : "¿Eliminar este borrador? Esta acción no se puede deshacer.";
+          : '¿Eliminar este borrador? Esta acción no se puede deshacer.';
       if (!window.confirm(confirmMsg)) return;
 
       setLoading(true);
       setError(null);
       try {
         const results = await Promise.allSettled(
-          items.map((i) =>
-            deleteDraft(mailboxId, i.account_id, i.provider_draft_id),
-          ),
+          items.map((i) => deleteDraft(mailboxId, i.account_id, i.provider_draft_id)),
         );
-        const failed = results.filter((r) => r.status === "rejected");
+        const failed = results.filter((r) => r.status === 'rejected');
         if (failed.length > 0) {
           const firstFailure = failed[0] as PromiseRejectedResult;
           const base = toUiError(firstFailure.reason);
           setError({
-            code: base.code ?? "partial_delete",
+            code: base.code ?? 'partial_delete',
             message:
               failed.length === items.length
                 ? `No se pudieron eliminar los borradores: ${base.message}`

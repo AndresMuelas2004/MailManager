@@ -1,9 +1,9 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState } from 'react';
 
-import { getEmailContent } from "../../../api/endpoints/emails";
-import { toUiError } from "../../../api/client/errors";
-import type { EmailContentOut } from "../../../api/types/dto";
-import type { UiError } from "../../../api/client/errors";
+import { getEmailContent } from '../../../api/endpoints/emails';
+import { toUiError } from '../../../api/client/errors';
+import type { EmailContentOut } from '../../../api/types/dto';
+import type { UiError } from '../../../api/client/errors';
 
 type Target = { account_id: string; provider_message_id: string };
 
@@ -13,10 +13,7 @@ type UseEmailContentReturn = {
   error: UiError | null;
 };
 
-export default function useEmailContent(
-  mailboxId: string,
-  target: Target,
-): UseEmailContentReturn {
+export default function useEmailContent(mailboxId: string, target: Target): UseEmailContentReturn {
   const [content, setContent] = useState<EmailContentOut | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<UiError | null>(null);
@@ -38,7 +35,9 @@ export default function useEmailContent(
         setLoading(false);
       });
 
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [mailboxId, accountId, providerMessageId]);
 
   return { content, loading, error };

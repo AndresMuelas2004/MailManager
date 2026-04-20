@@ -1,16 +1,16 @@
-import { useEffect, useMemo } from "react";
-import { useParams } from "react-router-dom";
+import { useEffect, useMemo } from 'react';
+import { useParams } from 'react-router-dom';
 
-import { useDraftComposerContext } from "../../../app/providers/DraftComposerContext";
-import useDraftsList from "../hooks/useDraftsList";
-import useDraftBulkDelete from "../hooks/useDraftBulkDelete";
-import DraftsTable from "../components/DraftsTable";
-import DraftBulkActionsBar from "../components/DraftBulkActionsBar";
-import AccountTabs from "../../emails/components/AccountTabs";
-import useSelection from "../../../lib/hooks/useSelection";
-import { isGenericLabel } from "../../../lib/providers";
-import type { DraftRef } from "../types";
-import type { DraftOut } from "../../../api/types/dto";
+import { useDraftComposerContext } from '../../../app/providers/DraftComposerContext';
+import useDraftsList from '../hooks/useDraftsList';
+import useDraftBulkDelete from '../hooks/useDraftBulkDelete';
+import DraftsTable from '../components/DraftsTable';
+import DraftBulkActionsBar from '../components/DraftBulkActionsBar';
+import AccountTabs from '../../emails/components/AccountTabs';
+import useSelection from '../../../lib/hooks/useSelection';
+import { isGenericLabel } from '../../../lib/providers';
+import type { DraftRef } from '../types';
+import type { DraftOut } from '../../../api/types/dto';
 
 function draftKey(d: DraftOut): string {
   return `${d.account_id}|${d.provider_draft_id}`;
@@ -21,8 +21,10 @@ export default function AccountDraftsPage() {
     mailboxId: string;
     accountId: string;
   }>();
-  const { drafts, accounts, loading, syncing, error, refresh, syncAndRefresh } =
-    useDraftsList(mailboxId!, accountId!);
+  const { drafts, accounts, loading, syncing, error, refresh, syncAndRefresh } = useDraftsList(
+    mailboxId!,
+    accountId!,
+  );
 
   const selection = useSelection<DraftOut>(draftKey);
   const composer = useDraftComposerContext();
@@ -53,8 +55,7 @@ export default function AccountDraftsPage() {
       ? !isGenericLabel(account.display_label, account.provider)
       : false;
     const email = account?.email_address ?? account?.display_label ?? accountId!;
-    const computedTitle =
-      hasCustomLabel && account ? `${account.display_label} - ${email}` : email;
+    const computedTitle = hasCustomLabel && account ? `${account.display_label} - ${email}` : email;
     const computedBandeja =
       hasCustomLabel && account ? `Bandeja ${account.display_label}` : `Bandeja ${email}`;
     return { title: computedTitle, bandejaLabel: computedBandeja };

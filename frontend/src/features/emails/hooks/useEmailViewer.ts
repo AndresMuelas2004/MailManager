@@ -1,7 +1,7 @@
-import { useCallback, useState } from "react";
+import { useCallback, useState } from 'react';
 
-import { updateReadStatus } from "../../../api/endpoints/emails";
-import type { EmailMetadataOut, EmailItemRef } from "../../../api/types/dto";
+import { updateReadStatus } from '../../../api/endpoints/emails';
+import type { EmailMetadataOut, EmailItemRef } from '../../../api/types/dto';
 
 function toItem(e: EmailMetadataOut): EmailItemRef {
   return { account_id: e.account_id, provider_message_id: e.provider_message_id };

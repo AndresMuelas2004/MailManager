@@ -1,4 +1,4 @@
-type Position = "top" | "bottom";
+type Position = 'top' | 'bottom';
 
 type Props = {
   title: string;
@@ -13,16 +13,13 @@ type Props = {
 export default function ConfirmPopover({
   title,
   description,
-  confirmLabel = "Eliminar",
-  cancelLabel = "Cancelar",
-  position = "bottom",
+  confirmLabel = 'Eliminar',
+  cancelLabel = 'Cancelar',
+  position = 'bottom',
   onCancel,
   onConfirm,
 }: Props) {
-  const anchor =
-    position === "top"
-      ? "bottom-full left-0 mb-2"
-      : "right-0 top-full mt-1";
+  const anchor = position === 'top' ? 'bottom-full left-0 mb-2' : 'right-0 top-full mt-1';
   return (
     <div
       className={`absolute ${anchor} z-30 w-72 rounded-xl border border-zinc-200 bg-white p-5 shadow-lg`}

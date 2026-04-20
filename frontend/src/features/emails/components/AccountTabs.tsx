@@ -1,6 +1,6 @@
-import { NavLink } from "react-router-dom";
-import { Inbox, Send, ShieldAlert, FileEdit, Trash2 } from "lucide-react";
-import type { ComponentType } from "react";
+import { NavLink } from 'react-router-dom';
+import { Inbox, Send, ShieldAlert, FileEdit, Trash2 } from 'lucide-react';
+import type { ComponentType } from 'react';
 
 type TabDef = {
   to: string;
@@ -13,13 +13,13 @@ type Props = {
   inboxLabel?: string;
 };
 
-export default function AccountTabs({ basePath, inboxLabel = "Bandeja" }: Props) {
+export default function AccountTabs({ basePath, inboxLabel = 'Bandeja' }: Props) {
   const tabs: TabDef[] = [
     { to: `${basePath}/inbox`, label: inboxLabel, icon: Inbox },
-    { to: `${basePath}/sent`, label: "Enviados", icon: Send },
-    { to: `${basePath}/spam`, label: "Spam", icon: ShieldAlert },
-    { to: `${basePath}/drafts`, label: "Borradores", icon: FileEdit },
-    { to: `${basePath}/trash`, label: "Papelera", icon: Trash2 },
+    { to: `${basePath}/sent`, label: 'Enviados', icon: Send },
+    { to: `${basePath}/spam`, label: 'Spam', icon: ShieldAlert },
+    { to: `${basePath}/drafts`, label: 'Borradores', icon: FileEdit },
+    { to: `${basePath}/trash`, label: 'Papelera', icon: Trash2 },
   ];
 
   return (
@@ -31,8 +31,8 @@ export default function AccountTabs({ basePath, inboxLabel = "Bandeja" }: Props)
           className={({ isActive }) =>
             `flex items-center gap-1.5 border-b-2 px-3 py-2.5 text-sm font-medium transition-colors ${
               isActive
-                ? "border-blue-600 text-blue-600"
-                : "border-transparent text-zinc-500 hover:text-zinc-700"
+                ? 'border-blue-600 text-blue-600'
+                : 'border-transparent text-zinc-500 hover:text-zinc-700'
             }`
           }
         >

@@ -1,14 +1,14 @@
-import { useMemo } from "react";
-import { useParams } from "react-router-dom";
+import { useMemo } from 'react';
+import { useParams } from 'react-router-dom';
 
-import useEmailList from "../hooks/useEmailList";
-import useEmailViewer from "../hooks/useEmailViewer";
-import useBulkBar from "../hooks/useBulkBar";
-import EmailTable from "../components/EmailTable";
-import ViewerMount from "../components/ViewerMount";
-import AccountTabs from "../components/AccountTabs";
-import { isGenericLabel } from "../../../lib/providers";
-import type { EmailBox } from "../../../lib/types";
+import useEmailList from '../hooks/useEmailList';
+import useEmailViewer from '../hooks/useEmailViewer';
+import useBulkBar from '../hooks/useBulkBar';
+import EmailTable from '../components/EmailTable';
+import ViewerMount from '../components/ViewerMount';
+import AccountTabs from '../components/AccountTabs';
+import { isGenericLabel } from '../../../lib/providers';
+import type { EmailBox } from '../../../lib/types';
 
 type Props = {
   box: EmailBox;
@@ -19,11 +19,7 @@ export default function AccountInboxPage({ box }: Props) {
     mailboxId: string;
     accountId: string;
   }>();
-  const { emails, accounts, loading, error, refresh } = useEmailList(
-    mailboxId!,
-    box,
-    accountId!,
-  );
+  const { emails, accounts, loading, error, refresh } = useEmailList(mailboxId!, box, accountId!);
 
   const { selection, bulkError, bulkBar } = useBulkBar({
     mailboxId: mailboxId!,
@@ -40,8 +36,7 @@ export default function AccountInboxPage({ box }: Props) {
       ? !isGenericLabel(account.display_label, account.provider)
       : false;
     const email = account?.email_address ?? account?.display_label ?? accountId!;
-    const computedTitle =
-      hasCustomLabel && account ? `${account.display_label} - ${email}` : email;
+    const computedTitle = hasCustomLabel && account ? `${account.display_label} - ${email}` : email;
     const computedBandeja =
       hasCustomLabel && account ? `Bandeja ${account.display_label}` : `Bandeja ${email}`;
     return { title: computedTitle, bandejaLabel: computedBandeja };

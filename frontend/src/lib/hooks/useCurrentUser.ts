@@ -1,9 +1,9 @@
-import { useCallback, useState } from "react";
+import { useCallback, useState } from 'react';
 
-import { deleteMe, getMe } from "../../api/endpoints/auth";
-import { toUiError } from "../../api/client/errors";
-import type { UiError } from "../../api/client/errors";
-import type { UserOut } from "../../api/types/dto";
+import { deleteMe, getMe } from '../../api/endpoints/auth';
+import { toUiError } from '../../api/client/errors';
+import type { UiError } from '../../api/client/errors';
+import type { UserOut } from '../../api/types/dto';
 
 export type UseCurrentUserReturn = {
   loading: boolean;

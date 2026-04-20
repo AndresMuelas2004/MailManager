@@ -1,5 +1,5 @@
-import { Lightbulb } from "lucide-react";
-import type { UiError } from "../../../api/client/errors";
+import { Lightbulb } from 'lucide-react';
+import type { UiError } from '../../../api/client/errors';
 
 type Props = {
   displayName: string;
@@ -30,16 +30,12 @@ export default function CreateMailboxForm({
             Crea tu primera bandeja
           </h2>
           <p className="text-base leading-[1.5] text-slate-500">
-            Dale un nombre a tu bandeja de correo unificada.
-            Podrás cambiarlo más tarde.
+            Dale un nombre a tu bandeja de correo unificada. Podrás cambiarlo más tarde.
           </p>
         </div>
 
         <div className="flex flex-col gap-2">
-          <label
-            htmlFor="mailbox-name"
-            className="text-sm font-medium text-zinc-900"
-          >
+          <label htmlFor="mailbox-name" className="text-sm font-medium text-zinc-900">
             Nombre de la bandeja
           </label>
           <input
@@ -48,7 +44,7 @@ export default function CreateMailboxForm({
             value={displayName}
             onChange={(e) => onDisplayNameChange(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === "Enter" && canSubmit) onSubmit();
+              if (e.key === 'Enter' && canSubmit) onSubmit();
             }}
             placeholder="Ej: Trabajo, Personal, Universidad..."
             maxLength={120}
@@ -62,26 +58,22 @@ export default function CreateMailboxForm({
           onClick={onSubmit}
           className={`flex h-[52px] w-full items-center justify-center rounded-xl text-base font-semibold transition-colors ${
             canSubmit
-              ? "bg-blue-600 text-white shadow-lg shadow-blue-600/25 hover:bg-blue-700"
-              : "cursor-not-allowed bg-gray-200 text-gray-400"
+              ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/25 hover:bg-blue-700'
+              : 'cursor-not-allowed bg-gray-200 text-gray-400'
           }`}
         >
           {loading ? (
             <div className="h-5 w-5 animate-spin rounded-full border-2 border-white border-t-transparent" />
           ) : (
-            "Crear bandeja"
+            'Crear bandeja'
           )}
         </button>
 
-        {error && (
-          <p className="text-center text-sm text-red-600">{error.message}</p>
-        )}
+        {error && <p className="text-center text-sm text-red-600">{error.message}</p>}
 
         <div className="flex items-center justify-center gap-2">
           <Lightbulb className="h-4 w-4 text-slate-400" />
-          <span className="text-[13px] text-slate-400">
-            Puedes crear más bandejas después
-          </span>
+          <span className="text-[13px] text-slate-400">Puedes crear más bandejas después</span>
         </div>
       </div>
     </div>

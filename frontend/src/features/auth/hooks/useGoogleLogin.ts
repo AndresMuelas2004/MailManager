@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from 'react';
 
-import { useAuth } from "../../../app/providers/AuthContext";
-import { toUiError } from "../../../api/client/errors";
-import type { UiError } from "../../../api/client/errors";
+import { useAuth } from '../../../app/providers/AuthContext';
+import { toUiError } from '../../../api/client/errors';
+import type { UiError } from '../../../api/client/errors';
 
 type UseGoogleLoginReturn = {
   buttonRef: React.RefObject<HTMLDivElement | null>;
@@ -34,16 +34,12 @@ export default function useGoogleLogin(): UseGoogleLoginReturn {
   useEffect(() => {
     const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID as string | undefined;
     if (!clientId) {
-      setError({ message: "Google Client ID is not configured." });
+      setError({ message: 'Google Client ID is not configured.' });
       return;
     }
 
     const intervalId = setInterval(() => {
-      if (
-        typeof google !== "undefined" &&
-        google.accounts?.id &&
-        buttonRef.current
-      ) {
+      if (typeof google !== 'undefined' && google.accounts?.id && buttonRef.current) {
         clearInterval(intervalId);
 
         google.accounts.id.initialize({
@@ -52,10 +48,10 @@ export default function useGoogleLogin(): UseGoogleLoginReturn {
         });
 
         google.accounts.id.renderButton(buttonRef.current, {
-          theme: "filled_blue",
-          size: "large",
-          shape: "pill",
-          text: "continue_with",
+          theme: 'filled_blue',
+          size: 'large',
+          shape: 'pill',
+          text: 'continue_with',
           width: 400,
         });
       }

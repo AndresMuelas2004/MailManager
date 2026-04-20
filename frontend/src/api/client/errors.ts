@@ -20,7 +20,7 @@ export class ApiError extends Error {
 
   constructor(message: string, code: string, status?: number, detail?: Record<string, unknown>) {
     super(message);
-    this.name = "ApiError";
+    this.name = 'ApiError';
     this.code = code;
     this.status = status;
     this.detail = detail;
@@ -36,14 +36,12 @@ export function toApiError(status: number, payload?: unknown): ApiError {
   if (data?.error?.code) {
     return new ApiError(data.error.message, data.error.code, status, data.error.detail);
   }
-  const message = typeof payload === "string" && payload.length > 0
-    ? payload
-    : "Request failed";
-  return new ApiError(message, "http_error", status);
+  const message = typeof payload === 'string' && payload.length > 0 ? payload : 'Request failed';
+  return new ApiError(message, 'http_error', status);
 }
 
 export function toNetworkError(message: string): ApiError {
-  return new ApiError(message, "network_error");
+  return new ApiError(message, 'network_error');
 }
 
 export function toUiError(error: unknown): UiError {
@@ -53,8 +51,8 @@ export function toUiError(error: unknown): UiError {
   if (error instanceof Error) {
     return { message: error.message };
   }
-  if (typeof error === "string") {
+  if (typeof error === 'string') {
     return { message: error };
   }
-  return { message: "Unexpected error" };
+  return { message: 'Unexpected error' };
 }

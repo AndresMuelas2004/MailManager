@@ -1,15 +1,15 @@
-import { useState } from "react";
-import { Send, X, ChevronDown, Save } from "lucide-react";
+import { useState } from 'react';
+import { Send, X, ChevronDown, Save } from 'lucide-react';
 
-import Spinner from "../common/Spinner";
-import { getProviderMeta } from "../../lib/providers";
-import type { ComposerMode } from "../../lib/types";
-import type { UiError } from "../../api/client/errors";
-import type { AccountOut } from "../../api/types/dto";
+import Spinner from '../common/Spinner';
+import { getProviderMeta } from '../../lib/providers';
+import type { ComposerMode } from '../../lib/types';
+import type { UiError } from '../../api/client/errors';
+import type { AccountOut } from '../../api/types/dto';
 
 type ComposeAccount = Pick<
   AccountOut,
-  "account_id" | "provider" | "email_address" | "display_label"
+  'account_id' | 'provider' | 'email_address' | 'display_label'
 >;
 
 type Props = {
@@ -40,9 +40,9 @@ type Props = {
 };
 
 const TITLE_BY_MODE: Record<ComposerMode, string> = {
-  new_email: "Nuevo mensaje",
-  new_draft: "Nuevo borrador",
-  edit_draft: "Editar borrador",
+  new_email: 'Nuevo mensaje',
+  new_draft: 'Nuevo borrador',
+  edit_draft: 'Editar borrador',
 };
 
 export default function ComposeOverlay({
@@ -72,17 +72,15 @@ export default function ComposeOverlay({
   onClose,
 }: Props) {
   const [selectorOpen, setSelectorOpen] = useState(false);
-  const [ccBccOpen, setCcBccOpen] = useState(
-    () => cc.trim().length > 0 || bcc.trim().length > 0,
-  );
+  const [ccBccOpen, setCcBccOpen] = useState(() => cc.trim().length > 0 || bcc.trim().length > 0);
 
   const selectedAccount = accounts.find((a) => a.account_id === selectedAccountId);
   const accountLabel = (a: ComposeAccount) => a.email_address ?? a.display_label;
   const title = TITLE_BY_MODE[mode];
 
-  const showSendEmail = mode === "new_email";
-  const showSaveDraft = mode === "new_draft" || mode === "edit_draft";
-  const showSendDraft = mode === "edit_draft";
+  const showSendEmail = mode === 'new_email';
+  const showSaveDraft = mode === 'new_draft' || mode === 'edit_draft';
+  const showSendDraft = mode === 'edit_draft';
 
   return (
     <div className="fixed right-6 bottom-0 z-50 flex w-[400px] flex-col rounded-t-2xl border border-zinc-200 bg-white shadow-xl">
@@ -151,19 +149,13 @@ export default function ComposeOverlay({
           <button
             type="button"
             onClick={() => setSelectorOpen((v) => !v)}
-            disabled={mode === "edit_draft"}
+            disabled={mode === 'edit_draft'}
             className="flex h-10 items-center justify-between rounded-[10px] bg-zinc-100 px-3 text-sm text-zinc-900 disabled:opacity-70"
           >
-            <span>
-              {selectedAccount
-                ? accountLabel(selectedAccount)
-                : "Selecciona una cuenta"}
-            </span>
-            {mode !== "edit_draft" && (
-              <ChevronDown className="h-4 w-4 text-zinc-500" />
-            )}
+            <span>{selectedAccount ? accountLabel(selectedAccount) : 'Selecciona una cuenta'}</span>
+            {mode !== 'edit_draft' && <ChevronDown className="h-4 w-4 text-zinc-500" />}
           </button>
-          {selectorOpen && mode !== "edit_draft" && (
+          {selectorOpen && mode !== 'edit_draft' && (
             <div className="absolute top-full left-0 z-10 mt-1 w-full rounded-[10px] border border-zinc-200 bg-white py-1 shadow-lg">
               {accounts.map((a) => (
                 <button

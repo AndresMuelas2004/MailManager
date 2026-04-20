@@ -1,6 +1,6 @@
-import { useEffect, type ReactNode } from "react";
-import { createPortal } from "react-dom";
-import { X } from "lucide-react";
+import { useEffect, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
+import { X } from 'lucide-react';
 
 type Props = {
   open: boolean;
@@ -15,21 +15,21 @@ export default function Modal({
   onClose,
   children,
   ariaLabel,
-  widthClass = "max-w-4xl",
+  widthClass = 'max-w-4xl',
 }: Props) {
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key === 'Escape') onClose();
     };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
   }, [open, onClose]);
 
   useEffect(() => {
     if (!open) return;
     const { overflow } = document.body.style;
-    document.body.style.overflow = "hidden";
+    document.body.style.overflow = 'hidden';
     return () => {
       document.body.style.overflow = overflow;
     };

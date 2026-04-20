@@ -1,21 +1,14 @@
-import { useEffect } from "react";
-import { useNavigate } from "react-router-dom";
+import { useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 
-import useCreateMailbox from "../hooks/useCreateMailbox";
-import CreateMailboxBranding from "../components/CreateMailboxBranding";
-import CreateMailboxForm from "../components/CreateMailboxForm";
+import useCreateMailbox from '../hooks/useCreateMailbox';
+import CreateMailboxBranding from '../components/CreateMailboxBranding';
+import CreateMailboxForm from '../components/CreateMailboxForm';
 
 export default function CreateMailboxPage() {
   const navigate = useNavigate();
-  const {
-    displayName,
-    setDisplayName,
-    canSubmit,
-    loading,
-    error,
-    createdMailbox,
-    handleCreate,
-  } = useCreateMailbox();
+  const { displayName, setDisplayName, canSubmit, loading, error, createdMailbox, handleCreate } =
+    useCreateMailbox();
 
   useEffect(() => {
     if (createdMailbox) {

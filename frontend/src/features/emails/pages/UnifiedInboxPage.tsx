@@ -1,12 +1,12 @@
-import { useParams } from "react-router-dom";
+import { useParams } from 'react-router-dom';
 
-import useEmailList from "../hooks/useEmailList";
-import useEmailViewer from "../hooks/useEmailViewer";
-import useBulkBar from "../hooks/useBulkBar";
-import EmailTable from "../components/EmailTable";
-import ViewerMount from "../components/ViewerMount";
-import { EMAIL_BOX_CONFIG } from "../boxes";
-import type { EmailBox } from "../../../lib/types";
+import useEmailList from '../hooks/useEmailList';
+import useEmailViewer from '../hooks/useEmailViewer';
+import useBulkBar from '../hooks/useBulkBar';
+import EmailTable from '../components/EmailTable';
+import ViewerMount from '../components/ViewerMount';
+import { EMAIL_BOX_CONFIG } from '../boxes';
+import type { EmailBox } from '../../../lib/types';
 
 type Props = {
   box: EmailBox;

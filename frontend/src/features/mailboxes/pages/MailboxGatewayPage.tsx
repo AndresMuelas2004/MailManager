@@ -1,7 +1,7 @@
-import { Navigate } from "react-router-dom";
+import { Navigate } from 'react-router-dom';
 
-import useMailboxGateway from "../hooks/useMailboxGateway";
-import Spinner from "../../../components/common/Spinner";
+import useMailboxGateway from '../hooks/useMailboxGateway';
+import Spinner from '../../../components/common/Spinner';
 
 export default function MailboxGatewayPage() {
   const { mailboxes } = useMailboxGateway();

@@ -1,7 +1,7 @@
-import { createContext, useContext } from "react";
+import { createContext, useContext } from 'react';
 
-import type { UserOut } from "../../api/types/dto";
-import type { UiError } from "../../api/client/errors";
+import type { UserOut } from '../../api/types/dto';
+import type { UiError } from '../../api/client/errors';
 
 export type AuthState = {
   user: UserOut | null;
@@ -16,7 +16,7 @@ export const AuthContext = createContext<AuthState | null>(null);
 export function useAuth(): AuthState {
   const ctx = useContext(AuthContext);
   if (!ctx) {
-    throw new Error("useAuth must be used within AuthProvider");
+    throw new Error('useAuth must be used within AuthProvider');
   }
   return ctx;
 }

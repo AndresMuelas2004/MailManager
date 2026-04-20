@@ -1,7 +1,7 @@
-import { useState } from "react";
-import { Trash2 } from "lucide-react";
+import { useState } from 'react';
+import { Trash2 } from 'lucide-react';
 
-import ConfirmModal from "../../../components/common/ConfirmModal";
+import ConfirmModal from '../../../components/common/ConfirmModal';
 
 type Props = {
   onDelete: () => void;

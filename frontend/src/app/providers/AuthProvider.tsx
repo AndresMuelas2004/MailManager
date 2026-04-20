@@ -1,11 +1,11 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import type { ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import type { ReactNode } from 'react';
 
-import { loginWithGoogle, getMe, logout as apiLogout } from "../../api/endpoints/auth";
-import { toUiError } from "../../api/client/errors";
-import type { UserOut } from "../../api/types/dto";
-import type { UiError } from "../../api/client/errors";
-import { AuthContext } from "./AuthContext";
+import { loginWithGoogle, getMe, logout as apiLogout } from '../../api/endpoints/auth';
+import { toUiError } from '../../api/client/errors';
+import type { UserOut } from '../../api/types/dto';
+import type { UiError } from '../../api/client/errors';
+import { AuthContext } from './AuthContext';
 
 type Props = { children: ReactNode };
 

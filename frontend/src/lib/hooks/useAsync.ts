@@ -1,7 +1,7 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useRef, useState } from 'react';
 
-import { toUiError } from "../../api/client/errors";
-import type { UiError } from "../../api/client/errors";
+import { toUiError } from '../../api/client/errors';
+import type { UiError } from '../../api/client/errors';
 
 export type UseAsyncReturn<T> = {
   data: T | null;

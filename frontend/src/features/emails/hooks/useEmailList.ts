@@ -1,11 +1,11 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from 'react';
 
-import { listEmails, syncEmailMetadata } from "../../../api/endpoints/emails";
-import { listAccounts } from "../../../api/endpoints/accounts";
-import { toUiError } from "../../../api/client/errors";
-import type { EmailMetadataOut, AccountOut } from "../../../api/types/dto";
-import type { UiError } from "../../../api/client/errors";
-import type { EmailBox } from "../../../lib/types";
+import { listEmails, syncEmailMetadata } from '../../../api/endpoints/emails';
+import { listAccounts } from '../../../api/endpoints/accounts';
+import { toUiError } from '../../../api/client/errors';
+import type { EmailMetadataOut, AccountOut } from '../../../api/types/dto';
+import type { UiError } from '../../../api/client/errors';
+import type { EmailBox } from '../../../lib/types';
 
 type UseEmailListReturn = {
   emails: EmailMetadataOut[];
@@ -72,7 +72,9 @@ export default function useEmailList(
     }
 
     load();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [mailboxId, box, accountId]);
 
   return { emails, accounts, loading, syncing, error, refresh };

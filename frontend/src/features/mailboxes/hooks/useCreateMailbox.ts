@@ -1,9 +1,9 @@
-import { useCallback, useState } from "react";
+import { useCallback, useState } from 'react';
 
-import { createMailbox } from "../../../api/endpoints/mailboxes";
-import { toUiError } from "../../../api/client/errors";
-import type { UiError } from "../../../api/client/errors";
-import type { MailboxOut } from "../../../api/types/dto";
+import { createMailbox } from '../../../api/endpoints/mailboxes';
+import { toUiError } from '../../../api/client/errors';
+import type { UiError } from '../../../api/client/errors';
+import type { MailboxOut } from '../../../api/types/dto';
 
 type UseCreateMailboxReturn = {
   displayName: string;
@@ -16,7 +16,7 @@ type UseCreateMailboxReturn = {
 };
 
 export default function useCreateMailbox(): UseCreateMailboxReturn {
-  const [displayName, setDisplayName] = useState("");
+  const [displayName, setDisplayName] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<UiError | null>(null);
   const [createdMailbox, setCreatedMailbox] = useState<MailboxOut | null>(null);

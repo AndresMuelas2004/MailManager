@@ -1,16 +1,13 @@
-import { useMemo, type ReactNode } from "react";
-import { matchPath, useLocation } from "react-router-dom";
+import { useMemo, type ReactNode } from 'react';
+import { matchPath, useLocation } from 'react-router-dom';
 
-import useDraftComposer from "./draftComposer/useDraftComposer";
-import ComposeOverlay from "../../components/ui/ComposeOverlay";
-import {
-  DraftComposerContext,
-  type DraftComposerContextValue,
-} from "./DraftComposerContext";
+import useDraftComposer from './draftComposer/useDraftComposer';
+import ComposeOverlay from '../../components/ui/ComposeOverlay';
+import { DraftComposerContext, type DraftComposerContextValue } from './DraftComposerContext';
 
 function useActiveMailboxId(): string | null {
   const { pathname } = useLocation();
-  const match = matchPath("/m/:mailboxId/*", pathname);
+  const match = matchPath('/m/:mailboxId/*', pathname);
   return match?.params.mailboxId ?? null;
 }
 

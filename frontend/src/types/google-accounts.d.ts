@@ -1,11 +1,11 @@
 declare namespace google.accounts.id {
   interface GsiButtonConfiguration {
-    type?: "standard" | "icon";
-    theme?: "outline" | "filled_blue" | "filled_black";
-    size?: "large" | "medium" | "small";
-    text?: "signin_with" | "signup_with" | "continue_with" | "signin";
-    shape?: "rectangular" | "pill" | "circle" | "square";
-    logo_alignment?: "left" | "center";
+    type?: 'standard' | 'icon';
+    theme?: 'outline' | 'filled_blue' | 'filled_black';
+    size?: 'large' | 'medium' | 'small';
+    text?: 'signin_with' | 'signup_with' | 'continue_with' | 'signin';
+    shape?: 'rectangular' | 'pill' | 'circle' | 'square';
+    logo_alignment?: 'left' | 'center';
     width?: number;
     locale?: string;
   }
@@ -23,10 +23,7 @@ declare namespace google.accounts.id {
   }
 
   function initialize(config: IdConfiguration): void;
-  function renderButton(
-    parent: HTMLElement,
-    options: GsiButtonConfiguration,
-  ): void;
+  function renderButton(parent: HTMLElement, options: GsiButtonConfiguration): void;
   function prompt(): void;
   function disableAutoSelect(): void;
 }

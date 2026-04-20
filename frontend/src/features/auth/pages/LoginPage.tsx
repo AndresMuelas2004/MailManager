@@ -1,9 +1,9 @@
-import { Navigate } from "react-router-dom";
+import { Navigate } from 'react-router-dom';
 
-import { useAuth } from "../../../app/providers/AuthContext";
-import useGoogleLogin from "../hooks/useGoogleLogin";
-import LoginBranding from "../components/LoginBranding";
-import GoogleSignInButton from "../components/GoogleSignInButton";
+import { useAuth } from '../../../app/providers/AuthContext';
+import useGoogleLogin from '../hooks/useGoogleLogin';
+import LoginBranding from '../components/LoginBranding';
+import GoogleSignInButton from '../components/GoogleSignInButton';
 
 export default function LoginPage() {
   const { user, loading: authLoading } = useAuth();
