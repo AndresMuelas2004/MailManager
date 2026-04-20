@@ -96,21 +96,57 @@ Google Identity Services is loaded via `<script>` in `index.html` (no npm packag
 - `resolveAccount(accountId, accountsById)` — returns `{ providerName, accountEmail }` using `PROVIDER_META` for the friendly name.
 
 ### Hooks (`lib/hooks/`)
-- `useAsync<T>()` — `{ data, loading, error, run(fn), reset, setData, setError }`. Wraps the universal try/setLoading/toUiError pattern. Handles stale-response guarding with a monotonic token.
+
 - `useSelection<T>(keyOf, topN?)` — generic selection state. Replaces the previous per-feature `useEmailSelection`/`useDraftSelection`. `keyOf` is caller-provided; `topN` defaults to 50.
-- `useCacheThenSync<T>({ fetchData, sync, deps })` — encapsulates the universal "show cache, then sync, then refetch" pattern. Returns `{ data, loading, syncing, error, refresh, syncAndRefresh }`. Adopt this when adding any new list view that has a provider-backed cache.
-- `useMailboxList(currentMailboxId)` — lists mailboxes once on mount; exposes `currentMailboxName` and `handleCreate`.
+- `useMailboxList(currentMailboxId)` — lists mailboxes via TanStack Query (`queryKey: ["mailboxes"]`); exposes `currentMailboxName` and `handleCreate`. Creation uses `useMutation` with `setQueryData` to append the new mailbox to the cache without a refetch.
 - `useCurrentUser()` — wraps `getMe` / `deleteMe` for the sidebar's "Eliminar cuenta" and any future user-level action.
 
-## Cache-then-Sync Pattern
+The legacy `useAsync` and `useCacheThenSync` hooks were removed after the TanStack Query migration — every hand-rolled capability they provided (stale-response guarding, cache-then-sync, loading/syncing split) is delivered natively by `useQuery` + `useMutation`.
 
-`useEmailList` and `useDraftsList` (and any future list hook) follow this shape:
+## Data Fetching & Cache (TanStack Query)
 
-1. On mount, `Promise.all([fetchData(), fetchAccounts()])` → immediately render the cached view and drop `loading` to `false`.
-2. Kick off the provider sync in the background (`setSyncing(true)` → `syncXxx(...)` → `setSyncing(false)`). Failures are swallowed — the cache is still displayed.
-3. After the sync resolves, refetch the data and reconcile the view.
+Every remote read goes through TanStack Query; every mutation goes through `useMutation`. The `QueryClient` is created once in `app/providers/QueryProvider.tsx` with app-wide defaults (`staleTime: 30_000`, `gcTime: 300_000`, `retry: 1`, `refetchOnWindowFocus: true`) and wraps the router at the top of the provider tree.
 
-`syncing` is exposed **separately** from `loading`. Tables render a small spinning icon while `syncing === true` so the user can see the background refresh without the page blanking out. Always prefer this contract over a simple `loading` flag when the endpoint involves a provider round-trip.
+### Query keys
+
+| Resource | Query key |
+|----------|-----------|
+| Mailboxes | `["mailboxes"]` |
+| Accounts of a mailbox | `["accounts", mailboxId]` |
+| Emails of a mailbox / box | `["emails", mailboxId, box, accountId ?? null]` |
+| Drafts of a mailbox | `["drafts", mailboxId, accountId ?? null]` |
+
+### Cache-then-sync pattern (the modern form)
+
+`useEmailList` and `useDraftsList` model the provider-backed cache as:
+- a `useQuery` that reads the local list from the backend cache table;
+- a `useMutation` that fires the provider sync and invalidates `["emails", mailboxId]` (or `["drafts", …]`) on success.
+
+On mount the hook dispatches the sync via `useEffect` → `syncMutation.mutate()`. The `useQuery` serves the cached data immediately; the invalidation triggered by the mutation's `onSuccess` causes TanStack Query to refetch the list automatically after the provider round-trip completes.
+
+The hook exposes `loading` and `syncing` as two separate flags — `loading` comes from `query.isLoading` (first fetch), `syncing` comes from `syncMutation.isPending || (query.isFetching && !query.isLoading)` (the background refresh). Tables render a spinning icon while `syncing === true`.
+
+### Mutations
+
+Bulk actions (`useEmailBulkActions`, `useDraftBulkDelete`) are `useMutation` wrappers whose `onSuccess` calls `queryClient.invalidateQueries({ queryKey: ['emails' | 'drafts', mailboxId] })`. The external `refresh()` callback consumers pass in is kept for API compatibility but the authoritative reconciliation is the cache invalidation.
+
+## API validation (Zod)
+
+Every DTO in `api/types/dto.ts` is expressed as a Zod schema, with the TypeScript type derived via `z.infer<typeof xSchema>`. The schema is passed to `request<T>()` in `api/client/http.ts`, which calls `schema.safeParse()` on the response body and throws a `ValidationError` (subclass of `ApiError`, code `schema_mismatch`) when the payload drifts from the contract.
+
+Generic envelopes live at the top of `dto.ts` and are reused across resources: `statusResponseSchema` (`{ status }`) and `messageResponseSchema` (`{ message }`). Endpoints that return those shapes import the shared schema instead of inlining it.
+
+When the backend DTO changes, the frontend Zod schema changes to match — if it does not, the integration test that hits that endpoint will fail at the validation step, not silently in the UI.
+
+## Testing layout
+
+The test convention for this layer is documented in `src/test/explicacionTests.md` (destined to become `CLAUDE.md` once the pre-commit rule allows). Summary:
+
+- **Unit tests** live co-located next to the file they cover (`*.test.ts`). Vitest.
+- **Integration tests** live co-located next to the page/component they cover (`*.test.tsx`). Vitest + `@testing-library/react` + MSW.
+- **E2E tests** live in `frontend/e2e/specs/*.spec.ts` with their own `playwright.config.ts`. Real backend.
+
+Shared test infrastructure lives in `src/test/` (Vitest `setup.ts`, MSW handlers, `renderWithProviders` helper). Production code must never import from `src/test/`.
 
 ## Email Bulk Actions
 
@@ -122,7 +158,7 @@ The unified and per-account views render `EmailTable` with a context-aware toolb
 - "Select top 50" is the only "select all" supported (`toggleTopN`, `TOP_N = 50`).
 
 ### Bulk mutations (`hooks/useEmailBulkActions.ts`)
-Wraps `moveToTrash`, `updateReadStatus`, `markAsSpam`, `restoreFromSpam`, `trashAction`. Each action runs `endpoint → clearSelection → refresh` on success, storing a `UiError` on failure.
+Each action is a `useMutation` over `moveToTrash`, `updateReadStatus`, `markAsSpam`, `restoreFromSpam` or `trashAction`. On success the mutation invalidates `["emails", mailboxId]` (so the list refetches automatically), calls `clearSelection()`, and then invokes the external `refresh()` callback for API back-compat. Errors are flattened through `toUiError` into a single `error` field derived from whichever mutation carries one.
 
 ### Actions per box (`features/emails/boxes.ts`)
 `EMAIL_BOX_CONFIG: Record<EmailBox, { title, subtitle, allowedBulkActions }>` is the single source of truth. `BulkActionsBar` only renders the buttons listed in `allowedBulkActions` for the current `box`. Adding a new action = extend `BulkAction` union, add the button branch, and update `allowedBulkActions` in `boxes.ts`.
@@ -201,11 +237,13 @@ Backend changes are out of scope for this guide — see `repository_guide.md` §
 ## Extension Checklist — Adding a New Feature
 
 - [ ] Create `features/<name>/{components,hooks,pages}/`.
-- [ ] Add DTOs to `api/types/dto.ts` matching the backend schemas.
-- [ ] Create `api/endpoints/<name>.ts` using `request<T>()`.
-- [ ] Build hooks using `useAsync` / `useCacheThenSync` where applicable.
+- [ ] Add DTO Zod schemas to `api/types/dto.ts` matching the backend Pydantic schemas; export both the schema and the inferred type.
+- [ ] Create `api/endpoints/<name>.ts` using `request()` with the corresponding schema.
+- [ ] Build hooks using `useQuery` / `useMutation` from TanStack Query. Invalidate the relevant query key in every mutation's `onSuccess`.
 - [ ] Build the page + feature-specific components.
 - [ ] Add the route to `app/routes/router.tsx` (use `lazy()` unless it is on the boot path).
+- [ ] Add co-located unit tests (`*.test.ts`) for pure logic and integration tests (`*.test.tsx`) for the page; add MSW handlers for any new endpoint in `src/test/msw/handlers.ts`.
+- [ ] For user-visible flows that cross system boundaries, add an E2E spec under `e2e/specs/`.
 - [ ] Update this guide with the new feature, route, and API mapping.
 
 ## Design Reference
