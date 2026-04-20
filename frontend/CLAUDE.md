@@ -1,228 +1,171 @@
 # General Frontend Layer Rules
 
-This is the `CLAUDE.md` for the **frontend client application** layer. It serves as the general architectural reference for this layer, describing its separation of responsibilities, its structural rules, and its common behavior. Every aspect covered here is transferable to any application that follows this layered architecture — nothing is specific to a single project.
+This is the top-level `CLAUDE.md` for the **frontend** of the application. It describes the architecture, the tech stack, and the rules that govern every directory under `frontend/`. Every aspect covered here is transferable to any application that follows this layered architecture — nothing is specific to a single project.
 
 **Project-agnostic by design.** Nothing here references a concrete domain, entity, or feature. Every rule applies to any repository that follows this layered architecture.
 
-**Reusable.** Copy this file into a new project to establish the frontend layer architecture from day one. The project-specific guide extends these rules with domain details but must never contradict them.
+**Reusable.** Copy this file into a new project to establish the frontend layer from day one.
 
-**Precedence.** In case of conflict between this file and a project-specific guide, these rules take precedence.
-**Immutable.** This file must never be edited. All project-specific changes go in the `*_guide.md` file referenced at the end of this document.
+**Precedence.** In case of conflict between this file and any document further down the repository (sub-layer `CLAUDE.md` files included), the most specific layer rule wins **unless** this file states a stricter constraint, in which case this file takes precedence.
+
+**Immutable.** This file must never be edited. All changes to frontend rules go through a new version of this file.
 
 ## 1. Tech Stack
 
-The frontend is built on:
+- **React** with **TypeScript** in strict mode (`strict: true`, `noUnusedLocals`, `noUnusedParameters`).
+- **Vite** as the build tool and dev server.
+- **React Router** for client-side routing.
+- **TanStack Query** for server-state and data fetching. This is the only acceptable cache layer.
+- **Zod** for runtime validation of every API response and request shape.
+- **Tailwind CSS** for styling — utility classes only.
+- **Vitest** + **Testing Library** + **MSW** for unit and integration tests.
+- **Playwright** for end-to-end tests.
+- **Prettier** + **ESLint** + **lint-staged** + pre-commit hooks for formatting and linting.
 
-- **React** (UI library) with **TypeScript** in strict mode (`strict: true`, `noUnusedLocals`, `noUnusedParameters`).
-- **Vite** (build tool and dev server).
-- **React Router** (client-side routing via `createBrowserRouter`).
-- **Tailwind CSS** (utility-first styling — the only styling approach allowed).
-- **No state management library** — React state (`useState`, `useReducer`) and context (`useContext`) only.
-- **No data fetching library** — raw `fetch()` wrapped in a custom HTTP client.
+No Redux, MobX, Zustand or similar global-state library unless a concrete need justifies it. Server state belongs in TanStack Query; UI state belongs in `useState`.
 
 ## 2. Package Structure
 
 ```
-src/
-├── api/                    # HTTP client layer
-│   ├── client/             # Base HTTP client + error handling
-│   ├── endpoints/          # One file per backend resource
-│   └── types/              # TypeScript DTOs matching backend schemas
-├── app/                    # Application shell
-│   ├── layout/             # Layout components (root layout with Outlet)
-│   ├── providers/          # Context providers wrapper
-│   └── routes/             # Router configuration
-├── components/             # Shared reusable UI components
-│   ├── common/             # Generic, domain-agnostic primitives (Button, Modal, Input)
-│   └── ui/                 # Domain-aware shared widgets (Sidebar, DataRow)
-├── features/               # Vertical slices by domain
-│   └── <feature>/
-│       ├── components/     # Feature-specific components
-│       ├── hooks/          # Feature-specific hooks
-│       └── pages/          # Feature page components (routed)
-├── lib/                    # Shared utilities (formatters, constants, helpers)
-├── styles/                 # Global CSS (Tailwind import + resets only)
-├── main.tsx                # Entry point (renders Providers into root)
-└── vite-env.d.ts           # Vite type declarations
+frontend/
+├── src/
+│   ├── app/            # Application shell: layout, providers, router
+│   ├── api/            # HTTP client + endpoints + Zod-validated DTOs
+│   ├── features/       # Vertical slices — one domain per subdirectory
+│   ├── components/     # Shared UI: common (primitives) + ui (domain-aware)
+│   ├── lib/            # Pure utilities, types, generic hooks
+│   ├── test/           # Testing infrastructure (MSW, render helpers, setup)
+│   ├── styles/         # Global CSS (Tailwind import + minimal resets)
+│   └── main.tsx        # Entry point — mounts <Providers /> into root
+├── e2e/                # Playwright end-to-end specs (own tsconfig)
+└── <configs>           # vite.config.ts, vitest.config.ts, playwright.config.ts, etc.
 ```
 
-## 3. Layer Boundaries
+Each subdirectory of `src/` and `e2e/` has its own `CLAUDE.md` with the rules specific to that layer. This file is the summary; those are the authority for their own scope.
 
-Import rules enforce a strict dependency direction. Violations are architectural errors.
+## 3. Layer Boundaries (Dependency Graph)
 
-### Allowed imports (direction: consumer → dependency)
+Imports flow in one direction only. Arrows read as "may import from":
 
-- **`features/`** → `api/endpoints/`, `api/types/`, `components/`, `lib/`
-- **`components/ui/`** → `components/common/`, `lib/`
-- **`components/common/`** → `lib/` only (no domain knowledge)
-- **`app/routes/`** → `features/*/pages/`, `app/layout/`
-- **`app/providers/`** → `app/routes/`
-- **`api/endpoints/`** → `api/client/`, `api/types/`
-- **`api/client/`** → no internal imports (leaf module — uses only browser `fetch`)
-- **`lib/`** → no internal imports (leaf module)
-
-### Forbidden imports
-
-- **No feature-to-feature imports.** A feature module must never import from another feature module. Shared logic goes in `components/`, `lib/`, or `api/`.
-- **No reverse imports.** `api/` must never import from `features/`, `components/`, or `app/`. `lib/` must never import from any other `src/` directory.
-- **No circular imports.** If two modules need each other, extract the shared dependency into `lib/` or a parent module.
-
-## 4. Feature Module Rules
-
-Each feature directory is a self-contained vertical slice.
-
-### Internal structure
-
-Every feature has three subdirectories — no more, no less:
-
-- **`pages/`** — route-level components. Each page corresponds to one route. Pages compose feature-specific components and invoke feature-specific hooks.
-- **`hooks/`** — custom React hooks that encapsulate data fetching, mutation logic, and local state management. Hooks call endpoint functions from `api/endpoints/` and convert `ApiError` into `UiError` for the UI.
-- **`components/`** — presentational and interactive components used only within this feature. They receive data via props — never call API endpoints directly.
-
-### Rules
-
-1. **Pages orchestrate; components render.** Pages wire hooks to components. Components are pure renderers that receive data and callbacks via props.
-2. **Hooks own side effects.** All `fetch` calls, error handling, and loading states live in hooks — never in components or pages directly.
-3. **No cross-feature imports.** If two features need the same component, move it to `components/common/` or `components/ui/`. If they need the same hook logic, extract the shared part into a hook in `lib/` or into a new endpoint in `api/`.
-4. **One page per route.** Each file in `pages/` maps to exactly one route in the router configuration.
-
-## 5. Component Rules
-
-### Classification
-
-- **`components/common/`** — generic, domain-agnostic primitives. These components know nothing about the application domain. Examples: Button, Modal, Input, Spinner, Badge. They accept only generic props (label, onClick, className, children).
-- **`components/ui/`** — domain-aware shared widgets used across multiple features. They may import from `components/common/` and `lib/` but never from `features/` or `api/endpoints/`. They receive domain data via props — never fetch it themselves.
-- **`features/*/components/`** — feature-specific components. Used only within the owning feature. May import from `components/common/`, `components/ui/`, and `lib/`.
-
-### Rules
-
-1. **One component per file.** The file name matches the component name in PascalCase (e.g., `EmailList.tsx` exports `EmailList`).
-2. **Props over internal state.** Components receive data through props. Internal state is limited to UI concerns (open/closed, selected index, input value).
-3. **No direct API calls in components.** Components never import from `api/`. Data fetching is the responsibility of hooks, which are called in pages or parent components.
-4. **Explicit prop types.** Every component defines a `Props` type (or `<ComponentName>Props` for exported types). No `any` — use `unknown` and narrow.
-5. **Composition over configuration.** Prefer composing small components over building large components with many conditional props.
-
-## 6. API Client Rules
-
-The `api/` directory is the frontend's interface to the backend. It mirrors the backend's HTTP surface.
-
-### Structure
-
-- **`api/client/http.ts`** — the single HTTP client. Wraps `fetch()` with base URL resolution, JSON serialization, and error conversion. Exports a `request<T>()` generic function.
-- **`api/client/errors.ts`** — defines `ApiError` (class), `UiError` (plain type), and helper functions: `toApiError()`, `toNetworkError()`, `toUiError()`, `isApiError()`.
-- **`api/endpoints/*.ts`** — one file per backend resource. Each file exports thin async functions that call `request<T>()` and return typed promises. No business logic — just HTTP method, path, and payload.
-- **`api/types/dto.ts`** — TypeScript types that mirror backend response/request schemas exactly. Field names use the backend's naming convention (snake_case).
-
-### Rules
-
-1. **DTOs mirror backend schemas.** Every type in `dto.ts` must match the corresponding backend schema field-for-field, including nullability. When the backend schema changes, `dto.ts` changes to match.
-2. **One file per resource.** Each endpoint file groups all operations for one backend resource (CRUD + actions). Do not mix resources in a single file.
-3. **Endpoint functions are thin wrappers.** Each function calls `request<T>()` with the correct path, method, and body. No error handling, no retry logic, no caching — just the HTTP call.
-4. **All errors flow through `ApiError`.** The HTTP client converts non-ok responses to `ApiError` instances and network failures to `ApiError` with code `"network_error"`. Consumers catch `ApiError` — never raw `fetch` errors.
-5. **No direct `fetch()` calls outside `http.ts`.** All HTTP communication goes through the `request<T>()` function.
-
-### Adding a new endpoint
-
-- [ ] Add the response/request types to `api/types/dto.ts`.
-- [ ] Create or update the endpoint file in `api/endpoints/`.
-- [ ] Use `request<T>()` with the correct generic type parameter.
-- [ ] Import the DTO types with `import type` to ensure they are erased at runtime.
-
-## 7. Routing Rules
-
-Routing is configured centrally in `app/routes/` using `createBrowserRouter`.
-
-### Rules
-
-1. **Single router definition.** All routes are declared in one file (`router.tsx`). No route definitions scattered across feature modules.
-2. **Routes point to feature pages.** Each route's `element` (or `lazy` loader) references a page component from `features/*/pages/`.
-3. **Layout nesting via `Outlet`.** The root layout (`app/layout/`) renders an `<Outlet />`. Child routes render inside this outlet.
-4. **Lazy loading for feature pages.** Non-critical routes use React Router's `lazy()` to code-split feature pages. The root layout and login page may be eagerly loaded.
-5. **Route paths are flat and descriptive.** Use REST-style paths (e.g., `/resources`, `/resources/:id`). Avoid deeply nested route trees beyond two levels.
-6. **No routing logic in features.** Features do not define their own routes — they export page components that the router references.
-
-## 8. State Management
-
-This application uses React's built-in state primitives exclusively — no external state management library.
-
-### Rules
-
-1. **Co-locate state.** Keep state as close to where it is used as possible. Start with `useState` in the component that needs it.
-2. **Lift only when necessary.** Move state to a parent component only when siblings need to share it. Move to context only when deeply nested components need it.
-3. **Context for cross-cutting concerns only.** Use `React.createContext` for truly global state: authenticated user, theme, locale. Do not use context as a general-purpose store.
-4. **Providers wrap the app shell.** All context providers are composed in `app/providers/Providers.tsx`. Individual providers are defined in their own files within `app/providers/`.
-5. **No prop drilling beyond two levels.** If a prop must pass through more than two intermediate components that do not use it, introduce a context or restructure the component tree.
-6. **Derived state over synchronized state.** Compute values from existing state instead of storing redundant copies. Use `useMemo` for expensive derivations.
-
-## 9. Error Handling
-
-All API errors are caught in hooks, converted to user-friendly messages, and surfaced in the UI. Errors must never crash the application silently.
-
-### The pattern
-
-```typescript
-import { toUiError } from "../api/client/errors";
-import type { UiError } from "../api/client/errors";
-
-const [error, setError] = useState<UiError | null>(null);
-
-async function handleAction() {
-  setError(null);
-  try {
-    const result = await endpointFunction(...);
-    // handle success
-  } catch (err) {
-    setError(toUiError(err));
-  }
-}
+```
+            app/
+             │
+             ▼
+          features/
+         ╱   │   ╲
+        ▼    ▼    ▼
+ components/  api/  lib/
+       │      │
+       ▼      ▼
+      lib/   zod
 ```
 
-### Rules
+Explicit rules:
+- **`features/<a>/` never imports from `features/<b>/`.** Shared pieces go to `components/`, `lib/`, or `api/`.
+- **`api/` never imports from `features/`, `components/`, or `app/`.** It is a near-leaf layer.
+- **`lib/` never imports from any other `src/` directory.** It is the leaf.
+- **`components/common/` never imports from `components/ui/` or any higher layer.**
+- **`components/ui/` never imports from `features/` or `api/endpoints/`.**
+- **`app/` never imports feature hooks directly** (pages do that inside the feature).
+- **`src/` never imports from `src/test/` or `e2e/`.** Test helpers are scoped to tests.
 
-1. **Hooks catch, components display.** Hooks call `toUiError()` on any caught error and expose the `UiError` object via their return value. Components render the error message — they never catch errors themselves.
-2. **Clear errors before retrying.** Every action that can fail resets the error state to `null` before the `try` block.
-3. **No raw error objects in UI.** Components never render `error.message` from a raw `Error` or `ApiError`. Always use the `UiError` type, which guarantees a user-safe `message` string.
-4. **Loading and error states are co-located.** Hooks that fetch data return `{ data, error, loading }` — all three states managed together.
-5. **Network errors are distinct from API errors.** The UI may show different messages for "server returned an error" (`ApiError` with a status) versus "could not reach the server" (`ApiError` with code `"network_error"`).
+Refer to each layer's `CLAUDE.md` for the detailed boundaries.
 
-## 10. Styling Rules
+## 4. Styling
 
-All styling uses Tailwind CSS utility classes. No other styling approach is permitted.
+Tailwind utility classes only. No CSS modules, no styled-components, no inline `style` objects unless a truly dynamic pixel value requires it. The only CSS file is `styles/globals.css` (Tailwind import + minimal resets). Responsive design uses Tailwind prefixes (`sm:`, `md:`, `lg:`). Dark mode, when present, uses Tailwind's `dark:` prefix.
 
-### Rules
+## 5. State Management
 
-1. **Tailwind utility classes only.** No CSS modules, no styled-components, no inline `style` objects, no `<style>` blocks. The only CSS file is `styles/globals.css`, which contains the Tailwind import and minimal resets.
-2. **No custom CSS classes.** Do not create custom class names in CSS files. If a utility pattern repeats across many components, extract a shared component — not a CSS class.
-3. **Responsive design via Tailwind breakpoints.** Use Tailwind's responsive prefixes (`sm:`, `md:`, `lg:`) directly in JSX. No media queries in CSS files.
-4. **Consistent spacing and sizing.** Use Tailwind's spacing scale (`p-4`, `gap-2`, `w-full`) — avoid arbitrary values (`p-[13px]`) unless the design requires an exact pixel value not in the scale.
-5. **Dark mode via Tailwind.** If dark mode is supported, use the `dark:` prefix. Do not implement dark mode via JavaScript class toggling or CSS variables outside Tailwind's system.
+| Kind of state                 | Lives in                                        |
+|-------------------------------|-------------------------------------------------|
+| Server state (remote data)    | **TanStack Query cache** (`useQuery`/`useMutation`) |
+| UI state (local to a component)| `useState` inside the component                 |
+| Cross-cutting app state       | React `Context` composed in `app/providers/`    |
 
-## 11. Naming Conventions
+Never store server state in `useState` and never turn a TanStack Query cache into a global variable. If UI state must be shared between components, lift it only as far as necessary; reach for `Context` only when deeply nested components need it.
 
-### Files
+## 6. Error Handling
 
-- **Components**: `PascalCase.tsx` — the file name matches the default export (e.g., `EmailList.tsx` exports `EmailList`).
-- **Hooks**: `camelCase.ts` starting with `use` (e.g., `useMailboxes.ts` exports `useMailboxes`).
-- **Endpoint files**: `camelCase.ts` matching the resource name (e.g., `mailboxes.ts`, `auth.ts`).
-- **Utility files**: `camelCase.ts` (e.g., `formatters.ts`, `constants.ts`).
-- **Type files**: `camelCase.ts` (e.g., `dto.ts`).
+A single pipeline governs every error surfaced to the user:
 
-### Code
+```
+fetch or schema parse → ApiError / ValidationError (in api/client/errors.ts)
+                        │
+                        ▼
+hook catches → toUiError(err) → UiError { message, code? }
+                        │
+                        ▼
+component renders error.message
+```
 
-- **Components**: `PascalCase` (e.g., `AppShell`, `LoginPage`).
-- **Hooks**: `camelCase` starting with `use` (e.g., `useAuth`, `useEmails`).
-- **Functions**: `camelCase` (e.g., `listMailboxes`, `toUiError`).
-- **Types/Interfaces**: `PascalCase` (e.g., `MailboxOut`, `UiError`, `RequestOptions`).
-- **Constants**: `UPPER_SNAKE_CASE` for true constants (e.g., `DEFAULT_BASE_URL`), `camelCase` for configured values.
+Rules:
+- Every response body from the backend is validated at the API boundary by a Zod schema. Drift between frontend and backend surfaces as `ValidationError`, not as a silent render bug.
+- Hooks catch; components display. Components never call `toUiError`, never read raw `Error.message`, never branch on `instanceof ApiError`.
+- Network failures distinguish themselves (code `network_error`) so the UI can show a specific message when appropriate.
+
+Full hierarchy and conventions live in `src/api/CLAUDE.md`.
+
+## 7. Naming Conventions
+
+- **Components**: `PascalCase.tsx` — the default export matches the filename.
+- **Hooks**: `camelCase.ts` starting with `use` (e.g. `useResourceList.ts`).
+- **Endpoint files**: `camelCase.ts` matching the backend resource.
+- **Type files**: `camelCase.ts` (e.g. `dto.ts`).
 - **Props types**: `Props` for internal types, `<ComponentName>Props` when exported.
+- **Constants**: `UPPER_SNAKE_CASE` for true constants.
+- **Directories**: lowercase, no separators (`components`, `endpoints`, `providers`).
 
-### Directories
+## 8. Testing
 
-- All directory names are lowercase with no separators (e.g., `components`, `endpoints`, `providers`).
-- Feature directories use lowercase plural nouns (e.g., `emails`, `accounts`, `auth`).
+The frontend follows the **Testing Trophy**: static checks (TypeScript + ESLint) as the base, a moderate unit tier, a large integration tier (the sweet spot — MSW intercepts HTTP at the `fetch` boundary while every other layer runs unmocked), and a small E2E tier for golden paths.
 
-## 12. Project-Specific Guide
+- Unit + integration tests: co-located `*.test.ts(x)` next to the file they cover. See `src/test/CLAUDE.md`.
+- E2E tests: `e2e/specs/*.spec.ts`, separate runner and config. See `e2e/CLAUDE.md`.
 
-This file covers the general, transferable rules for the frontend client application layer. For project-specific details — concrete rules, architectural decisions, and implementation details that apply these general principles to the current application — consult [`frontend_guide.md`](frontend_guide.md).
+## 9. Formatting, Linting, Commits
 
-The guide complements these rules but never contradicts them. In case of conflict, this `CLAUDE.md` has absolute precedence. Code in this layer must respect both levels: first these general rules, then the project-specific guide frontend_guide.md.
+- Prettier enforces a single formatting style. Pre-commit hook runs `prettier --write` + `eslint --fix` on staged files via lint-staged.
+- TypeScript strict mode, ESLint with React Hooks and React Refresh plugins, and Prettier integration are non-negotiable.
+- CI gates on `tsc --noEmit`, `eslint`, `prettier --check`, and the Vitest suite. E2E runs on merges to the main branch.
+
+## 10. Reading Order Before Adding Functionality
+
+When touching the frontend, **read the layer-level `CLAUDE.md` of every directory the change lives in or crosses** before writing code. In practice:
+
+- New or changed API contract → `src/api/CLAUDE.md`.
+- New or changed page / hook / feature-local component → `src/features/CLAUDE.md`.
+- New shared primitive or widget → `src/components/CLAUDE.md`.
+- New global provider, layout, or route → `src/app/CLAUDE.md`.
+- New pure helper, type, or generic hook → `src/lib/CLAUDE.md`.
+- New tests → `src/test/CLAUDE.md` (and `e2e/CLAUDE.md` if end-to-end).
+
+Skipping this step is the most common source of architectural drift.
+
+## 11. Adding a New Feature — End-to-End Checklist
+
+- [ ] **Read** the layer `CLAUDE.md` files for every affected directory (see §10).
+- [ ] **DTOs**: add Zod schemas + inferred types in `src/api/types/dto.ts`.
+- [ ] **Endpoints**: thin wrappers around `request()` in `src/api/endpoints/`.
+- [ ] **Feature slice**: create `src/features/<name>/{pages,hooks,components}/`.
+- [ ] **Hooks**: `useQuery` for reads, `useMutation` with `onSuccess` invalidation for writes; translate errors via `toUiError`.
+- [ ] **Pages**: one per route, orchestrate hooks, pass data as props.
+- [ ] **Components**: presentational, props-typed, no API calls.
+- [ ] **Shared UI promotion**: if a piece is used by ≥2 features, move it to `components/`.
+- [ ] **Routing**: register in `src/app/routes/router.tsx`, `React.lazy()` unless boot path.
+- [ ] **MSW handlers**: add happy-path handlers for new endpoints in `src/test/msw/handlers.ts`.
+- [ ] **Tests**: unit for pure helpers, integration for the page, E2E if the journey is critical.
+- [ ] **No forbidden imports**: verify the dependency graph in §3 is respected.
+
+## 12. Anti-Patterns (Do Not Do)
+
+1. Calling `fetch()` outside `src/api/client/http.ts`.
+2. Importing from another feature.
+3. Hand-writing TypeScript types for DTOs instead of inferring them from a Zod schema.
+4. Storing server state in `useState`.
+5. Mocking endpoint functions or application hooks inside an integration test — always mock at the MSW (network) boundary.
+6. Rendering raw `error.message` from an `Error` or `ApiError` — always go through `UiError`.
+7. Declaring routes outside `src/app/routes/router.tsx`.
+8. Writing CSS outside Tailwind.
+9. Adding a global state management library without a concrete need that TanStack Query plus `Context` cannot cover.
+10. Commenting on *what* code does rather than *why* a non-obvious decision was made.

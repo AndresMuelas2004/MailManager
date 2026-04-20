@@ -4,10 +4,11 @@ This is the `CLAUDE.md` for the **frontend testing convention**. It serves as th
 
 **Project-agnostic by design.** Nothing here references a concrete domain, entity, or feature. Every rule applies to any repository that follows this layered architecture.
 
-**Reusable.** Copy this file into a new project to establish the frontend testing convention from day one. The project-specific guide extends these rules with domain details but must never contradict them.
+**Reusable.** Copy this file into a new project to establish the frontend testing convention from day one.
 
-**Precedence.** In case of conflict between this file and a project-specific guide, these rules take precedence.
-**Immutable.** This file must never be edited. All project-specific changes go in the `*_guide.md` file referenced at the end of this document.
+**Precedence.** In case of conflict between this file and any document further down the repository, these rules take precedence.
+
+**Immutable.** This file must never be edited. All changes to testing conventions go through a new version of this file.
 
 ## 1. Testing Shape — the Testing Trophy
 
@@ -62,7 +63,7 @@ Three categories, each with a distinct scope, tooling, and location strategy.
 | Test type   | Location strategy                              | Example path                                       |
 |-------------|------------------------------------------------|----------------------------------------------------|
 | Unit        | **Co-located** with the source file            | `src/lib/formatters.test.ts`                       |
-| Integration | **Co-located** with the page/component         | `src/features/emails/pages/InboxPage.test.tsx`     |
+| Integration | **Co-located** with the page/component         | `src/features/<feature>/pages/<Page>.test.tsx`     |
 | E2E         | **Separate** top-level directory               | `e2e/specs/login.spec.ts`                          |
 | Shared test helpers (not tests)   | **Central directory**            | `src/test/setup.ts`, `src/test/msw/handlers.ts`    |
 
@@ -139,7 +140,3 @@ When adding a new feature, write tests in this order — do not start the next l
 3. **Snapshot-only tests.** A `toMatchSnapshot` is never an integration test on its own. Use snapshots sparingly and only for stable structural output (e.g. a small presentational component's markup).
 4. **Shared mutable state across tests.** Every test is independent. If two tests share a fixture, that fixture is built fresh per test — never mutated in place.
 5. **Coverage as a goal.** Coverage is a diagnostic, not a target. A line covered by a meaningless assertion is worse than an uncovered line, because it hides a gap behind a green bar.
-
-## 10. Project-Specific Guide
-
-This file covers the general, transferable rules for the frontend testing convention. For project-specific details — concrete tool versions, test-account fixtures, CI pipeline wiring, critical flow list for E2E — consult the project's testing guide file (e.g. `testing_guide.md`). The guide complements these rules but never contradicts them. In case of conflict, this file has absolute precedence.
