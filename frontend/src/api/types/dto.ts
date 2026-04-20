@@ -1,160 +1,215 @@
-// Auth
-export type UserOut = {
-  user_id: string;
-  email: string;
-  name: string | null;
-  avatar_url: string | null;
-};
+import { z } from 'zod';
 
-export type AuthResponse = {
-  user: UserOut;
-  message: string;
-};
+// Generic envelopes — reused across resources for small responses.
+export const statusResponseSchema = z.object({
+  status: z.string(),
+});
+export type StatusResponse = z.infer<typeof statusResponseSchema>;
+
+export const messageResponseSchema = z.object({
+  message: z.string(),
+});
+export type MessageResponse = z.infer<typeof messageResponseSchema>;
+
+// Auth
+export const userOutSchema = z.object({
+  user_id: z.string(),
+  email: z.string(),
+  name: z.string().nullable(),
+  avatar_url: z.string().nullable(),
+});
+export type UserOut = z.infer<typeof userOutSchema>;
+
+export const authResponseSchema = z.object({
+  user: userOutSchema,
+  message: z.string(),
+});
+export type AuthResponse = z.infer<typeof authResponseSchema>;
 
 // Mailboxes
-export type MailboxCreate = {
-  display_name: string;
-};
+export const mailboxCreateSchema = z.object({
+  display_name: z.string(),
+});
+export type MailboxCreate = z.infer<typeof mailboxCreateSchema>;
 
-export type MailboxOut = {
-  mailbox_id: string;
-  display_name: string | null;
-  owner_user_id: string;
-  created_at: string;
-};
+export const mailboxOutSchema = z.object({
+  mailbox_id: z.string(),
+  display_name: z.string().nullable(),
+  owner_user_id: z.string(),
+  created_at: z.string(),
+});
+export type MailboxOut = z.infer<typeof mailboxOutSchema>;
+
+export const mailboxListSchema = z.array(mailboxOutSchema);
 
 // Accounts
-export type AccountCreate = {
-  provider: string;
-  display_label: string;
-  config?: Record<string, unknown>;
-};
+export const accountCreateSchema = z.object({
+  provider: z.string(),
+  display_label: z.string(),
+  config: z.record(z.string(), z.unknown()).optional(),
+});
+export type AccountCreate = z.infer<typeof accountCreateSchema>;
 
-export type AccountUpdate = {
-  display_label?: string;
-  config?: Record<string, unknown>;
-};
+export const accountUpdateSchema = z.object({
+  display_label: z.string().optional(),
+  config: z.record(z.string(), z.unknown()).optional(),
+});
+export type AccountUpdate = z.infer<typeof accountUpdateSchema>;
 
-export type AccountOut = {
-  account_id: string;
-  mailbox_id: string;
-  provider: string;
-  display_label: string;
-  config: Record<string, unknown>;
-  email_address: string | null;
-};
+export const accountOutSchema = z.object({
+  account_id: z.string(),
+  mailbox_id: z.string(),
+  provider: z.string(),
+  display_label: z.string(),
+  config: z.record(z.string(), z.unknown()),
+  email_address: z.string().nullable(),
+});
+export type AccountOut = z.infer<typeof accountOutSchema>;
 
-export type AccountConnectResponse = {
-  connected: boolean;
-  provider: string | null;
-  account_id: string;
-  account_label: string | null;
-  email_address: string | null;
-  message: string | null;
-};
+export const accountListSchema = z.array(accountOutSchema);
+
+export const accountConnectResponseSchema = z.object({
+  connected: z.boolean(),
+  provider: z.string().nullable(),
+  account_id: z.string(),
+  account_label: z.string().nullable(),
+  email_address: z.string().nullable(),
+  message: z.string().nullable(),
+});
+export type AccountConnectResponse = z.infer<typeof accountConnectResponseSchema>;
 
 // Emails
-export type EmailMetadataOut = {
-  provider_message_id: string;
-  account_id: string;
-  thread_id: string | null;
-  from_email: string;
-  from_name: string | null;
-  subject: string | null;
-  received_at: string;
-  is_read: boolean;
-  box: string;
-};
+export const emailMetadataOutSchema = z.object({
+  provider_message_id: z.string(),
+  account_id: z.string(),
+  thread_id: z.string().nullable(),
+  from_email: z.string(),
+  from_name: z.string().nullable(),
+  subject: z.string().nullable(),
+  received_at: z.string(),
+  is_read: z.boolean(),
+  box: z.string(),
+});
+export type EmailMetadataOut = z.infer<typeof emailMetadataOutSchema>;
 
-export type EmailContentOut = {
-  html_body: string | null;
-  text_body: string | null;
-};
+export const emailMetadataListSchema = z.array(emailMetadataOutSchema);
 
-export type EmailSendRequest = {
-  account_id: string;
-  subject: string;
-  body: string;
-  recipients: string[];
-};
+export const emailContentOutSchema = z.object({
+  html_body: z.string().nullable(),
+  text_body: z.string().nullable(),
+});
+export type EmailContentOut = z.infer<typeof emailContentOutSchema>;
 
-export type EmailItemRef = {
-  account_id: string;
-  provider_message_id: string;
-};
+export const emailSendRequestSchema = z.object({
+  account_id: z.string(),
+  subject: z.string(),
+  body: z.string(),
+  recipients: z.array(z.string()),
+});
+export type EmailSendRequest = z.infer<typeof emailSendRequestSchema>;
 
-export type AccountSyncDetail = {
-  account_id: string;
-  provider: string;
-  emails_synced: number;
-  sync_cursor: string | null;
-};
+export const emailItemRefSchema = z.object({
+  account_id: z.string(),
+  provider_message_id: z.string(),
+});
+export type EmailItemRef = z.infer<typeof emailItemRefSchema>;
 
-export type SyncResultOut = {
-  total_synced: number;
-  accounts: AccountSyncDetail[];
-};
+export const accountSyncDetailSchema = z.object({
+  account_id: z.string(),
+  provider: z.string(),
+  emails_synced: z.number(),
+  sync_cursor: z.string().nullable(),
+});
+export type AccountSyncDetail = z.infer<typeof accountSyncDetailSchema>;
 
-export type MoveToTrashResult = {
-  affected: number;
-};
+export const syncResultOutSchema = z.object({
+  total_synced: z.number(),
+  accounts: z.array(accountSyncDetailSchema),
+});
+export type SyncResultOut = z.infer<typeof syncResultOutSchema>;
 
-export type TrashActionResult = {
-  affected: number;
-};
+export const moveToTrashResultSchema = z.object({
+  affected: z.number(),
+});
+export type MoveToTrashResult = z.infer<typeof moveToTrashResultSchema>;
 
-export type ReadStatusResponse = {
-  updated_count: number;
-  accounts: { account_id: string; updated: number }[];
-};
+export const trashActionResultSchema = z.object({
+  affected: z.number(),
+});
+export type TrashActionResult = z.infer<typeof trashActionResultSchema>;
 
-export type SpamResponse = {
-  moved_count: number;
-  accounts: { account_id: string; moved: number }[];
-};
+export const readStatusResponseSchema = z.object({
+  updated_count: z.number(),
+  accounts: z.array(
+    z.object({
+      account_id: z.string(),
+      updated: z.number(),
+    }),
+  ),
+});
+export type ReadStatusResponse = z.infer<typeof readStatusResponseSchema>;
+
+export const spamResponseSchema = z.object({
+  moved_count: z.number(),
+  accounts: z.array(
+    z.object({
+      account_id: z.string(),
+      moved: z.number(),
+    }),
+  ),
+});
+export type SpamResponse = z.infer<typeof spamResponseSchema>;
 
 // Drafts
-export type DraftCreate = {
-  to_recipients?: string[];
-  cc_recipients?: string[];
-  bcc_recipients?: string[];
-  subject?: string;
-  body_html?: string;
-};
+export const draftCreateSchema = z.object({
+  to_recipients: z.array(z.string()).optional(),
+  cc_recipients: z.array(z.string()).optional(),
+  bcc_recipients: z.array(z.string()).optional(),
+  subject: z.string().optional(),
+  body_html: z.string().optional(),
+});
+export type DraftCreate = z.infer<typeof draftCreateSchema>;
 
-export type DraftUpdate = {
-  to_recipients?: string[];
-  cc_recipients?: string[];
-  bcc_recipients?: string[];
-  subject?: string;
-  body_html?: string;
-};
+export const draftUpdateSchema = z.object({
+  to_recipients: z.array(z.string()).optional(),
+  cc_recipients: z.array(z.string()).optional(),
+  bcc_recipients: z.array(z.string()).optional(),
+  subject: z.string().optional(),
+  body_html: z.string().optional(),
+});
+export type DraftUpdate = z.infer<typeof draftUpdateSchema>;
 
-export type DraftOut = {
-  provider_draft_id: string;
-  account_id: string;
-  to_recipients: string[];
-  cc_recipients: string[];
-  bcc_recipients: string[];
-  subject: string;
-  body_html: string;
-  created_at: string;
-  updated_at: string;
-};
+export const draftOutSchema = z.object({
+  provider_draft_id: z.string(),
+  account_id: z.string(),
+  to_recipients: z.array(z.string()),
+  cc_recipients: z.array(z.string()),
+  bcc_recipients: z.array(z.string()),
+  subject: z.string(),
+  body_html: z.string(),
+  created_at: z.string(),
+  updated_at: z.string(),
+});
+export type DraftOut = z.infer<typeof draftOutSchema>;
 
-export type DraftsAccountSyncDetail = {
-  account_id: string;
-  provider: string;
-  drafts_synced: number;
-};
+export const draftListSchema = z.array(draftOutSchema);
 
-export type DraftsSyncResultOut = {
-  total_synced: number;
-  accounts: DraftsAccountSyncDetail[];
-};
+export const draftsAccountSyncDetailSchema = z.object({
+  account_id: z.string(),
+  provider: z.string(),
+  drafts_synced: z.number(),
+});
+export type DraftsAccountSyncDetail = z.infer<typeof draftsAccountSyncDetailSchema>;
 
-export type DraftSendOut = {
-  provider_message_id: string;
-  provider: string;
-  status: string;
-};
+export const draftsSyncResultOutSchema = z.object({
+  total_synced: z.number(),
+  accounts: z.array(draftsAccountSyncDetailSchema),
+});
+export type DraftsSyncResultOut = z.infer<typeof draftsSyncResultOutSchema>;
+
+export const draftSendOutSchema = z.object({
+  provider_message_id: z.string(),
+  provider: z.string(),
+  status: z.string(),
+});
+export type DraftSendOut = z.infer<typeof draftSendOutSchema>;

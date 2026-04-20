@@ -1,21 +1,29 @@
 import { request } from '../client/http';
-import type { AuthResponse, UserOut } from '../types/dto';
+import {
+  authResponseSchema,
+  messageResponseSchema,
+  userOutSchema,
+  type AuthResponse,
+  type MessageResponse,
+  type UserOut,
+} from '../types/dto';
 
 export function loginWithGoogle(idToken: string): Promise<AuthResponse> {
-  return request<AuthResponse>('/auth/google', {
+  return request('/auth/google', {
     method: 'POST',
     body: { id_token: idToken },
+    schema: authResponseSchema,
   });
 }
 
 export function getMe(): Promise<UserOut> {
-  return request<UserOut>('/auth/me');
+  return request('/auth/me', { schema: userOutSchema });
 }
 
-export function logout(): Promise<{ message: string }> {
-  return request<{ message: string }>('/auth/logout', { method: 'POST' });
+export function logout(): Promise<MessageResponse> {
+  return request('/auth/logout', { method: 'POST', schema: messageResponseSchema });
 }
 
-export function deleteMe(): Promise<{ message: string }> {
-  return request<{ message: string }>('/auth/me', { method: 'DELETE' });
+export function deleteMe(): Promise<MessageResponse> {
+  return request('/auth/me', { method: 'DELETE', schema: messageResponseSchema });
 }

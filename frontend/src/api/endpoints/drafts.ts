@@ -1,10 +1,16 @@
 import { request } from '../client/http';
-import type {
-  DraftCreate,
-  DraftOut,
-  DraftSendOut,
-  DraftsSyncResultOut,
-  DraftUpdate,
+import {
+  draftListSchema,
+  draftOutSchema,
+  draftSendOutSchema,
+  draftsSyncResultOutSchema,
+  statusResponseSchema,
+  type DraftCreate,
+  type DraftOut,
+  type DraftSendOut,
+  type DraftUpdate,
+  type DraftsSyncResultOut,
+  type StatusResponse,
 } from '../types/dto';
 
 export function createDraft(
@@ -12,9 +18,10 @@ export function createDraft(
   accountId: string,
   payload: DraftCreate,
 ): Promise<DraftOut> {
-  return request<DraftOut>(`/mailboxes/${mailboxId}/accounts/${accountId}/drafts`, {
+  return request(`/mailboxes/${mailboxId}/accounts/${accountId}/drafts`, {
     method: 'POST',
     body: payload,
+    schema: draftOutSchema,
   });
 }
 
@@ -24,10 +31,11 @@ export function updateDraft(
   providerDraftId: string,
   payload: DraftUpdate,
 ): Promise<DraftOut> {
-  return request<DraftOut>(
-    `/mailboxes/${mailboxId}/accounts/${accountId}/drafts/${providerDraftId}`,
-    { method: 'PATCH', body: payload },
-  );
+  return request(`/mailboxes/${mailboxId}/accounts/${accountId}/drafts/${providerDraftId}`, {
+    method: 'PATCH',
+    body: payload,
+    schema: draftOutSchema,
+  });
 }
 
 export function sendDraft(
@@ -35,21 +43,22 @@ export function sendDraft(
   accountId: string,
   providerDraftId: string,
 ): Promise<DraftSendOut> {
-  return request<DraftSendOut>(
-    `/mailboxes/${mailboxId}/accounts/${accountId}/drafts/${providerDraftId}/send`,
-    { method: 'POST' },
-  );
+  return request(`/mailboxes/${mailboxId}/accounts/${accountId}/drafts/${providerDraftId}/send`, {
+    method: 'POST',
+    schema: draftSendOutSchema,
+  });
 }
 
 export function listDrafts(mailboxId: string, accountId?: string): Promise<DraftOut[]> {
   const params = accountId ? `?account_id=${accountId}` : '';
-  return request<DraftOut[]>(`/mailboxes/${mailboxId}/drafts${params}`);
+  return request(`/mailboxes/${mailboxId}/drafts${params}`, { schema: draftListSchema });
 }
 
 export function syncDrafts(mailboxId: string, accountId?: string): Promise<DraftsSyncResultOut> {
   const params = accountId ? `?account_id=${accountId}` : '';
-  return request<DraftsSyncResultOut>(`/mailboxes/${mailboxId}/drafts/sync${params}`, {
+  return request(`/mailboxes/${mailboxId}/drafts/sync${params}`, {
     method: 'POST',
+    schema: draftsSyncResultOutSchema,
   });
 }
 
@@ -57,9 +66,9 @@ export function deleteDraft(
   mailboxId: string,
   accountId: string,
   draftId: string,
-): Promise<{ status: string }> {
-  return request<{ status: string }>(
-    `/mailboxes/${mailboxId}/accounts/${accountId}/drafts/${draftId}`,
-    { method: 'DELETE' },
-  );
+): Promise<StatusResponse> {
+  return request(`/mailboxes/${mailboxId}/accounts/${accountId}/drafts/${draftId}`, {
+    method: 'DELETE',
+    schema: statusResponseSchema,
+  });
 }

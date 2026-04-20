@@ -1,3 +1,5 @@
+import { ZodError } from 'zod';
+
 type ErrorDetail = {
   code: string;
   message: string;
@@ -27,8 +29,22 @@ export class ApiError extends Error {
   }
 }
 
+export class ValidationError extends ApiError {
+  issues: ZodError['issues'];
+
+  constructor(zodError: ZodError) {
+    super('Received unexpected data from the server.', 'schema_mismatch');
+    this.name = 'ValidationError';
+    this.issues = zodError.issues;
+  }
+}
+
 export function isApiError(value: unknown): value is ApiError {
   return value instanceof ApiError;
+}
+
+export function isValidationError(value: unknown): value is ValidationError {
+  return value instanceof ValidationError;
 }
 
 export function toApiError(status: number, payload?: unknown): ApiError {

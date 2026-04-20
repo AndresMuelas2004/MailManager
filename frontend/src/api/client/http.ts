@@ -1,15 +1,17 @@
-import { ApiError, toApiError, toNetworkError } from './errors';
+import type { ZodType } from 'zod';
+import { ApiError, ValidationError, toApiError, toNetworkError } from './errors';
 
 const DEFAULT_BASE_URL = 'http://localhost:8000';
 const DEFAULT_HEADERS: HeadersInit = {
   Accept: 'application/json',
 };
 
-type RequestOptions = {
+type RequestOptions<T> = {
   method?: string;
   headers?: HeadersInit;
   body?: unknown;
   signal?: AbortSignal;
+  schema?: ZodType<T>;
 };
 
 function getBaseUrl(): string {
@@ -38,7 +40,7 @@ async function parseBody(response: Response): Promise<unknown> {
   return text.length > 0 ? text : undefined;
 }
 
-export async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
+export async function request<T>(path: string, options: RequestOptions<T> = {}): Promise<T> {
   const url = buildUrl(path);
   const headers: HeadersInit = {
     ...DEFAULT_HEADERS,
@@ -57,19 +59,29 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
     init.body = JSON.stringify(options.body);
   }
 
+  let response: Response;
+  let data: unknown;
   try {
-    const response = await fetch(url, init);
-    const data = await parseBody(response);
-
-    if (!response.ok) {
-      throw toApiError(response.status, data);
-    }
-
-    return data as T;
+    response = await fetch(url, init);
+    data = await parseBody(response);
   } catch (error) {
     if (error instanceof ApiError) {
       throw error;
     }
     throw toNetworkError('Network error while contacting the API.');
   }
+
+  if (!response.ok) {
+    throw toApiError(response.status, data);
+  }
+
+  if (options.schema) {
+    const parsed = options.schema.safeParse(data);
+    if (!parsed.success) {
+      throw new ValidationError(parsed.error);
+    }
+    return parsed.data;
+  }
+
+  return data as T;
 }
