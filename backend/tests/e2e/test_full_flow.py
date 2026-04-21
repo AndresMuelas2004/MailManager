@@ -137,6 +137,36 @@ def _fetch_one_message_id(account_id: str) -> str | None:
         conn.close()
 
 
+def _delete_email_content(account_id: str, provider_message_id: str) -> None:
+    """Remove any cached content row so the next GET exercises the MISS path."""
+    conn = _db_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "DELETE FROM email_content "
+                "WHERE account_id = %s AND provider_message_id = %s",
+                (account_id, provider_message_id),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _fetch_email_content_row(account_id: str, provider_message_id: str):
+    """Return (html_body, text_body, fetched_at) or None."""
+    conn = _db_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT html_body, text_body, fetched_at FROM email_content "
+                "WHERE account_id = %s AND provider_message_id = %s",
+                (account_id, provider_message_id),
+            )
+            return cur.fetchone()
+    finally:
+        conn.close()
+
+
 # ===================================================================
 # Section 1: Health
 # ===================================================================
@@ -1568,6 +1598,117 @@ def test_46_send_draft_outlook(e2e_client):
             conn.commit()
         finally:
             conn.close()
+
+
+# ===================================================================
+# Section 5b: Email content (cache-aside: MISS populates DB, HIT serves from DB)
+# ===================================================================
+
+def _assert_content_payload(data: dict) -> None:
+    assert "html_body" in data and "text_body" in data
+    assert data["html_body"] is not None or data["text_body"] is not None
+    if data["html_body"] is not None:
+        lower = data["html_body"].lower()
+        assert "<script" not in lower
+        assert "javascript:" not in lower
+
+
+def test_46a_email_content_gmail_miss(e2e_client, flow_state):
+    """Cache MISS: empty email_content → endpoint fetches from provider + persists."""
+    sync_resp = e2e_client.post(f"/mailboxes/{GMAIL_MAILBOX_ID}/emails/sync-metadata")
+    _assert_ok(sync_resp)
+
+    msg_id = _fetch_one_message_id(GMAIL_ACCOUNT_ID)
+    if msg_id is None:
+        pytest.skip("No synced emails found for Gmail test account")
+
+    _delete_email_content(GMAIL_ACCOUNT_ID, msg_id)
+    assert _fetch_email_content_row(GMAIL_ACCOUNT_ID, msg_id) is None
+
+    response = e2e_client.get(
+        f"/mailboxes/{GMAIL_MAILBOX_ID}/emails/{msg_id}/content",
+        params={"account_id": GMAIL_ACCOUNT_ID},
+    )
+    _assert_ok(response)
+    data = response.json()
+    _assert_content_payload(data)
+
+    row = _fetch_email_content_row(GMAIL_ACCOUNT_ID, msg_id)
+    assert row is not None
+    assert row[0] == data["html_body"]
+    assert row[1] == data["text_body"]
+
+    flow_state["gmail_content_msg_id"] = msg_id
+    flow_state["gmail_content_fetched_at"] = row[2].isoformat()
+    flow_state["gmail_content_payload"] = data
+
+
+def test_46b_email_content_gmail_hit(e2e_client, flow_state):
+    """Cache HIT: row already persisted → endpoint returns it without re-inserting."""
+    _require(flow_state, "gmail_content_msg_id", "gmail_content_fetched_at")
+    msg_id = flow_state["gmail_content_msg_id"]
+    prev_fetched_at = flow_state["gmail_content_fetched_at"]
+    prev_payload = flow_state["gmail_content_payload"]
+
+    response = e2e_client.get(
+        f"/mailboxes/{GMAIL_MAILBOX_ID}/emails/{msg_id}/content",
+        params={"account_id": GMAIL_ACCOUNT_ID},
+    )
+    _assert_ok(response)
+    data = response.json()
+    assert data == prev_payload
+
+    row = _fetch_email_content_row(GMAIL_ACCOUNT_ID, msg_id)
+    assert row is not None
+    assert row[2].isoformat() == prev_fetched_at
+
+
+def test_46c_email_content_outlook_miss(e2e_client, flow_state):
+    sync_resp = e2e_client.post(f"/mailboxes/{OUTLOOK_MAILBOX_ID}/emails/sync-metadata")
+    _assert_ok(sync_resp)
+
+    msg_id = _fetch_one_message_id(OUTLOOK_ACCOUNT_ID)
+    if msg_id is None:
+        pytest.skip("No synced emails found for Outlook test account")
+
+    _delete_email_content(OUTLOOK_ACCOUNT_ID, msg_id)
+    assert _fetch_email_content_row(OUTLOOK_ACCOUNT_ID, msg_id) is None
+
+    response = e2e_client.get(
+        f"/mailboxes/{OUTLOOK_MAILBOX_ID}/emails/{msg_id}/content",
+        params={"account_id": OUTLOOK_ACCOUNT_ID},
+    )
+    _assert_ok(response)
+    data = response.json()
+    _assert_content_payload(data)
+
+    row = _fetch_email_content_row(OUTLOOK_ACCOUNT_ID, msg_id)
+    assert row is not None
+    assert row[0] == data["html_body"]
+    assert row[1] == data["text_body"]
+
+    flow_state["outlook_content_msg_id"] = msg_id
+    flow_state["outlook_content_fetched_at"] = row[2].isoformat()
+    flow_state["outlook_content_payload"] = data
+
+
+def test_46d_email_content_outlook_hit(e2e_client, flow_state):
+    _require(flow_state, "outlook_content_msg_id", "outlook_content_fetched_at")
+    msg_id = flow_state["outlook_content_msg_id"]
+    prev_fetched_at = flow_state["outlook_content_fetched_at"]
+    prev_payload = flow_state["outlook_content_payload"]
+
+    response = e2e_client.get(
+        f"/mailboxes/{OUTLOOK_MAILBOX_ID}/emails/{msg_id}/content",
+        params={"account_id": OUTLOOK_ACCOUNT_ID},
+    )
+    _assert_ok(response)
+    data = response.json()
+    assert data == prev_payload
+
+    row = _fetch_email_content_row(OUTLOOK_ACCOUNT_ID, msg_id)
+    assert row is not None
+    assert row[2].isoformat() == prev_fetched_at
 
 
 # ===================================================================
