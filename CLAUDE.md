@@ -72,7 +72,7 @@
 
   ### 7 Immutable Files
 
-  All layer-level `CLAUDE.md` files (listed in § 1.1) are protected by a pre-edit hook that prevents any modification. Claude must never propose direct edits to these files. Instead, describe the suggested change — what, where, and why — so the developer can apply it manually.
+  Every `CLAUDE.md` inside this repository — both the root `CLAUDE.md` and every layer-level `CLAUDE.md` (listed in § 1.1) — is protected by a pre-edit hook that prevents any modification. The protection is scoped to this repository only; `CLAUDE.md` files outside the repo are not affected. Claude must never propose direct edits to these files. Instead, describe the suggested change — what, where, and why — so the developer can apply it manually.
   Project-specific changes always go in the corresponding `*_guide.md` file, which is not protected.
 
   ### 8 Plan Execution Rules
@@ -107,7 +107,9 @@
 
   ### 10 Common Mistakes Tracking
 
-  Recurring mistakes are tracked in @common_mistakes.md. Claude must treat every entry as a hard rule with the same authority as this `CLAUDE.md`.
+  @common_mistakes.md
+
+  Recurring mistakes are tracked in the file imported above. Claude must treat every entry as a hard rule with the same authority as this `CLAUDE.md`.
 
   **Proactive flagging:** When Claude notices it is repeating an error — or the user corrects the same kind of mistake more than once across conversations — Claude must explicitly ask the user whether the
   correction should be added to `common_mistakes.md`. Do not add entries autonomously; always ask first.
