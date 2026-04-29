@@ -4,6 +4,7 @@
 
 # Claude Code local config
 .claude/settings.local.json
+.claude/.memory-write-flags/
 .mcp.json
 claudePlans/
 .playwright-mcp/
