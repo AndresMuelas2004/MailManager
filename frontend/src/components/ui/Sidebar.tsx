@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { NavLink } from 'react-router-dom';
+import { NavLink, useLocation } from 'react-router-dom';
 import { Inbox, Send, Link, Settings, ChevronDown } from 'lucide-react';
 import type { ComponentType } from 'react';
 
@@ -43,6 +43,7 @@ export default function Sidebar({
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const base = `/m/${mailboxId}`;
+  const { search } = useLocation();
 
   return (
     <aside className="flex w-[260px] shrink-0 flex-col gap-1 border-r border-zinc-200 bg-white px-4 py-6">
@@ -88,7 +89,7 @@ export default function Sidebar({
         {navItems.map(({ icon: Icon, label, path }) => (
           <NavLink
             key={path}
-            to={`${base}/${path}`}
+            to={{ pathname: `${base}/${path}`, search }}
             className={({ isActive }) =>
               `flex h-10 items-center gap-3 rounded-lg px-3 text-sm font-medium ${
                 isActive ? 'bg-blue-50 text-blue-600' : 'text-zinc-500 hover:bg-zinc-50'

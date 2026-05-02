@@ -76,11 +76,16 @@ Invalid `account_id` format raises `QueryError` (wrapped from `InvalidTextRepres
 - `subject` and `body_html` are `TEXT NOT NULL DEFAULT ''` — empty drafts are valid.
 - `created_at` / `updated_at` are `TIMESTAMPTZ NOT NULL DEFAULT now()`. The `DEFAULT now()` fires only for `INSERT_DRAFT` (which doesn't list these columns). `UPSERT_DRAFTS_BATCH` always passes them explicitly from provider-reported timestamps.
 
+## `LIST_FILTERED` traps (email metadata search)
+
+- **`unaccent` is a runtime dependency.** The query wraps both columns and the search pattern in `unaccent(lower(...))`. The function is provided by the `unaccent` PostgreSQL extension, enabled once via migration `0020_create_extension_unaccent`. Any environment that bypasses migrations (e.g. a manually restored DB dump) raises `function unaccent(text) does not exist` at query time, not at startup — extension state is checked lazily by the planner.
+- **`account_ids` MUST be cast to `uuid[]` in the SQL.** psycopg2 sends a Python `list[str]` as `text[]`, and `account_id = ANY(%(account_ids)s)` without the explicit `::uuid[]` cast raises `operator does not exist: uuid = text`. Removing the cast is silently fine for empty lists (the repository short-circuits before the query) and breaks the moment any account is supplied.
+
 ## Extension
 
 ### Whenever a new Alembic migration is created
 
-**`migrations/runner.py` must be updated in the same change**: append the equivalent DDL to `_DDL_STATEMENTS` and advance the stamp at the bottom to the new migration name. Forgetting this silently breaks any environment that relies on the fallback runner (local setup without Alembic, some CI configurations). Data-only migrations also belong here — e.g. migration 0014 adds `TRUNCATE TABLE email_content;` immediately before the stamp line, and every subsequent `email_content`-invalidating migration follows the same shape (see `repository_guide.md` § "Email HTML rendering cache").
+**`migrations/runner.py` must be updated in the same change**: append the equivalent DDL to `_DDL_STATEMENTS` and advance the stamp at the bottom to the new migration name. Forgetting this silently breaks any environment that relies on the fallback runner (local setup without Alembic, some CI configurations). Data-only migrations also belong here — e.g. migration 0014 adds `TRUNCATE TABLE email_content;` immediately before the stamp line, and every subsequent `email_content`-invalidating migration follows the same shape (see `repository_guide.md` § "Email HTML rendering cache"). Pure DDL extensions (e.g. migration 0020 adds `CREATE EXTENSION IF NOT EXISTS unaccent;`) do **not** require a `TRUNCATE` — only schema changes that invalidate cached HTML do.
 
 ### Adding a new email provider
 

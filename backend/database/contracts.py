@@ -118,15 +118,26 @@ class EmailMetadataStore(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def list_by_account_and_box(self, account_id: str, box: str) -> list[dict[str, Any]]:
-        raise NotImplementedError
+    def list_filtered(
+        self,
+        account_ids: list[str],
+        box: str,
+        tokens: list[str],
+        limit: int,
+        offset: int,
+    ) -> list[dict[str, Any]]:
+        """List email metadata for the given accounts and box, optionally filtered by search tokens.
 
-    @abstractmethod
-    def list_by_mailbox_and_box(self, mailbox_id: str, box: str) -> list[dict[str, Any]]:
+        Empty `tokens` means no search filter. Non-empty tokens are AND-combined; for each
+        token, the predicate is OR'd across `subject`, `from_email`, `from_name` with
+        accent-insensitive case-insensitive substring match (literal — no fuzzy/stemming).
+        LIKE metacharacters in user input must be escaped before reaching the implementation.
+        """
         raise NotImplementedError
 
     @abstractmethod
     def exists(self, account_id: str, provider_message_id: str) -> bool:
+        """Return True iff a row with this (account_id, provider_message_id) pair exists."""
         raise NotImplementedError
 
 

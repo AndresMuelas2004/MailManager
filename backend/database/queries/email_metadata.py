@@ -109,21 +109,18 @@ MOVE_TO_TRASH_BATCH = """
       AND em.box NOT IN ('TRASH', 'DELETED')
 """
 
-LIST_BY_ACCOUNT_AND_BOX = """
+# {search_predicate} is a Python str.format() slot populated by PgEmailMetadataStore.list_filtered.
+# It expands to either an empty string or " AND (...)" — only parameterized clauses (%(name)s) belong inside.
+LIST_FILTERED = """
     SELECT provider_message_id, account_id, thread_id, from_email, from_name,
            subject, received_at, is_read, box
     FROM email_metadata
-    WHERE account_id = %(account_id)s AND box = %(box)s
+    WHERE account_id = ANY(%(account_ids)s::uuid[])
+      AND box = %(box)s
+      {search_predicate}
     ORDER BY received_at DESC
-"""
-
-LIST_BY_MAILBOX_AND_BOX = """
-    SELECT em.provider_message_id, em.account_id, em.thread_id, em.from_email,
-           em.from_name, em.subject, em.received_at, em.is_read, em.box
-    FROM email_metadata em
-    JOIN accounts a ON em.account_id = a.account_id
-    WHERE a.mailbox_id = %(mailbox_id)s AND em.box = %(box)s
-    ORDER BY em.received_at DESC
+    LIMIT %(limit)s
+    OFFSET %(offset)s
 """
 
 EXISTS_BY_MESSAGE_ID = """

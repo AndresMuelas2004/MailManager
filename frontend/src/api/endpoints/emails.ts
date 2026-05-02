@@ -20,14 +20,24 @@ import {
   type TrashActionResult,
 } from '../types/dto';
 
+export type ListEmailsOptions = {
+  q?: string;
+  signal?: AbortSignal;
+};
+
 export function listEmails(
   mailboxId: string,
   box: string,
   accountId?: string,
+  options: ListEmailsOptions = {},
 ): Promise<EmailMetadataOut[]> {
   const params = new URLSearchParams({ box });
   if (accountId) params.set('account_id', accountId);
-  return request(`/mailboxes/${mailboxId}/emails?${params}`, { schema: emailMetadataListSchema });
+  if (options.q !== undefined && options.q.length > 0) params.set('q', options.q);
+  return request(`/mailboxes/${mailboxId}/emails?${params}`, {
+    schema: emailMetadataListSchema,
+    signal: options.signal,
+  });
 }
 
 export function getEmailContent(

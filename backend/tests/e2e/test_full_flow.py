@@ -1172,6 +1172,80 @@ def test_38_list_emails_gmail(e2e_client):
         assert e["box"] == "ALL_MAIL"
 
 
+def test_38a_search_emails_single_account(e2e_client):
+    """Search the Gmail account for a generic substring; assert rows respect
+    the filter contract (account scope + box + substring on searchable cols)."""
+    # Sync metadata so the search has data to work against.
+    sync_resp = e2e_client.post(
+        f"/mailboxes/{GMAIL_MAILBOX_ID}/emails/sync-metadata?account_id={GMAIL_ACCOUNT_ID}",
+    )
+    _assert_ok(sync_resp)
+
+    # Use a token short enough that almost any inbox can produce a match,
+    # but specific enough that pure noise rows should not match.
+    needle = "newsletter"
+    resp = e2e_client.get(
+        f"/mailboxes/{GMAIL_MAILBOX_ID}/emails",
+        params={
+            "box": "ALL_MAIL",
+            "account_id": GMAIL_ACCOUNT_ID,
+            "q": needle,
+        },
+    )
+    _assert_ok(resp)
+    data = resp.json()
+    assert isinstance(data, list)
+    # The list may be empty in a hypothetical pristine inbox; what cannot
+    # happen is a row that does not match the filter contract.
+    needle_lc = needle.lower()
+    for e in data:
+        assert e["account_id"] == GMAIL_ACCOUNT_ID
+        assert e["box"] == "ALL_MAIL"
+        haystack = " ".join([
+            (e.get("subject") or ""),
+            (e.get("from_email") or ""),
+            (e.get("from_name") or ""),
+        ]).lower()
+        assert needle_lc in haystack, (
+            f"Row {e.get('provider_message_id')} returned by search='{needle}' "
+            "does not contain the token in subject / from_email / from_name."
+        )
+
+
+def test_38b_search_emails_unified_mailbox(e2e_client):
+    """Search the unified mailbox view (no account_id); assert every row
+    belongs to some account in the requested mailbox and matches the token."""
+    sync_resp = e2e_client.post(
+        f"/mailboxes/{GMAIL_MAILBOX_ID}/emails/sync-metadata",
+    )
+    _assert_ok(sync_resp)
+
+    # Look up the set of accounts under the mailbox to validate the scope.
+    accounts_resp = e2e_client.get(f"/mailboxes/{GMAIL_MAILBOX_ID}/accounts")
+    _assert_ok(accounts_resp)
+    mailbox_account_ids = {a["account_id"] for a in accounts_resp.json()}
+    assert GMAIL_ACCOUNT_ID in mailbox_account_ids
+
+    needle = "factura"
+    resp = e2e_client.get(
+        f"/mailboxes/{GMAIL_MAILBOX_ID}/emails",
+        params={"box": "ALL_MAIL", "q": needle},
+    )
+    _assert_ok(resp)
+    data = resp.json()
+    assert isinstance(data, list)
+    needle_lc = needle.lower()
+    for e in data:
+        assert e["account_id"] in mailbox_account_ids
+        assert e["box"] == "ALL_MAIL"
+        haystack = " ".join([
+            (e.get("subject") or ""),
+            (e.get("from_email") or ""),
+            (e.get("from_name") or ""),
+        ]).lower()
+        assert needle_lc in haystack
+
+
 def test_39_get_email_content_gmail(e2e_client):
     """Pick an email from the DB, GET /content (first call hits provider
     and caches; second call is a cache hit)."""

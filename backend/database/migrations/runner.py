@@ -288,6 +288,9 @@ _DDL_STATEMENTS = [
     """,
     "DELETE FROM alembic_version;",
     "INSERT INTO alembic_version(version_num) VALUES ('0019_invalidate_email_content_cache_pipeline_refactor');",
+    # Migration 0020: enable unaccent extension for accent-insensitive search
+    "CREATE EXTENSION IF NOT EXISTS unaccent;",
+    "UPDATE alembic_version SET version_num = '0020_create_extension_unaccent';",
 ]
 
 

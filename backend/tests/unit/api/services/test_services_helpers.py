@@ -34,6 +34,7 @@ from api.services.services_helpers import (
     load_wrapped_app_credentials,
     mark_as_deleted_batch,
     move_to_trash_batch,
+    parse_search_tokens,
     persist_email_content,
     persist_email_metadata_batch,
     raise_on_silent_auth_errors,
@@ -787,3 +788,42 @@ class TestPersistEmailContent:
             mock_store.upsert.side_effect = RuntimeError("boom")
             with pytest.raises(ApiError, match="Failed to persist email content"):
                 persist_email_content("acc-1", "m1", None, None)
+
+
+# ------------------------------------------------------------------
+# parse_search_tokens
+# ------------------------------------------------------------------
+
+class TestParseSearchTokens:
+
+    def test_none_returns_empty_list(self):
+        assert parse_search_tokens(None) == []
+
+    def test_empty_string_returns_empty_list(self):
+        assert parse_search_tokens("") == []
+
+    def test_only_whitespace_returns_empty_list(self):
+        assert parse_search_tokens("   ") == []
+        assert parse_search_tokens("\t\n  \t") == []
+
+    def test_strips_outer_whitespace_then_splits(self):
+        assert parse_search_tokens("  ab  ") == ["ab"]
+
+    def test_multiple_tokens_split_by_whitespace(self):
+        assert parse_search_tokens("foo bar") == ["foo", "bar"]
+
+    def test_collapses_internal_whitespace_runs(self):
+        # str.split() with no args treats any whitespace run as one separator
+        # and discards the empty pieces — important for "a    b" → ["a", "b"].
+        assert parse_search_tokens("a    b\tc\nd") == ["a", "b", "c", "d"]
+
+    def test_caps_at_max_search_tokens(self):
+        # _MAX_SEARCH_TOKENS = 10; anything beyond must be silently dropped.
+        q = " ".join(f"t{i}" for i in range(15))
+        result = parse_search_tokens(q)
+        assert len(result) == 10
+        assert result == [f"t{i}" for i in range(10)]
+
+    def test_exactly_at_cap_returns_all(self):
+        q = " ".join(f"t{i}" for i in range(10))
+        assert parse_search_tokens(q) == [f"t{i}" for i in range(10)]

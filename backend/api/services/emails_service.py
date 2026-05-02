@@ -56,6 +56,7 @@ from api.services.services_helpers import (
     load_wrapped_app_credentials,
     mark_as_deleted_batch,
     move_to_trash_batch,
+    parse_search_tokens,
     persist_email_content,
     persist_email_metadata_batch,
     raise_on_silent_auth_errors,
@@ -696,8 +697,11 @@ def list_emails(
     box: str,
     user_id: str,
     account_id: str | None = None,
+    q: str | None = None,
+    limit: int = 200,
+    offset: int = 0,
 ) -> list[EmailMetadataOut]:
-    """List email metadata for a mailbox, optionally filtered to a single account."""
+    """List email metadata for a mailbox, with optional search and pagination."""
     ensure_mailbox_access(mailbox_id, user_id)
 
     if account_id is not None:
@@ -718,32 +722,39 @@ def list_emails(
                 f"Account '{account_id}' not found in mailbox '{mailbox_id}' "
                 "during email listing."
             )
-
-        try:
-            rows = email_metadata_store.list_by_account_and_box(account_id, box)
-        except DatabaseError as exc:
-            raise translate_database_error(exc) from exc
-        except Exception as exc:
-            logger.warning(
-                "Unexpected email metadata listing error for account '%s' (%s): %s",
-                account_id, type(exc).__name__, exc,
-            )
-            raise EmailListError(
-                "Failed to list email metadata for account."
-            ) from exc
+        account_ids: list[str] = [account_id]
     else:
         try:
-            rows = email_metadata_store.list_by_mailbox_and_box(mailbox_id, box)
+            accounts = account_store.list_by_mailbox(mailbox_id)
         except DatabaseError as exc:
             raise translate_database_error(exc) from exc
         except Exception as exc:
             logger.warning(
-                "Unexpected email metadata listing error for mailbox '%s' (%s): %s",
+                "Unexpected account listing error during email listing for mailbox '%s' (%s): %s",
                 mailbox_id, type(exc).__name__, exc,
             )
             raise EmailListError(
-                "Failed to list email metadata for mailbox."
+                "Failed to load mailbox accounts for email listing."
             ) from exc
+        account_ids = [str(a["account_id"]) for a in accounts]
+        if not account_ids:
+            return []
+
+    try:
+        tokens = parse_search_tokens(q)
+        rows = email_metadata_store.list_filtered(
+            account_ids, box, tokens, limit, offset,
+        )
+    except DatabaseError as exc:
+        raise translate_database_error(exc) from exc
+    except Exception as exc:
+        logger.warning(
+            "Unexpected email metadata listing error for mailbox '%s' (%s): %s",
+            mailbox_id, type(exc).__name__, exc,
+        )
+        raise EmailListError(
+            "Failed to list email metadata for filtered listing."
+        ) from exc
 
     return [
         EmailMetadataOut(
