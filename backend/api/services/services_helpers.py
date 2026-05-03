@@ -669,3 +669,13 @@ def persist_email_content(
     except Exception as exc:
         logger.warning("Unexpected email content persist error (%s): %s", type(exc).__name__, exc)
         raise fallback("Failed to persist email content.") from exc
+
+
+_MAX_SEARCH_TOKENS = 10
+
+
+def parse_search_tokens(q: str | None) -> list[str]:
+    """Strip *q* and split into up to 10 non-empty whitespace-separated tokens."""
+    if q is None:
+        return []
+    return [t for t in q.strip().split() if t][:_MAX_SEARCH_TOKENS]

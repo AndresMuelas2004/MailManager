@@ -238,7 +238,7 @@ Emails:
 - `POST /mailboxes/{mailbox_id}/emails/move-to-trash`
 - `POST /mailboxes/{mailbox_id}/emails/spam`
 - `POST /mailboxes/{mailbox_id}/emails/restore-from-spam`
-- `GET /mailboxes/{mailbox_id}/emails` — Required query param: `box=ALL_MAIL|SENT|SPAM|TRASH`. Optional query param: `account_id`.
+- `GET /mailboxes/{mailbox_id}/emails` — Required query param: `box=ALL_MAIL|SENT|SPAM|TRASH`. Optional: `account_id`, `q` (free-text search, 2-200 chars, accent/case-insensitive substring across subject + sender), `limit` (default 200, max 500), `offset` (default 0).
 - `GET /mailboxes/{mailbox_id}/emails/{provider_message_id}/content` — Required query param: `account_id`.
 
 Drafts:

@@ -14,6 +14,7 @@ import psycopg2.errors
 import pytest
 
 from database.repositories import email_metadata_repository as em_module
+from database.repositories.email_metadata_repository import _escape_like
 from database.errors.exceptions import ConnectionPoolError, QueryError
 from tests.shared.database_fakes import FakeCursor, patch_connection, patch_connection_error
 
@@ -22,6 +23,36 @@ def _stub_execute_values(cur, sql, rows, **kwargs):
     """Stub for psycopg2.extras.execute_values that records the call."""
     cur.executed.append((sql, rows))
     cur.rowcount = len(rows)
+
+
+# ===== _escape_like =====
+
+
+def test_escape_like_passes_normal_text_unchanged():
+    assert _escape_like("hello") == "hello"
+    assert _escape_like("Sprint planning") == "Sprint planning"
+
+
+def test_escape_like_handles_empty_string():
+    assert _escape_like("") == ""
+
+
+def test_escape_like_escapes_percent():
+    assert _escape_like("50%") == "50\\%"
+
+
+def test_escape_like_escapes_underscore():
+    assert _escape_like("a_b") == "a\\_b"
+
+
+def test_escape_like_escapes_backslash_first():
+    # The backslash must be escaped first; otherwise %/_ escapes get re-escaped.
+    assert _escape_like("a\\b") == "a\\\\b"
+
+
+def test_escape_like_escapes_combined_metacharacters():
+    # All three metacharacters present at once: backslash → \\, then % → \%, then _ → \_
+    assert _escape_like("a\\b%c_d") == "a\\\\b\\%c\\_d"
 
 
 # ===== upsert_batch =====
@@ -529,103 +560,136 @@ def test_update_spam_status_batch_propagates_connection_pool_error(monkeypatch):
         em_module.email_metadata_store.update_spam_status_batch("acc1", [("old_m1",)])
 
 
-# ===== list_by_account_and_box =====
+# ===== list_filtered =====
 
 
-def test_list_by_account_and_box_happy_path(monkeypatch):
-    rows = [
-        {"provider_message_id": "m1", "account_id": "acc1", "thread_id": "t1",
-         "from_email": "a@b.com", "from_name": "A", "subject": "s",
-         "received_at": datetime.now(timezone.utc), "is_read": False, "box": "SENT"},
-    ]
-    cursor = FakeCursor(fetchall_results=[rows])
+def _row(**overrides):
+    base = {
+        "provider_message_id": "m1", "account_id": "acc1", "thread_id": "t1",
+        "from_email": "a@b.com", "from_name": "A", "subject": "s",
+        "received_at": datetime.now(timezone.utc), "is_read": False, "box": "ALL_MAIL",
+    }
+    base.update(overrides)
+    return base
+
+
+def test_list_filtered_empty_account_ids_returns_empty_without_db_call(monkeypatch):
+    # If account_ids is empty, the repository must short-circuit BEFORE touching
+    # the connection — otherwise a misconfigured deployment could leak rows of
+    # an unauthorized mailbox. Inject an exploding connection to assert no
+    # cursor is requested.
+    def _explode():
+        raise AssertionError("get_connection must not be called for empty account_ids")
+
+    monkeypatch.setattr(em_module.connection, "get_connection", _explode)
+    assert em_module.email_metadata_store.list_filtered([], "ALL_MAIL", [], 200, 0) == []
+
+
+def test_list_filtered_no_tokens_omits_search_predicate(monkeypatch):
+    cursor = FakeCursor(fetchall_results=[[_row()]])
     patch_connection(monkeypatch, em_module, [cursor])
 
-    result = em_module.email_metadata_store.list_by_account_and_box("acc1", "SENT")
+    result = em_module.email_metadata_store.list_filtered(
+        ["acc1"], "ALL_MAIL", [], 200, 0,
+    )
     assert len(result) == 1
-    assert result[0]["provider_message_id"] == "m1"
-    assert result[0]["box"] == "SENT"
+    sql, params = cursor.executed[0]
+    # No search predicate when tokens are empty: ILIKE/unaccent must not appear.
+    assert "ILIKE" not in sql
+    assert "unaccent" not in sql
+    # Base predicate parameters are passed through as named placeholders.
+    assert params["account_ids"] == ["acc1"]
+    assert params["box"] == "ALL_MAIL"
+    assert params["limit"] == 200
+    assert params["offset"] == 0
+    # No search-token placeholders.
+    assert "tok0" not in params
 
 
-def test_list_by_account_and_box_invalid_text_returns_empty(monkeypatch):
+def test_list_filtered_with_tokens_builds_and_block_with_named_placeholders(monkeypatch):
+    cursor = FakeCursor(fetchall_results=[[]])
+    patch_connection(monkeypatch, em_module, [cursor])
+
+    em_module.email_metadata_store.list_filtered(
+        ["acc1", "acc2"], "ALL_MAIL", ["foo", "bar"], 50, 10,
+    )
+    sql, params = cursor.executed[0]
+    # Per-token placeholders must follow the tok0/tok1/... naming scheme.
+    assert params["tok0"] == "%foo%"
+    assert params["tok1"] == "%bar%"
+    # Each token contributes a 3-column OR block joined by AND.
+    assert sql.count("ILIKE") == 6  # 3 columns × 2 tokens
+    assert sql.count("unaccent(lower(coalesce(subject, '')))") == 2
+    assert sql.count("unaccent(lower(coalesce(from_email, '')))") == 2
+    assert sql.count("unaccent(lower(coalesce(from_name, '')))") == 2
+    # Tokens are AND-combined: there must be exactly two parenthesised blocks
+    # joined by " AND " inside the generated predicate.
+    assert " AND " in sql
+
+
+def test_list_filtered_escapes_token_metacharacters_before_wrapping(monkeypatch):
+    cursor = FakeCursor(fetchall_results=[[]])
+    patch_connection(monkeypatch, em_module, [cursor])
+
+    em_module.email_metadata_store.list_filtered(
+        ["acc1"], "ALL_MAIL", ["50%_off\\bar"], 200, 0,
+    )
+    _, params = cursor.executed[0]
+    # The token is wrapped with % on both sides AFTER escaping. The original
+    # %, _ and \ inside the user input must arrive at the DB pre-escaped so
+    # they do not act as ILIKE metacharacters.
+    assert params["tok0"] == "%50\\%\\_off\\\\bar%"
+
+
+def test_list_filtered_invalid_text_returns_empty(monkeypatch):
     cursor = FakeCursor(execute_side_effect=psycopg2.errors.InvalidTextRepresentation())
     patch_connection(monkeypatch, em_module, [cursor])
 
-    assert em_module.email_metadata_store.list_by_account_and_box("not-a-uuid", "ALL_MAIL") == []
+    assert em_module.email_metadata_store.list_filtered(
+        ["not-a-uuid"], "ALL_MAIL", [], 200, 0,
+    ) == []
 
 
-def test_list_by_account_and_box_psycopg2_error_raises_query_error(monkeypatch):
+def test_list_filtered_psycopg2_error_raises_query_error(monkeypatch):
     cursor = FakeCursor(execute_side_effect=psycopg2.OperationalError("fail"))
     patch_connection(monkeypatch, em_module, [cursor])
 
-    with pytest.raises(QueryError, match="Failed to list email metadata by account and box"):
-        em_module.email_metadata_store.list_by_account_and_box("acc1", "ALL_MAIL")
+    with pytest.raises(QueryError, match="Failed to list filtered email metadata"):
+        em_module.email_metadata_store.list_filtered(["acc1"], "ALL_MAIL", [], 200, 0)
 
 
-def test_list_by_account_and_box_generic_raises_query_error(monkeypatch):
+def test_list_filtered_generic_raises_query_error(monkeypatch):
     cursor = FakeCursor(execute_side_effect=RuntimeError("boom"))
     patch_connection(monkeypatch, em_module, [cursor])
 
     with pytest.raises(QueryError, match="RuntimeError"):
-        em_module.email_metadata_store.list_by_account_and_box("acc1", "ALL_MAIL")
+        em_module.email_metadata_store.list_filtered(["acc1"], "ALL_MAIL", [], 200, 0)
 
 
-def test_list_by_account_and_box_propagates_connection_pool_error(monkeypatch):
+def test_list_filtered_propagates_connection_pool_error(monkeypatch):
     patch_connection_error(monkeypatch, em_module, ConnectionPoolError("pool down"))
 
     with pytest.raises(ConnectionPoolError, match="pool down"):
-        em_module.email_metadata_store.list_by_account_and_box("acc1", "ALL_MAIL")
+        em_module.email_metadata_store.list_filtered(["acc1"], "ALL_MAIL", [], 200, 0)
 
 
-# ===== list_by_mailbox_and_box =====
-
-
-def test_list_by_mailbox_and_box_happy_path(monkeypatch):
+def test_list_filtered_returns_dicts_for_each_row(monkeypatch):
     rows = [
-        {"provider_message_id": "m1", "account_id": "acc1", "thread_id": "t1",
-         "from_email": "a@b.com", "from_name": "A", "subject": "s",
-         "received_at": datetime.now(timezone.utc), "is_read": True, "box": "SPAM"},
-        {"provider_message_id": "m2", "account_id": "acc2", "thread_id": "t2",
-         "from_email": "c@d.com", "from_name": "C", "subject": "s2",
-         "received_at": datetime.now(timezone.utc), "is_read": False, "box": "SPAM"},
+        _row(provider_message_id="m1", account_id="acc1", box="SPAM"),
+        _row(provider_message_id="m2", account_id="acc2", box="SPAM"),
     ]
     cursor = FakeCursor(fetchall_results=[rows])
     patch_connection(monkeypatch, em_module, [cursor])
 
-    result = em_module.email_metadata_store.list_by_mailbox_and_box("mbx1", "SPAM")
+    result = em_module.email_metadata_store.list_filtered(
+        ["acc1", "acc2"], "SPAM", [], 200, 0,
+    )
     assert len(result) == 2
-    assert result[0]["account_id"] == "acc1"
-    assert result[1]["account_id"] == "acc2"
-
-
-def test_list_by_mailbox_and_box_invalid_text_returns_empty(monkeypatch):
-    cursor = FakeCursor(execute_side_effect=psycopg2.errors.InvalidTextRepresentation())
-    patch_connection(monkeypatch, em_module, [cursor])
-
-    assert em_module.email_metadata_store.list_by_mailbox_and_box("not-a-uuid", "ALL_MAIL") == []
-
-
-def test_list_by_mailbox_and_box_psycopg2_error_raises_query_error(monkeypatch):
-    cursor = FakeCursor(execute_side_effect=psycopg2.OperationalError("fail"))
-    patch_connection(monkeypatch, em_module, [cursor])
-
-    with pytest.raises(QueryError, match="Failed to list email metadata by mailbox and box"):
-        em_module.email_metadata_store.list_by_mailbox_and_box("mbx1", "ALL_MAIL")
-
-
-def test_list_by_mailbox_and_box_generic_raises_query_error(monkeypatch):
-    cursor = FakeCursor(execute_side_effect=RuntimeError("boom"))
-    patch_connection(monkeypatch, em_module, [cursor])
-
-    with pytest.raises(QueryError, match="RuntimeError"):
-        em_module.email_metadata_store.list_by_mailbox_and_box("mbx1", "ALL_MAIL")
-
-
-def test_list_by_mailbox_and_box_propagates_connection_pool_error(monkeypatch):
-    patch_connection_error(monkeypatch, em_module, ConnectionPoolError("pool down"))
-
-    with pytest.raises(ConnectionPoolError, match="pool down"):
-        em_module.email_metadata_store.list_by_mailbox_and_box("mbx1", "ALL_MAIL")
+    assert result[0]["provider_message_id"] == "m1"
+    assert result[1]["provider_message_id"] == "m2"
+    # The repository normalises rows to plain dicts even when the cursor returns
+    # RealDictRow / mapping-like objects.
+    assert all(isinstance(r, dict) for r in result)
 
 
 # ===== exists =====

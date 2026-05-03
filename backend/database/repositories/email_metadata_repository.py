@@ -15,6 +15,11 @@ from database.queries import email_metadata as queries
 from database.errors import DatabaseError, QueryError
 
 
+def _escape_like(token: str) -> str:
+    """Escape backslash, %, and _ for safe use inside an ILIKE pattern."""
+    return token.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
 class PgEmailMetadataStore(EmailMetadataStore):
     """
     PostgreSQL-backed email metadata persistence.
@@ -153,6 +158,7 @@ class PgEmailMetadataStore(EmailMetadataStore):
                         },
                     )
                     row = cur.fetchone()
+                    return row is not None
         except psycopg2.errors.InvalidTextRepresentation:
             return False
         except DatabaseError:
@@ -163,7 +169,6 @@ class PgEmailMetadataStore(EmailMetadataStore):
             raise QueryError(
                 f"Unexpected email metadata exists check error ({type(exc).__name__}): {exc}"
             ) from exc
-        return row is not None
 
 
     def get_trash_emails_by_ids(self, account_id: str, message_ids: list[str]) -> list[dict[str, Any]]:
@@ -248,45 +253,50 @@ class PgEmailMetadataStore(EmailMetadataStore):
             ) from exc
 
 
-    def list_by_account_and_box(self, account_id: str, box: str) -> list[dict[str, Any]]:
+    def list_filtered(
+        self,
+        account_ids: list[str],
+        box: str,
+        tokens: list[str],
+        limit: int,
+        offset: int,
+    ) -> list[dict[str, Any]]:
+        if not account_ids:
+            return []
         try:
+            params: dict[str, Any] = {
+                "account_ids": account_ids,
+                "box": box,
+                "limit": limit,
+                "offset": offset,
+            }
+            if tokens:
+                clauses: list[str] = []
+                for i, token in enumerate(tokens):
+                    key = f"tok{i}"
+                    params[key] = f"%{_escape_like(token)}%"
+                    clauses.append(
+                        f"(unaccent(lower(coalesce(subject, ''))) ILIKE unaccent(lower(%({key})s))"
+                        f" OR unaccent(lower(coalesce(from_email, ''))) ILIKE unaccent(lower(%({key})s))"
+                        f" OR unaccent(lower(coalesce(from_name, ''))) ILIKE unaccent(lower(%({key})s)))"
+                    )
+                predicate = " AND " + " AND ".join(clauses)
+            else:
+                predicate = ""
+            sql = queries.LIST_FILTERED.format(search_predicate=predicate)
             with connection.get_connection() as conn:
                 with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-                    cur.execute(
-                        queries.LIST_BY_ACCOUNT_AND_BOX,
-                        {"account_id": account_id, "box": box},
-                    )
+                    cur.execute(sql, params)
                     rows = cur.fetchall()
         except psycopg2.errors.InvalidTextRepresentation:
             return []
         except DatabaseError:
             raise
         except psycopg2.Error as exc:
-            raise QueryError("Failed to list email metadata by account and box.") from exc
+            raise QueryError("Failed to list filtered email metadata.") from exc
         except Exception as exc:
             raise QueryError(
-                f"Unexpected email metadata list by account and box error ({type(exc).__name__}): {exc}"
-            ) from exc
-        return [dict(row) for row in rows]
-
-    def list_by_mailbox_and_box(self, mailbox_id: str, box: str) -> list[dict[str, Any]]:
-        try:
-            with connection.get_connection() as conn:
-                with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-                    cur.execute(
-                        queries.LIST_BY_MAILBOX_AND_BOX,
-                        {"mailbox_id": mailbox_id, "box": box},
-                    )
-                    rows = cur.fetchall()
-        except psycopg2.errors.InvalidTextRepresentation:
-            return []
-        except DatabaseError:
-            raise
-        except psycopg2.Error as exc:
-            raise QueryError("Failed to list email metadata by mailbox and box.") from exc
-        except Exception as exc:
-            raise QueryError(
-                f"Unexpected email metadata list by mailbox and box error ({type(exc).__name__}): {exc}"
+                f"Unexpected list filtered email metadata error ({type(exc).__name__}): {exc}"
             ) from exc
         return [dict(row) for row in rows]
 

@@ -64,6 +64,34 @@ Store the result as `<branch-name>`.
 
 ---
 
+## Phase 0.5 — Unlock Worktree
+
+Before any operation that reads or writes the worktree, kill any process holding a lock on it. This prevents the classic "directory in use by another process" error during the cleanup in Phase 2.3, and it also prevents file watchers / dev servers from racing with `git status` and `git diff` in Phase 1. Runs *after* Phase 0 (we need the validated `$WORKTREE_PATH`) and *before* Phase 1 (we want a quiet worktree before reading any state).
+
+### 0.5.1 Run the unlock script
+
+```bash
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$REPO_ROOT/.claude/skills/ship/scripts/unlock-worktree.ps1" -WorktreePath "$WORKTREE_PATH"
+```
+
+What the script does (`.claude/skills/ship/scripts/unlock-worktree.ps1`):
+
+1. **Path enumeration pass** — `Get-CimInstance Win32_Process` lists every running process. A process is flagged as a candidate if **either** its `ExecutablePath` lives inside `$WORKTREE_PATH`, **or** its `CommandLine` references `$WORKTREE_PATH` as a path token. Matching is strict-prefix with both backslash and forward-slash variants, so `C:\foo` never matches `C:\foobar` and Git Bash–style `C:/foo` cmdlines are caught too.
+2. **Optional `handle.exe` pass** — if Sysinternals' `handle.exe` is on `PATH` or bundled at `.claude/skills/ship/bin/handle.exe`, it runs as a second pass to catch processes with open handles whose path/cmdline does *not* reveal the worktree (file watchers, IDE language servers, antivirus scans, shells with `cwd` inside the worktree, etc.).
+3. **Safety filters** — excludes the script's own PID and its parent PID, plus a hardcoded never-kill list (system processes, `explorer.exe`, all shells and terminals, `Code.exe` / `Cursor.exe` / JetBrains IDEs, `claude.exe`). Anything outside that list — typically `node.exe`, `python.exe`, `uvicorn`, `vite`, `pytest`, MCP servers — is fair game when it sits inside the worktree.
+4. **Force-kill** — `Stop-Process -Force` per candidate, then a 500 ms sleep so the OS releases the file handles before any later `git worktree remove` / `rm -rf` runs.
+
+### 0.5.2 Interpret the exit code
+
+- **Exit `0`** — no candidates, or all of them killed cleanly. Continue to Phase 1.
+- **Exit `1`** — some candidates were detected but `Stop-Process` failed (usually because the process died mid-kill, or it requires elevation we don't have). **WARN** the user with the script's stdout and continue — Phase 2.3's `git worktree remove --force` + `rm -rf` will retry and most often succeed anyway.
+- **Exit `2`** — the path passed in does not exist on disk. **STOP IMMEDIATELY** and tell the user — this should never happen because Phase 0.3 just validated the same path; if it does, something deleted the worktree mid-skill and we must not continue.
+
+**Output to chat:**
+> Worktree unlocked: <N> process(es) killed | no blocking processes detected | WARNING: <N> process(es) could not be killed (continuing)
+
+---
+
 ## Phase 1 — Commit + Push + PR
 
 ### 1.1 Check for uncommitted changes
@@ -285,6 +313,9 @@ After all phases complete, output a structured final summary to chat. This is **
 ### Phase 0 — Validation
 - Worktree: `<worktree-path>` (branch: `<branch-name>`)
 
+### Phase 0.5 — Unlock Worktree
+- Blocking processes: <N> killed | none detected | WARNING: <N> failed to kill ({list of names + reasons})
+
 ### Phase 1 — Commit + Push + PR
 - Commit: `<commit-title>` | No uncommitted changes (skipped)
 - Push: `origin/<branch-name>` | Already up to date (skipped)
@@ -328,7 +359,7 @@ After all phases complete, output a structured final summary to chat. This is **
 ### Conflict types reference (for Phase 4 detail tables):
 - **Type 1 (Additive)**: Both branches add code to the same file but in different sections or functions. Resolution is straightforward — keep both additions. Low risk.
 - **Type 2 (Combinatorial)**: Both branches modify the same function or method. Resolution requires understanding both intents and combining the logic into one coherent implementation. Higher risk — the summary explains exactly what was done so the user can verify.
-- **Type 3 (Semantic Duplication)**: Both branches independently created code that serves the same or very similar purpose — identical or functionally equivalent functions, methods, queries, or constants. Detected post-rebase by comparing what each branch added since they diverged (not just scanning files for same-name duplicates). Covers same-file duplicates, same-name cross-file duplicates, and different-name semantic equivalents (e.g., both branches created a helper to query the same DB table but with different names). Auto-fixed when safe; flagged for manual intervention when logic diverges.
+- **Type 3 (Semantic Duplication)**: Both branches independently created or modified code that serves the same or very similar purpose. Detected post-rebase by performing a **full-diff comparison** of everything each branch changed since they diverged, **across every language and every file** (Python, TypeScript/TSX, JavaScript, SQL, Markdown, configuration, migrations, etc. — not just Python). Covers same-file duplicates, same-name cross-file duplicates, different-name semantic equivalents (e.g., both branches created a helper to query the same DB table or a React hook wrapping the same endpoint under different names), and **intra-function duplication** (similar blocks of logic injected into pre-existing functions on each side, invisible to a definition-level scan). Auto-fixed when safe; flagged for manual intervention when logic diverges. This pass runs only after Step 3 has resolved all textual conflicts — correctness first, efficiency second.
 - **Type 4 (Migration Chain Fork)**: Two Alembic migration files share the same `down_revision`, forking the migration chain. Invisible during development — only fails when `alembic upgrade head` runs in deployment. Auto-fixed for linear chains (renumbered); manual intervention for complex chains.
 - **Type 5 (Unknown)**: The conflict does not fit any recognized type (e.g., delete/modify, rename/rename, binary). The agent aborted the rebase and provided analysis + proposed resolution without executing it. **Always requires manual intervention**.
 

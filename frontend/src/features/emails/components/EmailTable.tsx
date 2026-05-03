@@ -19,6 +19,7 @@ type Props = {
   onOpen?: (email: EmailMetadataOut) => void;
   headerCheckboxState?: HeaderCheckboxState;
   bulkBar?: ReactNode;
+  emptyMessage?: string;
 };
 
 export default function EmailTable({
@@ -32,6 +33,7 @@ export default function EmailTable({
   onOpen,
   headerCheckboxState = 'unchecked',
   bulkBar,
+  emptyMessage,
 }: Props) {
   const accountsById = useMemo(() => buildAccountMap(accounts), [accounts]);
 
@@ -78,7 +80,7 @@ export default function EmailTable({
 
       {emails.length === 0 ? (
         <div className="py-16 text-center text-sm text-zinc-400">
-          No hay correos en esta bandeja
+          {emptyMessage ?? 'No hay correos en esta bandeja'}
         </div>
       ) : (
         emails.map((email) => {

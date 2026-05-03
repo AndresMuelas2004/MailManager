@@ -34,13 +34,26 @@ def list_emails(
     mailbox_id: str,
     box: Literal["ALL_MAIL", "SENT", "SPAM", "TRASH"] = Query(...),
     account_id: str | None = Query(default=None),
+    q: str | None = Query(
+        default=None,
+        min_length=2,
+        max_length=200,
+        description=(
+            "Free-text search query. Whitespace-only values are treated as no "
+            "search; tokens are space-separated and silently capped at 10."
+        ),
+    ),
+    limit: int = Query(default=200, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
     user_id: str = Depends(require_session),
 ) -> list[EmailMetadataOut]:
     """
     List email metadata for a mailbox, filtered by box.
-    Optionally filter to a single account.
+    Optionally filter to a single account or search by free text.
     """
-    return emails_service.list_emails(mailbox_id, box, user_id, account_id)
+    return emails_service.list_emails(
+        mailbox_id, box, user_id, account_id, q, limit, offset,
+    )
 
 
 @router.post("/sync-metadata", response_model=SyncResultOut)

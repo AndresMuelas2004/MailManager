@@ -231,10 +231,11 @@ _DDL_STATEMENTS = [
         ('outlook-spam-006', 'bbbbbbbb-bbbb-4000-a000-bbbbbbbbb002', 'thread-ol-036', 'microsoft@fake-ms.com',    'Microsoft Security (fake)',  'Your Office 365 license will expire today',    '2026-03-11T00:00:00Z', FALSE, 'SPAM', NULL)
     ON CONFLICT (provider_message_id, account_id) DO NOTHING;
     """,
-    # Migration 0011 (+ 0013): email_content table with composite FK to
-    # email_metadata. Fresh setups get the post-0013 shape directly so the
+    # Migration 0011 (+ 0013, 0021): email_content table with composite FK to
+    # email_metadata. Fresh setups get the post-0021 shape directly so the
     # transitive cascade (accounts -> email_metadata -> email_content) is
-    # wired in from day one.
+    # wired in from day one, including ON UPDATE CASCADE so Outlook's
+    # provider_message_id mutations propagate to cached content rows.
     """
     CREATE TABLE IF NOT EXISTS email_content (
         provider_message_id  VARCHAR(255) NOT NULL,
@@ -246,7 +247,7 @@ _DDL_STATEMENTS = [
         CONSTRAINT email_content_metadata_fkey
             FOREIGN KEY (provider_message_id, account_id)
             REFERENCES email_metadata(provider_message_id, account_id)
-            ON DELETE CASCADE
+            ON DELETE CASCADE ON UPDATE CASCADE
     );
     """,
     # Migration 0012: drafts table for provider-first draft persistence
@@ -275,8 +276,21 @@ _DDL_STATEMENTS = [
     # of them — the per-migration TRUNCATE statements still live in the
     # individual Alembic files and run for incremental upgrades.
     "TRUNCATE TABLE email_content;",
+    # Migration 0021: ensure email_content_metadata_fkey carries
+    # ON UPDATE CASCADE on already-bootstrapped databases (the inline
+    # CREATE TABLE above already covers fresh setups).
+    "ALTER TABLE email_content DROP CONSTRAINT IF EXISTS email_content_metadata_fkey;",
+    """
+    ALTER TABLE email_content ADD CONSTRAINT email_content_metadata_fkey
+        FOREIGN KEY (provider_message_id, account_id)
+        REFERENCES email_metadata(provider_message_id, account_id)
+        ON DELETE CASCADE ON UPDATE CASCADE;
+    """,
     "DELETE FROM alembic_version;",
     "INSERT INTO alembic_version(version_num) VALUES ('0019_invalidate_email_content_cache_pipeline_refactor');",
+    # Migration 0020: enable unaccent extension for accent-insensitive search
+    "CREATE EXTENSION IF NOT EXISTS unaccent;",
+    "UPDATE alembic_version SET version_num = '0020_create_extension_unaccent';",
 ]
 
 

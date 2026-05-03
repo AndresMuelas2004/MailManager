@@ -1190,8 +1190,16 @@ _SAMPLE_ROW = {
 }
 
 
-def _patch_list_emails(monkeypatch, *, rows=None, account_get_return="default"):
-    """Apply monkeypatches for list_emails tests."""
+def _patch_list_emails(
+    monkeypatch,
+    *,
+    rows=None,
+    account_get_return="default",
+    accounts_for_mailbox=None,
+    list_filtered_calls=None,
+):
+    """Apply monkeypatches for list_emails tests against the unified
+    list_filtered contract."""
     monkeypatch.setattr(
         emails_service, "ensure_mailbox_access",
         lambda _mb, _uid: {"mailbox_id": _MAILBOX_ID, "owner_user_id": _USER_ID},
@@ -1206,31 +1214,77 @@ def _patch_list_emails(monkeypatch, *, rows=None, account_get_return="default"):
             emails_service.account_store, "get",
             account_get_return,
         )
-    result_rows = rows if rows is not None else [_SAMPLE_ROW]
     monkeypatch.setattr(
-        emails_service.email_metadata_store, "list_by_account_and_box",
-        lambda _aid, _box: result_rows,
+        emails_service.account_store, "list_by_mailbox",
+        lambda _mb: accounts_for_mailbox if accounts_for_mailbox is not None else [_fake_account()],
     )
+    result_rows = rows if rows is not None else [_SAMPLE_ROW]
+
+    def _record(account_ids, box, tokens, limit, offset):
+        if list_filtered_calls is not None:
+            list_filtered_calls.append({
+                "account_ids": account_ids,
+                "box": box,
+                "tokens": tokens,
+                "limit": limit,
+                "offset": offset,
+            })
+        return result_rows
+
     monkeypatch.setattr(
-        emails_service.email_metadata_store, "list_by_mailbox_and_box",
-        lambda _mbid, _box: result_rows,
+        emails_service.email_metadata_store, "list_filtered", _record,
     )
 
 
 class TestListEmails:
 
     def test_single_account_happy_path(self, monkeypatch):
-        _patch_list_emails(monkeypatch)
+        calls: list = []
+        _patch_list_emails(monkeypatch, list_filtered_calls=calls)
         result = emails_service.list_emails(_MAILBOX_ID, "ALL_MAIL", _USER_ID, _ACCOUNT_ID)
         assert len(result) == 1
         assert result[0].provider_message_id == "m1"
         assert result[0].account_id == _ACCOUNT_ID
+        # Single-account branch passes a one-element account_ids list.
+        assert len(calls) == 1
+        assert calls[0]["account_ids"] == [_ACCOUNT_ID]
+        assert calls[0]["box"] == "ALL_MAIL"
 
     def test_unified_view_happy_path(self, monkeypatch):
-        _patch_list_emails(monkeypatch)
+        calls: list = []
+        _patch_list_emails(monkeypatch, list_filtered_calls=calls)
         result = emails_service.list_emails(_MAILBOX_ID, "ALL_MAIL", _USER_ID)
         assert len(result) == 1
         assert result[0].provider_message_id == "m1"
+        # Unified branch resolves accounts via account_store.list_by_mailbox.
+        assert calls[0]["account_ids"] == [_ACCOUNT_ID]
+
+    def test_unified_view_with_multiple_accounts_passes_all_ids(self, monkeypatch):
+        calls: list = []
+        accounts = [
+            _fake_account(account_id="acc1"),
+            _fake_account(account_id="acc2"),
+            _fake_account(account_id="acc3"),
+        ]
+        _patch_list_emails(
+            monkeypatch,
+            accounts_for_mailbox=accounts,
+            list_filtered_calls=calls,
+        )
+        emails_service.list_emails(_MAILBOX_ID, "ALL_MAIL", _USER_ID)
+        assert calls[0]["account_ids"] == ["acc1", "acc2", "acc3"]
+
+    def test_unified_view_no_accounts_returns_empty_without_db_call(self, monkeypatch):
+        calls: list = []
+        _patch_list_emails(
+            monkeypatch,
+            accounts_for_mailbox=[],
+            list_filtered_calls=calls,
+        )
+        result = emails_service.list_emails(_MAILBOX_ID, "ALL_MAIL", _USER_ID)
+        assert result == []
+        # Empty mailbox must short-circuit BEFORE calling list_filtered.
+        assert calls == []
 
     def test_account_not_found_raises(self, monkeypatch):
         _patch_list_emails(monkeypatch)
@@ -1248,48 +1302,101 @@ class TestListEmails:
         with pytest.raises(Exception):
             emails_service.list_emails(_MAILBOX_ID, "ALL_MAIL", _USER_ID, _ACCOUNT_ID)
 
-    def test_db_error_on_single_account_query_raises(self, monkeypatch):
+    def test_db_error_on_list_filtered_translated(self, monkeypatch):
         from database.errors.exceptions import QueryError as DbQueryError
         _patch_list_emails(monkeypatch)
 
-        def _raise(_aid, _box):
+        def _raise(_aids, _box, _tokens, _limit, _offset):
             raise DbQueryError("db fail")
 
         monkeypatch.setattr(
-            emails_service.email_metadata_store, "list_by_account_and_box", _raise,
+            emails_service.email_metadata_store, "list_filtered", _raise,
         )
         with pytest.raises(Exception):
             emails_service.list_emails(_MAILBOX_ID, "ALL_MAIL", _USER_ID, _ACCOUNT_ID)
 
-    def test_db_error_on_unified_query_raises(self, monkeypatch):
+    def test_db_error_on_unified_account_listing_translated(self, monkeypatch):
         from database.errors.exceptions import QueryError as DbQueryError
         _patch_list_emails(monkeypatch)
 
-        def _raise(_mbid, _box):
+        def _raise(_mb):
             raise DbQueryError("db fail")
 
-        monkeypatch.setattr(
-            emails_service.email_metadata_store, "list_by_mailbox_and_box", _raise,
-        )
+        monkeypatch.setattr(emails_service.account_store, "list_by_mailbox", _raise)
         with pytest.raises(Exception):
             emails_service.list_emails(_MAILBOX_ID, "ALL_MAIL", _USER_ID)
 
-    def test_unexpected_error_raises_email_list_error(self, monkeypatch):
+    def test_unexpected_error_raises_email_list_error_with_filtered_message(self, monkeypatch):
         _patch_list_emails(monkeypatch)
 
-        def _raise(_mbid, _box):
+        def _raise(_aids, _box, _tokens, _limit, _offset):
             raise RuntimeError("unexpected")
 
         monkeypatch.setattr(
-            emails_service.email_metadata_store, "list_by_mailbox_and_box", _raise,
+            emails_service.email_metadata_store, "list_filtered", _raise,
         )
-        with pytest.raises(EmailListError, match="Failed to list email metadata for mailbox"):
+        with pytest.raises(
+            EmailListError, match="Failed to list email metadata for filtered listing",
+        ):
+            emails_service.list_emails(_MAILBOX_ID, "ALL_MAIL", _USER_ID)
+
+    def test_unexpected_error_on_unified_account_listing_raises_email_list_error(
+        self, monkeypatch,
+    ):
+        _patch_list_emails(monkeypatch)
+
+        def _raise(_mb):
+            raise RuntimeError("unexpected")
+
+        monkeypatch.setattr(emails_service.account_store, "list_by_mailbox", _raise)
+        with pytest.raises(
+            EmailListError, match="Failed to load mailbox accounts for email listing",
+        ):
             emails_service.list_emails(_MAILBOX_ID, "ALL_MAIL", _USER_ID)
 
     def test_empty_result_returns_empty_list(self, monkeypatch):
         _patch_list_emails(monkeypatch, rows=[])
         result = emails_service.list_emails(_MAILBOX_ID, "SPAM", _USER_ID)
         assert result == []
+
+    def test_q_is_parsed_into_tokens_passed_to_store(self, monkeypatch):
+        calls: list = []
+        _patch_list_emails(monkeypatch, list_filtered_calls=calls)
+        emails_service.list_emails(
+            _MAILBOX_ID, "ALL_MAIL", _USER_ID, _ACCOUNT_ID, q="foo bar",
+        )
+        assert calls[0]["tokens"] == ["foo", "bar"]
+
+    def test_q_none_results_in_empty_token_list(self, monkeypatch):
+        calls: list = []
+        _patch_list_emails(monkeypatch, list_filtered_calls=calls)
+        emails_service.list_emails(_MAILBOX_ID, "ALL_MAIL", _USER_ID, _ACCOUNT_ID)
+        assert calls[0]["tokens"] == []
+
+    def test_q_only_whitespace_results_in_empty_token_list(self, monkeypatch):
+        calls: list = []
+        _patch_list_emails(monkeypatch, list_filtered_calls=calls)
+        emails_service.list_emails(
+            _MAILBOX_ID, "ALL_MAIL", _USER_ID, _ACCOUNT_ID, q="   ",
+        )
+        assert calls[0]["tokens"] == []
+
+    def test_limit_and_offset_propagate_to_store(self, monkeypatch):
+        calls: list = []
+        _patch_list_emails(monkeypatch, list_filtered_calls=calls)
+        emails_service.list_emails(
+            _MAILBOX_ID, "ALL_MAIL", _USER_ID, _ACCOUNT_ID,
+            limit=42, offset=100,
+        )
+        assert calls[0]["limit"] == 42
+        assert calls[0]["offset"] == 100
+
+    def test_default_limit_and_offset_propagated(self, monkeypatch):
+        calls: list = []
+        _patch_list_emails(monkeypatch, list_filtered_calls=calls)
+        emails_service.list_emails(_MAILBOX_ID, "ALL_MAIL", _USER_ID, _ACCOUNT_ID)
+        assert calls[0]["limit"] == 200
+        assert calls[0]["offset"] == 0
 
 
 # ==================================================================
