@@ -16,8 +16,11 @@ REMINDER = (
     "1. Check helpers.py for shared functions before writing new logic "
     "(parse_expiry, unwrap_app_credentials, unwrap_user_tokens, "
     "wrap_account_tokens, http_error_detail).\n"
-    "2. Scan this file for existing private methods (_*) and reuse them.\n"
-    "3. If new logic is useful to more than one client, extract it to helpers.py."
+    "2. Audit existing methods in this file — especially private helpers (_*) — "
+    "and reuse them rather than duplicating logic across methods.\n"
+    "3. Prefer composing small, focused helpers over large monolithic methods.\n"
+    "4. If new logic is useful to more than one client, extract it to helpers.py.\n"
+    "Keep it simple, professional, and DRY."
 )
 
 
