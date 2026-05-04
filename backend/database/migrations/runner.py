@@ -291,6 +291,10 @@ _DDL_STATEMENTS = [
     # Migration 0020: enable unaccent extension for accent-insensitive search
     "CREATE EXTENSION IF NOT EXISTS unaccent;",
     "UPDATE alembic_version SET version_num = '0020_create_extension_unaccent';",
+    # Migration 0021: stamp only — the email_content_metadata_fkey ON UPDATE
+    # CASCADE upgrade is applied above (and fresh setups already get the
+    # final shape inline in the email_content CREATE TABLE).
+    "UPDATE alembic_version SET version_num = '0021_email_content_fkey_on_update_cascade';",
 ]
 
 
