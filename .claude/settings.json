@@ -13,21 +13,6 @@
       "Agent(*)",
       "Skill(code-review:code-review)",
       "Skill(claude-api)",
-      "mcp__claude_ai_Excalidraw__create_view",
-      "mcp__claude_ai_Excalidraw__read_checkpoint",
-      "mcp__claude_ai_Excalidraw__export_to_excalidraw",
-      "mcp__plugin_playwright_playwright__browser_navigate",
-      "mcp__plugin_playwright_playwright__browser_click",
-      "mcp__plugin_playwright_playwright__browser_snapshot",
-      "mcp__plugin_playwright_playwright__browser_run_code",
-      "mcp__plugin_playwright_playwright__browser_take_screenshot",
-      "mcp__postgres__query",
-      "mcp__glance__browser_navigate",
-      "mcp__glance__browser_screenshot",
-      "mcp__glance__browser_click",
-      "mcp__glance__browser_tab_list",
-      "mcp__glance__session_end",
-      "PowerShell(Head 20 *)",
       "PowerShell(New-Item *)",
       "PowerShell(Remove-Item *)",
       "PowerShell(Test-Path *)",
@@ -50,6 +35,15 @@
             "command": "bash ${CLAUDE_PROJECT_DIR}/.claude/hooks/protect-claude-md.sh"
           }
         ]
+      },
+      {
+        "matcher": "Write|Edit|MultiEdit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python ${CLAUDE_PROJECT_DIR}/.claude/hooks/protect-settings-local.py"
+          }
+        ]
       }
     ],
     "PostToolUse": [
@@ -67,6 +61,10 @@
           {
             "type": "command",
             "command": "python ${CLAUDE_PROJECT_DIR}/.claude/hooks/ruff-check.py"
+          },
+          {
+            "type": "command",
+            "command": "python ${CLAUDE_PROJECT_DIR}/.claude/hooks/memory-write-flag.py"
           }
         ]
       },
@@ -76,6 +74,20 @@
           {
             "type": "command",
             "command": "python ${CLAUDE_PROJECT_DIR}/.claude/hooks/core-client-helpers-reminder.py"
+          },
+          {
+            "type": "command",
+            "command": "python ${CLAUDE_PROJECT_DIR}/.claude/hooks/guide-md-discipline-reminder.py"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python ${CLAUDE_PROJECT_DIR}/.claude/hooks/memory-write-notify.py"
           }
         ]
       }
