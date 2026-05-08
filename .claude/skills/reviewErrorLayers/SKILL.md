@@ -1,6 +1,6 @@
 ---
 name: reviewErrorLayers
-description: "Audit error handling compliance and coverage for each of the following directories — run all reviews in parallel, one independent review per directory."
+description: "Parallel error-handling audit across the given directories."
 argument-hint: [DirectoryLayer-1] [DirectoryLayer-2] [...]
 disable-model-invocation: true
 ---

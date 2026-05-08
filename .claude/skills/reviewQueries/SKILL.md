@@ -1,6 +1,6 @@
 ---
 name: reviewQueries
-description: "Launch parallel queries-reviewer agents to audit SQL query functions for efficiency, reusability, dead code, and quality. One agent per .py file."
+description: "Parallel SQL-query audit, one agent per .py file."
 argument-hint: [diffs] or [.pyQuerie1] [.pyQuerie2] [...]
 disable-model-invocation: true
 ---
